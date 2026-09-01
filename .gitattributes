@@ -1,0 +1,11 @@
+# Normalize line endings to LF — the CI runs in a Linux container,
+# and CRLF in `run:` scripts breaks the GitHub Actions shell.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.webp binary
+*.ogg binary
+*.wav binary
+*.ttf binary
+*.otf binary
+*.zip binary
