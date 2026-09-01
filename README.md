@@ -20,15 +20,15 @@ scripts/main.gd
 ## One-time setup on GitHub (Steps 5 & 6)
 
 1. Create a **public** repository on GitHub (private repos need GitHub Pro for Pages).
-2. Add this project as the remote and push to `main`:
+2. Remote is already configured. Push with:
    ```bash
-   git remote add origin https://github.com/<username>/<repo>.git
-   git push -u origin main
+   git push origin main
    ```
+   Remote: https://github.com/TeenTu/godot_ai_game.git
 3. In the repo: **Settings → Pages → Source → select "GitHub Actions"**
    (NOT "Deploy from a branch" — the workflow uses the official deploy actions).
 4. Watch the run in the **Actions** tab. When both jobs are green, open:
-   `https://<username>.github.io/<repo>/`
+   `https://teentu.github.io/godot_ai_game/`
 
 Every subsequent merge to `main` automatically rebuilds and redeploys.
 
