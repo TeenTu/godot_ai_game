@@ -71,11 +71,13 @@ jobs:
           # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
           touch build/web/.nojekyll
 
+      # 注意：container 里的 job 默认用 sh（dash），没有 `pipefail`，
+      # 也别写 bash-only 语法。失败时先把日志 tail 出来再退出。
       - name: Headless gameplay smoke test
         run: |
-          set -o pipefail
-          godot --headless --path . --script res://tools/play_test.gd 2>&1 | tee /tmp/play.log
-          grep -q "PLAY_TEST result=PASS" /tmp/play.log
+          godot --headless --path . --script res://tools/play_test.gd > play_test.log 2>&1 || { tail -60 play_test.log; exit 1; }
+          tail -8 play_test.log
+          grep -q "PLAY_TEST result=PASS" play_test.log
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
