@@ -112,11 +112,18 @@ func _build_ui() -> void:
 	_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	root.add_child(_chart)
 
-	# 右：控制面板
+	# 右：控制面板（内容多，包进 ScrollContainer 支持滚动）
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(280, 0)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	root.add_child(scroll)
+
 	_panel = VBoxContainer.new()
 	_panel.custom_minimum_size = Vector2(280, 0)
+	_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_panel.add_theme_constant_override("separation", 6)
-	root.add_child(_panel)
+	scroll.add_child(_panel)
 
 	var title := Label.new()
 	title.text = "Submarine Sonar / TMA"
