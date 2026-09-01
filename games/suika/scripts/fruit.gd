@@ -4,6 +4,10 @@ extends RigidBody2D
 ## 两颗同级水果碰到一起，交给 Main 处理合成。
 signal pair_collided(a: Fruit, b: Fruit)
 
+## AI 生成的 11 级水果雪碧图（由 shared/assets 注入到 assets/_shared/items/）。
+const SHEET_PATH: String = "res://assets/_shared/items/fruits_sheet.png"
+const SHEET_FRAME: int = 256  # 每帧 256x256，帧索引 = 水果等级
+
 var level: int = 0
 var radius: float = 20.0
 var fruit_color: Color = Color.WHITE
@@ -11,6 +15,8 @@ var fruit_name: String = ""
 var is_merged: bool = false
 var is_held: bool = false
 var age: float = 0.0
+
+var _sheet: Texture2D = null
 
 
 static func create(lv: int) -> Fruit:
@@ -24,6 +30,9 @@ func _ready() -> void:
 	radius = data["radius"]
 	fruit_color = data["color"]
 	fruit_name = data["name"]
+
+	# 尝试加载共享雪碧图（注入物）；失败则回退到程序化绘制。
+	_sheet = load(SHEET_PATH) as Texture2D
 
 	contact_monitor = true
 	max_contacts_reported = 8
@@ -44,15 +53,33 @@ func _ready() -> void:
 
 
 func _draw() -> void:
+	if _sheet != null:
+		_draw_sprite()
+	else:
+		_draw_procedural()
+	_draw_name(radius)
+
+
+## 用雪碧图帧绘制水果：帧索引 = 等级，绘制尺寸 ≈ 直径（略放大留描边余量）。
+func _draw_sprite() -> void:
+	var tex_size: Vector2 = _sheet.get_size()
+	if tex_size.x <= 0.0:
+		return
+	var region := Rect2(Vector2(level * SHEET_FRAME, 0.0), Vector2(SHEET_FRAME, SHEET_FRAME))
+	# 让贴图覆盖物理圆：直径 * 1.12，给描边留白。
+	var dst := Rect2(-radius * 1.12, -radius * 1.12, radius * 2.24, radius * 2.24)
+	draw_texture_rect_region(_sheet, dst, region)
+
+
+## 程序化绘制兜底（雪碧图缺失时）：纯色圆 + 高光 + 描边 + 叶子。
+func _draw_procedural() -> void:
 	var r := radius
 	draw_circle(Vector2.ZERO, r, fruit_color)
-	# 只有最终的大西瓜画条纹，其余保持干净的纯色球
 	if level == FruitData.COUNT - 1:
 		_draw_stripes(r)
 	draw_circle(Vector2(-r * 0.30, -r * 0.34), r * 0.20, Color(1.0, 1.0, 1.0, 0.30))
 	draw_arc(Vector2.ZERO, r - 1.5, 0.0, TAU, 40, fruit_color.darkened(0.38), 3.5, true)
 	_draw_leaf(r)
-	_draw_name(r)
 
 
 func _on_body_entered(body: Node2D) -> void:
