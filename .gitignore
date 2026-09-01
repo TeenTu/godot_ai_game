@@ -12,3 +12,10 @@ Thumbs.db
 # NOTE: export_presets.cfg is intentionally NOT ignored here.
 # The CI pipeline (GitHub Actions) needs it to run headless exports.
 # Do not re-add it to this file.
+
+# NOTE: *.uid and *.import files are also intentionally NOT ignored.
+# - *.uid (Godot 4.4+): stable resource IDs; without them every fresh
+#   checkout/import generates new UIDs, which breaks uid:// references.
+# - *.import: pinned import settings, so CI reproduces the exact same
+#   import result as local builds (the .godot/ cache itself stays ignored).
+# Do not re-add these to this file.
