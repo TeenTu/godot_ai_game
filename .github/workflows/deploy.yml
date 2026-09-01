@@ -72,6 +72,7 @@ jobs:
           touch build/web/.nojekyll
 
       - name: Headless gameplay smoke test
+        shell: bash
         run: |
           set -o pipefail
           godot --headless --path . --script res://tools/play_test.gd 2>&1 | tee /tmp/play.log
