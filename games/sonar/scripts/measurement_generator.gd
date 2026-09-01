@@ -1,5 +1,5 @@
-extends RefCounted
 class_name MeasurementGenerator
+extends RefCounted
 ## measurement_generator.gd — Truth → Measurement 的唯一通道。
 ##
 ## 把"真实目标(Truth)"经声学辐射→传播→传感器变成"观测(Measurement)"。
@@ -12,7 +12,7 @@ class_name MeasurementGenerator
 ## 所有随机走注入的 RNG，固定种子 → 固定测量流。
 
 var _rng: RandomNumberGenerator = null
-var _env: RefCounted = null          # EnvironmentModel
+var _env: RefCounted = null  # EnvironmentModel
 var _own_profile: RefCounted = null  # 本艇 AcousticProfile（用于自噪由传感器侧自理，这里无需）
 var _measurement_counter: int = 0
 
@@ -38,13 +38,17 @@ func generate_passive(
 ) -> Measurement:
 	var m := Measurement.new()
 
-	var true_bearing: float = nav_utils.bearing_to_true(
-		observer.position_east_m, observer.position_north_m,
-		target.position_east_m, target.position_north_m
+	var true_bearing: float = NavUtils.bearing_to_true(
+		observer.position_east_m,
+		observer.position_north_m,
+		target.position_east_m,
+		target.position_north_m
 	)
-	var rng_range: float = nav_utils.distance(
-		observer.position_east_m, observer.position_north_m,
-		target.position_east_m, target.position_north_m
+	var rng_range: float = NavUtils.distance(
+		observer.position_east_m,
+		observer.position_north_m,
+		target.position_east_m,
+		target.position_north_m
 	)
 	var freq_hz: float = (sensor.frequency_range.x + sensor.frequency_range.y) * 0.5
 
@@ -94,13 +98,17 @@ func generate_active(
 ) -> Measurement:
 	var m := Measurement.new()
 
-	var true_bearing: float = nav_utils.bearing_to_true(
-		observer.position_east_m, observer.position_north_m,
-		target.position_east_m, target.position_north_m
+	var true_bearing: float = NavUtils.bearing_to_true(
+		observer.position_east_m,
+		observer.position_north_m,
+		target.position_east_m,
+		target.position_north_m
 	)
-	var rng_range: float = nav_utils.distance(
-		observer.position_east_m, observer.position_north_m,
-		target.position_east_m, target.position_north_m
+	var rng_range: float = NavUtils.distance(
+		observer.position_east_m,
+		observer.position_north_m,
+		target.position_east_m,
+		target.position_north_m
 	)
 	var freq_hz: float = (sensor.frequency_range.x + sensor.frequency_range.y) * 0.5
 
@@ -144,9 +152,14 @@ func _build_lofar(target_ac: RefCounted, se_db: float) -> Array:
 		# 探测到的概率随 SE 提高（谱线完整度）
 		var detect_p: float = 1.0 / (1.0 + exp(-(se_db - 3.0) / 3.0))
 		if _rng.randf() < detect_p:
-			lines.append({
-				"freq_hz": float(t.get("freq_hz", 0.0)),
-				"level_db": base_level,
-				"snr_db": base_level + se_db,
-			})
+			(
+				lines
+				. append(
+					{
+						"freq_hz": float(t.get("freq_hz", 0.0)),
+						"level_db": base_level,
+						"snr_db": base_level + se_db,
+					}
+				)
+			)
 	return lines

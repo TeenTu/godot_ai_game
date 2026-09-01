@@ -1,5 +1,5 @@
-extends RefCounted
 class_name World
+extends RefCounted
 ## world.gd — 固定步长仿真主循环（阶段一，无 UI）。
 ##
 ## 职责：
@@ -13,7 +13,7 @@ class_name World
 
 var world: Dictionary = {}
 var sim_time: float = 0.0
-var measurements: Array = []   # 全部生成的 Measurement
+var measurements: Array = []  # 全部生成的 Measurement
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
 var _paused: bool = false
 var _time_scale: float = 1.0

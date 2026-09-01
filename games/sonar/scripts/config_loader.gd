@@ -1,7 +1,8 @@
-extends RefCounted
 class_name ConfigLoader
+extends RefCounted
 ## config_loader.gd — 从 JSON 加载参数/场景。
 ## 所有声学、传感器、平台参数都在 JSON 资源文件里，不写死在业务代码。
+
 
 static func load_json_file(path: String) -> Dictionary:
 	var f := FileAccess.open(path, FileAccess.READ)

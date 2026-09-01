@@ -1,5 +1,5 @@
-extends RefCounted
 class_name NavUtils
+extends RefCounted
 ## nav_utils.gd — 导航 / 角度 / 坐标 / 速度换算的纯函数库。
 ##
 ## 全项目唯一的数学换算入口，杜绝"数学坐标系(从东逆时针)"与"海军坐标系(从北顺时针)"混用。
@@ -65,7 +65,9 @@ static func distance(o_east: float, o_north: float, t_east: float, t_north: floa
 
 
 ## 根据航向(deg, 从北顺时针)和航速(m/s)推进位置，返回 {x,y}。
-static func advance_pos(x: float, y: float, course_deg: float, speed_ms: float, dt: float) -> Dictionary:
+static func advance_pos(
+	x: float, y: float, course_deg: float, speed_ms: float, dt: float
+) -> Dictionary:
 	var rad: float = course_deg * DEG_TO_RAD
 	return {
 		"x": x + speed_ms * sin(rad) * dt,

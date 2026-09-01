@@ -1,7 +1,8 @@
-extends RefCounted
 class_name ScenarioLoader
+extends RefCounted
 ## scenario_loader.gd — 把场景 JSON 装配成可运行的仿真世界。
 ## 负责创建：Truth 实体（本艇 + 目标）、环境模型、传感器、测量生成器、RNG。
+
 
 static func build(scenario: Dictionary) -> Dictionary:
 	# RNG：固定种子 → 可复现
