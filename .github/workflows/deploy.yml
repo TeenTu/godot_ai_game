@@ -85,10 +85,21 @@ jobs:
             echo "Exporting game: $name"
             echo "================================================================================"
 
-            # 注入共享支持套件（与 tools/sync_shared.sh 做的事一致）。
+            # 注入共享支持套件 + 共享素材（与 tools/sync_shared.sh 做的事一致）。
             if [ -d shared/addons ]; then
               mkdir -p "${game}addons"
               cp -r shared/addons/. "${game}addons/"
+            fi
+            # 按 [game_kit] asset_style 注入共享素材到 assets/_shared/。
+            style=$(awk -v k="asset_style" '
+                $0 ~ /^\[game_kit\]$/ { s=1; next }
+                s && /^\[/ { s=0 }
+                s && index($0, k"=") == 1 { v=$0; sub(/^[^=]*=/, "", v); gsub(/[" ]/, "", v); print v }
+            ' "${game}project.godot" || true)
+            if [ -n "$style" ] && [ -d "shared/assets/styles/$style" ]; then
+              rm -rf "${game}assets/_shared"
+              mkdir -p "${game}assets/_shared"
+              cp -r "shared/assets/styles/$style/." "${game}assets/_shared/"
             fi
 
             # 首次导入：注册全局类 / 生成资源缓存。

@@ -1,0 +1,14 @@
+id: flat-cartoon
+name: 扁平卡通风
+description: >-
+  类似割绳子/愤怒小鸟的扁平矢量卡通风。粗黑色描边、高饱和纯色填充、
+  简单几何形状、无渐变滥用、无写实材质、无文字无阴影。适合休闲合成类游戏。
+anchor: anchor.png
+prompt_template: >-
+  扁平卡通风游戏素材，{subject}，居中构图，粗黑色描边，高饱和纯色填充，
+  简单几何形状，透明背景，无文字无阴影，矢量风
+image_params:
+  size: 1024x1024
+  quality: high
+  background: transparent
+categories: [characters, items, bg, ui, effects]

@@ -24,5 +24,6 @@ Thumbs.db
 #   import result as local builds (the .godot/ cache itself stays ignored).
 # Do not re-add these to this file.
 
-# game_kit is injected from shared/ by tools/sync_shared.sh and CI — do not commit copies
+# game_kit / shared assets are injected from shared/ by tools/sync_shared.sh and CI — do not commit copies
 games/*/addons/
+games/*/assets/_shared/
