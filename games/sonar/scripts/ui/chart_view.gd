@@ -21,6 +21,7 @@ var lobs: Array = []  # [{origin: Vector2, bearing_deg: float, color: Color, id:
 var tma_track: Array = []  # TMA 解算出的目标轨迹点（世界坐标）
 var trial_pos: Vector2 = Vector2.ZERO  # Trial Solution 目标符号位置
 var trial_active: bool = false
+var trial_velocity: Vector2 = Vector2.ZERO  # Trial Solution 速度向量（米/秒，世界坐标）
 var system_pos: Vector2 = Vector2.ZERO  # System Solution 目标符号位置
 var system_active: bool = false
 var truth_positions: Array = []  # [{pos: Vector2, id: String}] 调试用
@@ -143,6 +144,19 @@ func _draw_symbols() -> void:
 			11,
 			Color(0.5, 1.0, 0.8, 0.9)
 		)
+		# 速度向量箭头（按 trial 航向/航速画 60s 预测位移）
+		if trial_velocity.length() > 0.01:
+			var end_w: Vector2 = trial_pos + trial_velocity * 60.0
+			var end_s: Vector2 = world_to_screen(end_w)
+			draw_line(s, end_s, Color(0.4, 1.0, 0.7, 0.7), 2.0)
+			# 箭头头
+			var dir: Vector2 = (end_s - s).normalized()
+			if dir.length() > 0.01:
+				var perp: Vector2 = Vector2(-dir.y, dir.x) * 5.0
+				var head: PackedVector2Array = [
+					end_s, end_s - dir * 10.0 + perp, end_s - dir * 10.0 - perp
+				]
+				draw_colored_polygon(head, Color(0.4, 1.0, 0.7, 0.8))
 	if system_active:
 		var s2: Vector2 = world_to_screen(system_pos)
 		draw_arc(s2, 8.0, 0, TAU, 24, Color(1.0, 1.0, 0.3, 0.95), 2.0)

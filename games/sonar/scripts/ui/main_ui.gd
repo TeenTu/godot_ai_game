@@ -42,6 +42,9 @@ var _spin_range: SpinBox = null
 var _spin_course: SpinBox = null
 var _spin_speed: SpinBox = null
 var _lbl_dot: Label = null
+# 本艇机动控制
+var _spin_own_course: SpinBox = null
+var _spin_own_speed: SpinBox = null
 
 var _time_scale: float = 2.0
 var _paused: bool = false
@@ -74,6 +77,12 @@ func _ready() -> void:
 	trial = TrialSolution.new()
 	system_sol = null
 	dot_stack = DotStack.new()
+
+	# 用场景里本艇的初始航向/航速初始化 SpinBox（避免默认 0 与场景不一致）
+	if _spin_own_course != null:
+		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
+	if _spin_own_speed != null:
+		_spin_own_speed.set_value_no_signal(world.world["own"].speed_kn)
 
 	_update_status("ready")
 
@@ -161,6 +170,40 @@ func _build_ui() -> void:
 	_lbl_track.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lbl_track.custom_minimum_size = Vector2(0, 64)
 	_panel.add_child(_lbl_track)
+
+	_panel.add_child(HSeparator.new())
+
+	# --- 本艇机动控制（关键：让 TMA 收窄近慢/远快歧义）---
+	var own_title := Label.new()
+	own_title.text = "本艇机动"
+	own_title.add_theme_font_size_override("font_size", 15)
+	_panel.add_child(own_title)
+
+	_spin_own_course = _add_spin("本艇航向 (°)", 0, 359, 1, 0)
+	_spin_own_speed = _add_spin("本艇航速 (kn)", 0, 30, 0.5, 0)
+	_spin_own_course.value_changed.connect(_on_own_course)
+	_spin_own_speed.value_changed.connect(_on_own_speed)
+
+	# 快速 ±5°/±2kn 按钮
+	var row_turn := HBoxContainer.new()
+	row_turn.add_theme_constant_override("separation", 4)
+	_panel.add_child(row_turn)
+	var btn_l := Button.new()
+	btn_l.text = "左 5°"
+	btn_l.pressed.connect(_on_turn_left)
+	row_turn.add_child(btn_l)
+	var btn_r := Button.new()
+	btn_r.text = "右 5°"
+	btn_r.pressed.connect(_on_turn_right)
+	row_turn.add_child(btn_r)
+	var btn_faster := Button.new()
+	btn_faster.text = "+2kn"
+	btn_faster.pressed.connect(_on_speed_up)
+	row_turn.add_child(btn_faster)
+	var btn_slower := Button.new()
+	btn_slower.text = "-2kn"
+	btn_slower.pressed.connect(_on_slow_down)
+	row_turn.add_child(btn_slower)
 
 	_panel.add_child(HSeparator.new())
 
@@ -264,6 +307,13 @@ func _update_displays() -> void:
 	_chart.tma_track = _compute_tma_track_points()
 	_chart.trial_pos = Vector2(trial.estimated_position_east_m, trial.estimated_position_north_m)
 	_chart.trial_active = trial.range_m > 0.0
+	if _chart.trial_active:
+		var v_ms: float = NavUtils.kn_to_ms(trial.speed_kn)
+		_chart.trial_velocity = Vector2(
+			v_ms * sin(deg_to_rad(trial.course_deg)), v_ms * cos(deg_to_rad(trial.course_deg))
+		)
+	else:
+		_chart.trial_velocity = Vector2.ZERO
 	if system_sol != null:
 		_chart.system_pos = Vector2(
 			system_sol.estimated_position_east_m, system_sol.estimated_position_north_m
@@ -430,11 +480,62 @@ func _update_panel() -> void:
 	else:
 		_lbl_dot.text = "Dot Stack: —"
 
+	# 本艇航向/航速回显（仅当用户没在编辑时同步 Truth 状态）
+	if _spin_own_course != null and not _spin_own_course.has_focus():
+		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
+	if _spin_own_speed != null and not _spin_own_speed.has_focus():
+		_spin_own_speed.set_value_no_signal(world.world["own"].speed_kn)
+
 
 func _on_pause() -> void:
 	_paused = not _paused
 	world.set_paused(_paused)
 	_btn_pause.text = "▶ 继续" if _paused else "⏸ 暂停"
+
+
+## 本艇机动回调：直接改 Truth 状态，下次 tick 起生效。
+func _on_own_course(deg: float) -> void:
+	if world == null:
+		return
+	world.world["own"].course_deg = NavUtils.wrap360(deg)
+
+
+func _on_own_speed(kn: float) -> void:
+	if world == null:
+		return
+	world.world["own"].speed_kn = maxf(kn, 0.0)
+
+
+func _on_turn_left() -> void:
+	_change_own_course(-5.0)
+
+
+func _on_turn_right() -> void:
+	_change_own_course(5.0)
+
+
+func _change_own_course(delta_deg: float) -> void:
+	if world == null or _spin_own_course == null:
+		return
+	var new_deg: float = NavUtils.wrap360(_spin_own_course.value + delta_deg)
+	_spin_own_course.set_value_no_signal(new_deg)
+	world.world["own"].course_deg = new_deg
+
+
+func _on_speed_up() -> void:
+	_change_own_speed(2.0)
+
+
+func _on_slow_down() -> void:
+	_change_own_speed(-2.0)
+
+
+func _change_own_speed(delta_kn: float) -> void:
+	if world == null or _spin_own_speed == null:
+		return
+	var new_kn: float = clampf(_spin_own_speed.value + delta_kn, 0.0, 30.0)
+	_spin_own_speed.set_value_no_signal(new_kn)
+	world.world["own"].speed_kn = new_kn
 
 
 func _on_speed(index: int) -> void:
