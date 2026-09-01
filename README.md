@@ -4,6 +4,7 @@
 
 - 总索引页：<https://teentu.github.io/godot_ai_game/>
 - 合成大西瓜：<https://teentu.github.io/godot_ai_game/suika/>
+- 太空闪避：<https://teentu.github.io/godot_ai_game/dodge/>
 
 仓库结构参考 [godotengine/godot-demo-projects](https://github.com/godotengine/godot-demo-projects)：
 每个游戏是 `games/<名称>/` 下的**独立工程**（有自己的 `project.godot` 和 `export_presets.cfg`），
@@ -22,6 +23,14 @@ Godot 4.5 + GDScript 写的合成大西瓜：同级水果相撞就合体，一�
 
 水果共 11 级：葡萄 → 樱桃 → 橘子 → 柠檬 → 猕猴桃 → 西红柿 → 桃子 → 菠萝 → 椰子 → 半个瓜 → 大西瓜。
 只会随机掉落前 5 级。
+
+### dodge — 太空闪避
+
+用 `game_kit` 共享套件写的示例游戏：虚拟摇杆（触屏）或方向键操控飞船，躲开越来越密的陨石，存活即得分。
+
+- 演示了 `GameKitVirtualJoystick`（左下角摇杆）、`GameKitSafeArea`（HUD 安全区包裹）的接入方式
+- 全部图形程序化绘制，无外部素材；带自己的中文字体子集（20 KB）
+- 无头自检覆盖：移动 / 计分 / 碰撞判定 / 重开，四项全过才允许部署
 
 ## 新增一个游戏
 
@@ -55,6 +64,13 @@ games/
     assets/fonts/ui_subset.ttf # 裁剪过的中文字体（21 KB）
     tools/play_test.gd         # 无头模拟对局自检
     tools/collect_font_chars.py# 扫描源码里用到的字符，供字体子集化
+  dodge/                       # 太空闪避（game_kit 示例游戏）
+    project.godot              # 720x1080，双 emulate 触摸/鼠标设置
+    scenes/main.tscn           # 极简入口，节点全部在 main.gd 里代码构建
+    scripts/main.gd            # 主控：移动、生成、碰撞、计分、重开
+    scripts/player.gd          # 玩家飞船（程序化绘制）
+    scripts/asteroid.gd        # 陨石（随机多边形 + 下落自旋）
+    tools/play_test.gd         # 无头自检：移动/计分/碰撞/重开四项
 shared/addons/game_kit/        # 仓库级共享套件（触控 / 安全区适配）
 tools/sync_shared.sh           # 把 shared 注入各游戏的本地脚本
 tools/ci_status.py             # 查询 Actions 运行状态/日志的小工具
@@ -80,6 +96,9 @@ pyftsubset "C:/Windows/Fonts/msyh.ttc" \
 # suika：模拟一整局，看能不能正常合成
 godot --headless --path games/suika --script res://tools/play_test.gd
 # 预期输出 PLAY_TEST result=PASS
+
+# dodge：确定性四项自检（移动/计分/碰撞/重开）
+godot --headless --path games/dodge --script res://tools/play_test.gd
 
 gdlint games/ shared/ && gdformat --check games/ shared/
 
