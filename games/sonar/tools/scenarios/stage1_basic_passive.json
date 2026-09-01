@@ -1,0 +1,94 @@
+{
+  "name": "stage1_basic_passive",
+  "seed": 20260901,
+  "dt": 0.5,
+  "duration": 30.0,
+  "environment": {
+    "environment_type": "shallow",
+    "sea_state": 2,
+    "ambient_noise_by_frequency": { "500": 58.0, "1000": 52.0 },
+    "own_noise_base_db": 38.0,
+    "own_noise_speed_coeff": 1.6,
+    "tl_spreading_k": 20.0,
+    "tl_absorption_alpha": 0.5,
+    "tl_environment_loss": 2.0
+  },
+  "own_ship": {
+    "id": "own",
+    "class_id": "attack_sub",
+    "side": "blue",
+    "platform_type": "submarine",
+    "position_east_m": 0.0,
+    "position_north_m": 0.0,
+    "depth_m": 50.0,
+    "course_deg": 0.0,
+    "speed_kn": 4.0,
+    "turn_rate_deg_s": 0.0,
+    "acceleration_kn_s": 0.0
+  },
+  "own_acoustic": {
+    "broadband_base_level_db": 45.0,
+    "speed_noise_a": 15.0,
+    "speed_noise_n": 2.0,
+    "speed_noise_vref_kn": 5.0,
+    "cavitation_speed_kn_at_surface": 12.0,
+    "cavitation_depth_slope": 1.2,
+    "cavitation_extra_db": 12.0
+  },
+  "targets": [
+    {
+      "id": "enemy_1",
+      "class_id": "frigate",
+      "side": "red",
+      "platform_type": "surface",
+      "position_east_m": 6000.0,
+      "position_north_m": 6000.0,
+      "depth_m": 0.0,
+      "course_deg": 225.0,
+      "speed_kn": 12.0,
+      "turn_rate_deg_s": 0.0,
+      "acceleration_kn_s": 0.0,
+      "acoustic": {
+        "broadband_base_level_db": 150.0,
+        "speed_noise_a": 18.0,
+        "speed_noise_n": 2.5,
+        "speed_noise_vref_kn": 8.0,
+        "cavitation_speed_kn_at_surface": 20.0,
+        "cavitation_depth_slope": 0.0,
+        "cavitation_extra_db": 10.0,
+        "active_target_strength_db": 14.0,
+        "tonal_lines": [
+          { "freq_hz": 120.0, "level_db": 128.0 },
+          { "freq_hz": 240.0, "level_db": 122.0 },
+          { "freq_hz": 480.0, "level_db": 115.0 }
+        ],
+        "turns_per_knot": 1,
+        "blade_count": 5,
+        "shaft_count": 2
+      }
+    }
+  ],
+  "sensors": [
+    {
+      "sensor_id": "hull_broadband",
+      "array_type": "passive_broadband",
+      "owner_id": "own",
+      "freq_min_hz": 100.0,
+      "freq_max_hz": 1000.0,
+      "array_gain_db": 20.0,
+      "detection_threshold_db": 3.0,
+      "detection_k_d": 4.0,
+      "bearing_sigma_min_deg": 0.8,
+      "bearing_sigma_max_deg": 6.0,
+      "bearing_se0_db": 8.0,
+      "bearing_k_sigma_db": 5.0,
+      "coverage_start_deg": 0.0,
+      "coverage_end_deg": 360.0,
+      "baffle_start_deg": 0.0,
+      "baffle_end_deg": 0.0,
+      "update_interval_s": 2.0,
+      "tracker_capacity": 64,
+      "deployed": true
+    }
+  ]
+}

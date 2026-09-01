@@ -1,39 +1,52 @@
 extends Node2D
-## 太空闪避主控：飞船移动、陨石生成、碰撞判定、计分与重开。
+## 太空闪避主控：飞船移动、陨石/护盾生成、碰撞判定、计分与重开。
 ##
 ## 输入优先级：game_kit 虚拟摇杆 > auto_move（无头测试钩子）> 键盘方向键。
 ## 全部图形程序化绘制，无外部素材；碰撞用圆距离手算，无头测试可复现。
+##
+## 玩法机制：
+##   - 护盾道具（绿十字）：拾取后可抵挡一次撞击
+##   - 擦身奖励：陨石贴身飞过未命中 +5 分
+##   - 屏幕震动 / 光环特效 / 双层视差星空
 
 const VIEW: Vector2 = Vector2(720, 1080)
 const PLAYER_RADIUS: float = 22.0
 const PLAYER_SPEED: float = 520.0
 const BASE_SPAWN_INTERVAL: float = 1.1
 const MIN_SPAWN_INTERVAL: float = 0.35
+const POWERUP_RADIUS: float = 15.0
+const POWERUP_CD_MIN: float = 8.0
+const POWERUP_CD_MAX: float = 13.0
+const NEAR_MISS_EXTRA: float = 34.0
+const NEAR_MISS_BONUS: float = 5.0
 const BEST_PATH: String = "user://dodge_best.txt"
-const PlayerScript: GDScript = preload("res://scripts/player.gd")
-const AsteroidScript: GDScript = preload("res://scripts/asteroid.gd")
 
 var score: float = 0.0
 var best: int = 0
 var is_over: bool = false
 var auto_move: Vector2 = Vector2.ZERO  # 无头测试钩子：非零时覆盖摇杆/键盘
+var near_miss_count: int = 0
 
 var asteroids_root: Node2D
-var player: Node2D
+var powerups_root: Node2D
+var player: Ship
 var joystick: GameKitVirtualJoystick
 var score_label: Label
 var best_label: Label
 var over_panel: Control
 var over_score_label: Label
 var _spawn_cd: float = 0.8
+var _powerup_cd: float = 9.0
+var _shake_left: float = 0.0
 var _rng: RandomNumberGenerator = RandomNumberGenerator.new()
 
 
 func _ready() -> void:
 	_rng.randomize()
-	player = Node2D.new()
+	add_child(Starfield.new())
+
+	player = Ship.new()
 	player.name = "Player"
-	player.set_script(PlayerScript)
 	player.position = Vector2(VIEW.x * 0.5, VIEW.y - 160.0)
 	add_child(player)
 
@@ -41,12 +54,17 @@ func _ready() -> void:
 	asteroids_root.name = "Asteroids"
 	add_child(asteroids_root)
 
+	powerups_root = Node2D.new()
+	powerups_root.name = "Powerups"
+	add_child(powerups_root)
+
 	_build_ui()
 	_load_best()
 	_update_hud()
 
 
 func _process(delta: float) -> void:
+	_update_shake(delta)
 	if is_over:
 		return
 	score += delta
@@ -61,6 +79,13 @@ func _process(delta: float) -> void:
 		var interval: float = maxf(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - score * 0.02)
 		_spawn_cd = interval * _rng.randf_range(0.7, 1.3)
 
+	# 没护盾且场上没道具时，倒计时投放护盾。
+	if not player.shielded and powerups_root.get_child_count() == 0:
+		_powerup_cd -= delta
+		if _powerup_cd <= 0.0:
+			_spawn_powerup()
+
+	_check_pickups()
 	_check_collision()
 	_update_hud()
 
@@ -73,24 +98,106 @@ func _read_input() -> Vector2:
 	return Input.get_vector("ui_left", "ui_right", "ui_up", "ui_down")
 
 
-func _spawn_asteroid() -> Node2D:
-	var rock: Node2D = Node2D.new()
-	rock.set_script(AsteroidScript)
+func _spawn_asteroid() -> Asteroid:
+	var rock := Asteroid.new()
 	rock.position = Vector2(_rng.randf_range(40.0, VIEW.x - 40.0), -50.0)
 	asteroids_root.add_child(rock)
 	rock.setup(_rng, score)
 	return rock
 
 
+func _spawn_powerup() -> Node2D:
+	var p := Powerup.new()
+	p.position = Vector2(_rng.randf_range(60.0, VIEW.x - 60.0), -40.0)
+	powerups_root.add_child(p)
+	_powerup_cd = _rng.randf_range(POWERUP_CD_MIN, POWERUP_CD_MAX)
+	return p
+
+
+func _check_pickups() -> void:
+	for child in powerups_root.get_children():
+		var p := child as Powerup
+		if p == null:
+			continue
+		if player.position.distance_to(p.position) < POWERUP_RADIUS + PLAYER_RADIUS:
+			p.queue_free()
+			player.shielded = true
+			_ring_burst(player.position, Color(0.4, 1.0, 0.7), 1)
+			_float_text("+护盾", player.position + Vector2(0, -60))
+
+
 func _check_collision() -> void:
 	for child in asteroids_root.get_children():
-		var rock := child as Node2D
+		var rock := child as Asteroid
 		if rock == null:
 			continue
-		var radius: float = rock.get("radius")
-		if player.position.distance_to(rock.position) < radius + PLAYER_RADIUS:
-			_game_over()
+		var dist := player.position.distance_to(rock.position)
+		if dist < rock.radius + PLAYER_RADIUS:
+			_hit(rock)
 			return
+		# 擦身奖励：陨石越过飞船高度且横向贴身（一次性判定）。
+		if not rock.near_miss_done and rock.position.y > player.position.y:
+			rock.near_miss_done = true
+			if (
+				absf(rock.position.x - player.position.x)
+				< rock.radius + PLAYER_RADIUS + NEAR_MISS_EXTRA
+			):
+				near_miss_count += 1
+				score += NEAR_MISS_BONUS
+				_float_text("+%d" % int(NEAR_MISS_BONUS), player.position + Vector2(0, -60))
+
+
+func _hit(rock: Asteroid) -> void:
+	if player.shielded:
+		player.shielded = false
+		rock.queue_free()
+		_ring_burst(player.position, Color(0.4, 1.0, 0.7), 2)
+		_shake(0.3)
+	else:
+		_ring_burst(player.position, Color(1.0, 0.5, 0.3), 3)
+		_shake(0.55)
+		_game_over()
+
+
+func _ring_burst(pos: Vector2, color: Color, count: int) -> void:
+	for i in count:
+		var fx := RingEffect.new()
+		fx.position = pos
+		fx.setup(50.0 + 26.0 * i, 0.45, color, 0.12 * i)
+		add_child(fx)
+
+
+func _float_text(text: String, pos: Vector2) -> void:
+	var label := Label.new()
+	label.text = text
+	label.position = pos - Vector2(60, 0)
+	label.size = Vector2(120, 32)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 26)
+	label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.z_index = 50
+	add_child(label)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(label, "position:y", pos.y - 50.0, 0.8)
+	tw.tween_property(label, "modulate:a", 0.0, 0.8)
+	tw.chain().tween_callback(label.queue_free)
+
+
+func _shake(duration: float) -> void:
+	_shake_left = duration
+
+
+func _update_shake(delta: float) -> void:
+	if _shake_left > 0.0:
+		_shake_left -= delta
+		var strength: float = 14.0 * maxf(_shake_left, 0.0)
+		position = Vector2(_rng.randf_range(-1, 1), _rng.randf_range(-1, 1)) * strength
+		if _shake_left <= 0.0:
+			position = Vector2.ZERO
+	elif position != Vector2.ZERO:
+		position = Vector2.ZERO
 
 
 func _game_over() -> void:
@@ -105,12 +212,19 @@ func _game_over() -> void:
 func restart() -> void:
 	for child in asteroids_root.get_children():
 		child.queue_free()
+	for child in powerups_root.get_children():
+		child.queue_free()
 	score = 0.0
 	is_over = false
 	auto_move = Vector2.ZERO
+	near_miss_count = 0
+	player.shielded = false
 	player.position = Vector2(VIEW.x * 0.5, VIEW.y - 160.0)
 	over_panel.visible = false
 	_spawn_cd = 0.8
+	_powerup_cd = 9.0
+	_shake_left = 0.0
+	position = Vector2.ZERO
 	_update_hud()
 
 

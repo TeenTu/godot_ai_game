@@ -1,11 +1,14 @@
+class_name Asteroid
 extends Node2D
 ## 陨石：随机多边形轮廓，下落 + 自旋，出屏自毁。
+## near_miss_done：擦身奖励一次性标记（由主控读写）。
 
 const FALL_SPEED_BASE: float = 300.0
 const DESPAWN_Y: float = 1250.0
 
 var radius: float = 26.0
 var fall_speed: float = 300.0
+var near_miss_done: bool = false
 var _rot_speed: float = 1.0
 var _verts: PackedVector2Array = PackedVector2Array()
 var _shade: Color = Color(0.55, 0.55, 0.62)
