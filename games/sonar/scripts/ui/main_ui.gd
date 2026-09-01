@@ -47,6 +47,7 @@ var _spin_own_course: SpinBox = null
 var _spin_own_speed: SpinBox = null
 
 var _time_scale: float = 2.0
+var _sim_accum: float = 0.0  # 跨帧累积的仿真时间（dt 步长推进）
 var _paused: bool = false
 var _processed_meas: int = 0
 var _track_colors: Dictionary = {}  # track_id -> Color
@@ -275,13 +276,14 @@ func _add_spin(title: String, min_v: float, max_v: float, step: float, val: floa
 func _process(delta: float) -> void:
 	if world == null:
 		return
-	# 推进仿真（固定步长，按倍速累计）
-	var acc: float = delta * _time_scale
+	# 推进仿真（固定步长，按倍速累计；accumulator 跨帧累积，避免真实
+	# 帧率下 delta*scale < dt 导致永不推进）
 	var dt: float = world.world["dt"]
+	_sim_accum += delta * _time_scale
 	var steps: int = 0
-	while acc >= dt and steps < 500:
+	while _sim_accum >= dt and steps < 500:
 		world.tick()
-		acc -= dt
+		_sim_accum -= dt
 		steps += 1
 
 	_feed_new_measurements()
