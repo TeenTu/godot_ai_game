@@ -7,6 +7,7 @@
 
 # Export build output (rebuild by CI on every push to main)
 build/
+dist/
 
 # System/tooling
 .DS_Store
@@ -22,3 +23,6 @@ Thumbs.db
 # - *.import: pinned import settings, so CI reproduces the exact same
 #   import result as local builds (the .godot/ cache itself stays ignored).
 # Do not re-add these to this file.
+
+# game_kit is injected from shared/ by tools/sync_shared.sh and CI — do not commit copies
+games/*/addons/

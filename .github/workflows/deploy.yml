@@ -1,6 +1,11 @@
 name: Build and Deploy to GitHub Pages
 
-# Triggers: every push/merge to main (plus manual runs from the Actions tab).
+# 多游戏流水线（参考 godotengine/godot-demo-projects 的 export_web.yml）：
+# 遍历 games/*/ 下的每个独立工程 -> 注入共享 addons -> 导入 -> 冒烟测试 ->
+# Web 导出到 dist/<游戏名>/ -> 生成索引页 -> 整体部署 GitHub Pages。
+#
+# 新增游戏 = 新建 games/<name>/（含 project.godot 与名为 "Web" 的导出预设），
+# 推送到 main 即自动发布到 https://teentu.github.io/godot_ai_game/<name>/
 on:
   push:
     branches:
@@ -40,11 +45,11 @@ jobs:
         run: pip install --quiet "gdtoolkit==4.5.0"
       - name: Run gdlint + gdformat check
         run: |
-          gdlint scripts/
-          gdformat --check scripts/ scenes/
+          gdlint games/ shared/
+          gdformat --check games/ shared/
 
   export-web:
-    name: Export Web build
+    name: Export Web builds (all games)
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.5 # must match GODOT_VERSION above
@@ -64,31 +69,101 @@ jobs:
           mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable \
              ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
 
-      - name: Web Export
-        run: |
-          mkdir -v -p build/web
-          godot --headless --verbose --export-release "Web" build/web/index.html
-          # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
-          touch build/web/.nojekyll
-
-      # 显式指定 bash：container 里的 job 默认用 sh(dash)，不支持 set -o pipefail。
-      # 加 shell: bash 后即使写 bash-only 语法也安全；run 内容仍保持 POSIX 兼容做双保险。
-      # 失败时先把日志 tail 出来再退出，方便直接在 Actions 里看。
-      - name: Import project (register global classes)
-        run: |
-          godot --headless --path . --import
-      - name: Headless gameplay smoke test
+      # 显式指定 bash：container 里的 job 默认用 sh(dash)。
+      - name: Export every game
         shell: bash
         run: |
-          set -o pipefail
-          godot --headless --path . --script res://tools/play_test.gd 2>&1 | tee /tmp/play.log
-          tail -8 /tmp/play.log
-          grep -q "PLAY_TEST result=PASS" /tmp/play.log
+          set -euo pipefail
+          BASEDIR="$PWD"
+          mkdir -v -p "$BASEDIR/dist"
+
+          for game in games/*/; do
+            [ -f "${game}project.godot" ] || continue
+            name="$(basename "$game")"
+            echo ""
+            echo "================================================================================"
+            echo "Exporting game: $name"
+            echo "================================================================================"
+
+            # 注入共享支持套件（与 tools/sync_shared.sh 做的事一致）。
+            if [ -d shared/addons ]; then
+              mkdir -p "${game}addons"
+              cp -r shared/addons/. "${game}addons/"
+            fi
+
+            # 首次导入：注册全局类 / 生成资源缓存。
+            godot --headless --path "$game" --import
+
+            # 可选的无头试玩冒烟测试（工程里带 tools/play_test.gd 才跑）。
+            if [ -f "${game}tools/play_test.gd" ]; then
+              godot --headless --path "$game" --script res://tools/play_test.gd \
+                2>&1 | tee "/tmp/play_${name}.log"
+              grep -q "PLAY_TEST result=PASS" "/tmp/play_${name}.log" \
+                || { echo "smoke test FAILED for $name"; exit 1; }
+            fi
+
+            mkdir -v -p "$BASEDIR/dist/$name"
+            godot --headless --path "$game" --verbose \
+              --export-release "Web" "$BASEDIR/dist/$name/index.html"
+            # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
+            touch "$BASEDIR/dist/$name/.nojekyll"
+          done
+
+      - name: Generate index page
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            cat <<'HEAD'
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>Godot Games</title>
+          <style>
+            body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+                   align-items: center; font-family: system-ui, sans-serif;
+                   background: #1a1a2e; color: #eee; }
+            h1 { margin: 2.5rem 0 0.5rem; font-weight: 600; }
+            p.sub { margin: 0 0 2rem; color: #9aa; }
+            .grid { display: flex; flex-wrap: wrap; gap: 1.25rem; justify-content: center;
+                    padding: 0 1rem 3rem; }
+            a.card { display: flex; flex-direction: column; align-items: center; gap: 0.6rem;
+                     width: 200px; padding: 1.5rem 1rem; border-radius: 12px;
+                     background: #24243e; color: inherit; text-decoration: none;
+                     transition: transform .15s, background .15s; }
+            a.card:hover { transform: translateY(-4px); background: #2e2e50; }
+            a.card .title { font-size: 1.05rem; }
+            a.card .dir { font-size: 0.8rem; color: #889; }
+            footer { color: #778; font-size: 0.85rem; padding-bottom: 2rem; }
+          </style>
+          </head>
+          <body>
+          <h1>🎮 Godot Games</h1>
+          <p class="sub">由 GitHub Actions 自动构建 · Godot 4.5</p>
+          <div class="grid">
+          HEAD
+            for game in games/*/; do
+              [ -f "${game}project.godot" ] || continue
+              name="$(basename "$game")"
+              title="$(grep 'config/name' "${game}project.godot" | head -1 | cut -d '"' -f 2)"
+              [ -n "$title" ] || title="$name"
+              echo "<a class='card' href='$name/'><span class='title'>$title</span><span class='dir'>/$name/</span></a>"
+            done
+            cat <<'FOOT'
+          </div>
+          <footer>push to main = auto build &amp; deploy</footer>
+          </body>
+          </html>
+          FOOT
+          } > dist/index.html
+          echo "index.html generated:"; ls -la dist/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
-          path: build/web
+          path: dist
 
   deploy:
     name: Deploy to GitHub Pages
