@@ -17,7 +17,6 @@ const MAX_ITER: int = 60
 const MIN_STEP: float = 1e-8
 const COST_REL_TOL: float = 1e-9
 
-
 ## 一条解算输入的测量。用普通 Dictionary 即可：
 ##   { "time": float, "observer_e": float, "observer_n": float,
 ##     "bearing": float, "sigma": float }
@@ -136,17 +135,21 @@ static func residuals_at(
 	var r: Array = _residuals(measurements, t0, x)
 	for i in range(measurements.size()):
 		var sigma: float = maxf(float(measurements[i].get("sigma", 1.0)), 0.1)
-		out.append(
-			{
-				"time": float(measurements[i]["time"]),
-				"residual_deg": r[i],
-				"normalized": r[i] / sigma,
-			}
+		(
+			out
+			. append(
+				{
+					"time": float(measurements[i]["time"]),
+					"residual_deg": r[i],
+					"normalized": r[i] / sigma,
+				}
+			)
 		)
 	return out
 
 
 # ---------- 内部实现 ----------
+
 
 static func _initial_guess(measurements: Array, _t0: float) -> Vector4:
 	# 用首尾两测 LOB 求最接近交点作为位置初值；速度初值设 0（由迭代修正）。
