@@ -1,0 +1,14 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Export build output (rebuild by CI on every push to main)
+build/
+
+# System/tooling
+.DS_Store
+Thumbs.db
+
+# NOTE: export_presets.cfg is intentionally NOT ignored here.
+# The CI pipeline (GitHub Actions) needs it to run headless exports.
+# Do not re-add it to this file.

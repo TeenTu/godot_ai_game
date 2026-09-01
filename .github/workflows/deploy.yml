@@ -1,0 +1,72 @@
+name: Build and Deploy to GitHub Pages
+
+# Triggers: every push/merge to main (plus manual runs from the Actions tab).
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+# NOTE ON VERSIONS:
+# - `container.image` does NOT support env vars in GitHub Actions, so the
+#   Docker tag below is hardcoded. It must match GODOT_VERSION in `env`.
+# - If you upgrade Godot locally, update BOTH the image tag below and
+#   GODOT_VERSION. Check available tags first:
+#   https://hub.docker.com/r/barichello/godot-ci/tags
+env:
+  GODOT_VERSION: "4.5"
+
+# Permissions required by the official GitHub Pages deploy actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a new push to main cancels a running build.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  export-web:
+    name: Export Web build
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.5 # must match GODOT_VERSION above
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Setup export templates
+        run: |
+          mkdir -v -p ~/.local/share/godot/export_templates/
+          mkdir -v -p ~/.config/
+          if [ -d /root/.config/godot ]; then
+            mv /root/.config/godot ~/.config/godot
+          fi
+          mv /root/.local/share/godot/export_templates/${GODOT_VERSION}.stable \
+             ~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+
+      - name: Web Export
+        run: |
+          mkdir -v -p build/web
+          godot --headless --verbose --export-release "Web" build/web/index.html
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: export-web
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
