@@ -71,13 +71,19 @@ jobs:
           # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
           touch build/web/.nojekyll
 
-      # 注意：container 里的 job 默认用 sh（dash），没有 `pipefail`，
-      # 也别写 bash-only 语法。失败时先把日志 tail 出来再退出。
-      - name: Headless gameplay smoke test
+      # 显式指定 bash：container 里的 job 默认用 sh(dash)，不支持 set -o pipefail。
+      # 加 shell: bash 后即使写 bash-only 语法也安全；run 内容仍保持 POSIX 兼容做双保险。
+      # 失败时先把日志 tail 出来再退出，方便直接在 Actions 里看。
+      - name: Import project (register global classes)
         run: |
-          godot --headless --path . --script res://tools/play_test.gd > play_test.log 2>&1 || { tail -60 play_test.log; exit 1; }
-          tail -8 play_test.log
-          grep -q "PLAY_TEST result=PASS" play_test.log
+          godot --headless --path . --import
+      - name: Headless gameplay smoke test
+        shell: bash
+        run: |
+          set -o pipefail
+          godot --headless --path . --script res://tools/play_test.gd 2>&1 | tee /tmp/play.log
+          tail -8 /tmp/play.log
+          grep -q "PLAY_TEST result=PASS" /tmp/play.log
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

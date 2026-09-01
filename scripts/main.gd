@@ -82,6 +82,8 @@ func _process(delta: float) -> void:
 		pointer_x += KEY_SPEED * delta
 	var r: float = held.radius
 	held.position = Vector2(clampf(pointer_x, LEFT_X + r, RIGHT_X - r), DROP_Y)
+	# 瞄准辅助线跟着手上的水果跑，需要每帧重画
+	queue_redraw()
 
 
 func _physics_process(delta: float) -> void:
@@ -113,6 +115,7 @@ func _draw() -> void:
 	var danger: bool = over_timer > 0.0
 	var line_col: Color = Color(0.92, 0.26, 0.22, 0.95) if danger else Color(0.55, 0.45, 0.35, 0.30)
 	_draw_dashed_line(Vector2(LEFT_X, DEATH_Y), Vector2(RIGHT_X, DEATH_Y), line_col)
+	_draw_aim_guide()
 	_draw_next_preview()
 
 
@@ -166,15 +169,16 @@ func _merge(a: Fruit, b: Fruit) -> void:
 	b.is_merged = true
 	var level: int = a.level
 	var mid: Vector2 = (a.position + b.position) * 0.5
-	PopEffect.spawn(effects_root, mid, FruitData.radius_of(level), FruitData.color_of(level))
+	var gain: int = FruitData.TOP_MERGE_BONUS
+	if level + 1 < FruitData.COUNT:
+		gain = int(FruitData.SCORE[level + 1])
+	PopEffect.spawn(effects_root, mid, FruitData.radius_of(level), FruitData.color_of(level), gain)
 	a.queue_free()
 	b.queue_free()
 
+	score += gain
 	if level + 1 < FruitData.COUNT:
-		score += int(FruitData.SCORE[level + 1])
 		_spawn_fruit(level + 1, mid)
-	else:
-		score += FruitData.TOP_MERGE_BONUS
 	_update_hud()
 
 
@@ -245,6 +249,19 @@ func _add_wall(pos: Vector2, size: Vector2) -> void:
 	body.add_child(cs)
 	body.position = pos
 	walls_root.add_child(body)
+
+
+func _draw_aim_guide() -> void:
+	if held == null or is_over:
+		return
+	var gx: float = held.position.x
+	_draw_dashed_line(
+		Vector2(gx, DROP_Y + held.radius + 8.0),
+		Vector2(gx, FLOOR_Y),
+		Color(0.35, 0.28, 0.22, 0.22),
+		9.0,
+		13.0
+	)
 
 
 func _draw_next_preview() -> void:

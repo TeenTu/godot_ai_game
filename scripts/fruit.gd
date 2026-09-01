@@ -4,8 +4,6 @@ extends RigidBody2D
 ## 两颗同级水果碰到一起，交给 Main 处理合成。
 signal pair_collided(a: Fruit, b: Fruit)
 
-const FONT_PATH: String = "res://assets/fonts/ui_subset.ttf"
-
 var level: int = 0
 var radius: float = 20.0
 var fruit_color: Color = Color.WHITE
@@ -13,8 +11,6 @@ var fruit_name: String = ""
 var is_merged: bool = false
 var is_held: bool = false
 var age: float = 0.0
-
-var _font: Font = null
 
 
 static func create(lv: int) -> Fruit:
@@ -50,8 +46,12 @@ func _ready() -> void:
 func _draw() -> void:
 	var r := radius
 	draw_circle(Vector2.ZERO, r, fruit_color)
-	draw_arc(Vector2.ZERO, r - 1.5, 0.0, TAU, 40, fruit_color.darkened(0.38), 3.5, true)
+	# 只有最终的大西瓜画条纹，其余保持干净的纯色球
+	if level == FruitData.COUNT - 1:
+		_draw_stripes(r)
 	draw_circle(Vector2(-r * 0.30, -r * 0.34), r * 0.20, Color(1.0, 1.0, 1.0, 0.30))
+	draw_arc(Vector2.ZERO, r - 1.5, 0.0, TAU, 40, fruit_color.darkened(0.38), 3.5, true)
+	_draw_leaf(r)
 	_draw_name(r)
 
 
@@ -74,8 +74,34 @@ func _make_material() -> PhysicsMaterial:
 	return mat
 
 
+func _draw_stripes(r: float) -> void:
+	var col := fruit_color.darkened(0.32)
+	for i in range(6):
+		var a: float = float(i) * TAU / 6.0
+		var dir := Vector2(cos(a), sin(a))
+		draw_line(dir * r * 0.20, dir * r * 0.90, col, r * 0.11, true)
+
+
+func _draw_leaf(r: float) -> void:
+	draw_set_transform(Vector2(r * 0.10, -r * 0.90), -0.55, Vector2.ONE)
+	draw_colored_polygon(_leaf_points(r * 0.50, r * 0.22), Color(0.29, 0.60, 0.23))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+func _leaf_points(length: float, width: float) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	var steps := 12
+	for i in range(steps + 1):
+		var a: float = lerpf(-PI * 0.5, PI * 0.5, float(i) / float(steps))
+		pts.append(Vector2(cos(a) * length, -sin(a) * width))
+	for i in range(steps + 1):
+		var a: float = lerpf(PI * 0.5, PI * 1.5, float(i) / float(steps))
+		pts.append(Vector2(cos(a) * length, -sin(a) * width))
+	return pts
+
+
 func _draw_name(r: float) -> void:
-	var font := _resolve_font()
+	var font := UiFont.get_font()
 	if font == null:
 		return
 	var fsize := int(maxf(r * 0.52, 12.0))
@@ -90,12 +116,3 @@ func _draw_name(r: float) -> void:
 		fsize,
 		Color(0.13, 0.10, 0.12, 0.82)
 	)
-
-
-func _resolve_font() -> Font:
-	if _font == null:
-		if ResourceLoader.exists(FONT_PATH):
-			_font = load(FONT_PATH)
-		else:
-			_font = ThemeDB.fallback_font
-	return _font
