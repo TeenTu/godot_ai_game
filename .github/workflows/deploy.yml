@@ -28,6 +28,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    name: Lint GDScript (gdtoolkit)
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install gdtoolkit
+        run: pip install --quiet "gdtoolkit==4.5.0"
+      - name: Run gdlint + gdformat check
+        run: |
+          gdlint scripts/
+          gdformat --check scripts/ scenes/
+
   export-web:
     name: Export Web build
     runs-on: ubuntu-latest
