@@ -109,6 +109,25 @@ jobs:
             touch "$BASEDIR/dist/$name/.nojekyll"
           done
 
+          # 构建摘要：显示在 Actions run 的 Summary 页，一眼看清每个游戏的状态。
+          {
+            echo "## 🎮 Build summary"
+            echo ""
+            echo "| Game | Smoke test | Web build |"
+            echo "|---|---|---|"
+            for game in games/*/; do
+              [ -f "${game}project.godot" ] || continue
+              name="$(basename "$game")"
+              size="$(du -sh "$BASEDIR/dist/$name" 2>/dev/null | cut -f1)"
+              if [ -f "${game}tools/play_test.gd" ]; then
+                smoke="✅ passed"
+              else
+                smoke="—"
+              fi
+              echo "| [$name](https://teentu.github.io/godot_ai_game/$name/) | $smoke | $size |"
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"
+
       - name: Generate index page
         shell: bash
         run: |

@@ -1,10 +1,15 @@
 # Godot Web Games — 多游戏仓库（Godot 4.5）
 
+[![Build and Deploy](https://github.com/TeenTu/godot_ai_game/actions/workflows/deploy.yml/badge.svg)](https://github.com/TeenTu/godot_ai_game/actions/workflows/deploy.yml)
+
 一个仓库管理多个 Godot 小游戏，推送到 `main` 后 CI 自动构建**全部游戏**并部署到 GitHub Pages：
 
-- 总索引页：<https://teentu.github.io/godot_ai_game/>
-- 合成大西瓜：<https://teentu.github.io/godot_ai_game/suika/>
-- 太空闪避：<https://teentu.github.io/godot_ai_game/dodge/>
+| 游戏 | 在线地址 | 状态 |
+|---|---|---|
+| 合成大西瓜 | <https://teentu.github.io/godot_ai_game/suika/> | 可玩 |
+| 太空闪避 | <https://teentu.github.io/godot_ai_game/dodge/> | 可玩（v2：护盾/擦身奖励/特效） |
+| 潜艇声呐模拟 | <https://teentu.github.io/godot_ai_game/sonar/> | 🚧 Stage 1 仿真内核，UI 开发中 |
+| 总索引页 | <https://teentu.github.io/godot_ai_game/> | — |
 
 仓库结构参考 [godotengine/godot-demo-projects](https://github.com/godotengine/godot-demo-projects)：
 每个游戏是 `games/<名称>/` 下的**独立工程**（有自己的 `project.godot` 和 `export_presets.cfg`），
