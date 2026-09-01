@@ -6,8 +6,8 @@ config_version=5
 
 [application]
 
-config/name="潜艇声呐模拟"
-config/description="2D 潜艇声呐/TMA 仿真游戏：真实目标 → 声学辐射 → 测量 → 接触 → TMA 解算 → 火控。Truth 与 Measurement 严格分离。"
+config/name="Submarine Sonar Simulator"
+config/description="2D submarine sonar/TMA simulation game: real target -> acoustic radiation -> measurement -> contact -> TMA solution -> fire control. Truth and Measurement are strictly separated."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 config/icon="res://icon.svg"

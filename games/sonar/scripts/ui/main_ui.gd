@@ -119,7 +119,7 @@ func _build_ui() -> void:
 	root.add_child(_panel)
 
 	var title := Label.new()
-	title.text = "潜艇声呐 / TMA"
+	title.text = "Submarine Sonar / TMA"
 	title.add_theme_font_size_override("font_size", 18)
 	_panel.add_child(title)
 
@@ -128,11 +128,11 @@ func _build_ui() -> void:
 	row_pause.add_theme_constant_override("separation", 6)
 	_panel.add_child(row_pause)
 	_btn_pause = Button.new()
-	_btn_pause.text = "⏸ 暂停"
+	_btn_pause.text = "⏸ Pause"
 	_btn_pause.pressed.connect(_on_pause)
 	row_pause.add_child(_btn_pause)
 	_btn_mark = Button.new()
-	_btn_mark.text = "Mark 接触"
+	_btn_mark.text = "Mark Contact"
 	_btn_mark.pressed.connect(_on_mark)
 	row_pause.add_child(_btn_mark)
 
@@ -140,7 +140,7 @@ func _build_ui() -> void:
 	row_speed.add_theme_constant_override("separation", 6)
 	_panel.add_child(row_speed)
 	var spd_lbl := Label.new()
-	spd_lbl.text = "倍速"
+	spd_lbl.text = "Speed"
 	spd_lbl.custom_minimum_size = Vector2(40, 0)
 	row_speed.add_child(spd_lbl)
 	var opt_speed := OptionButton.new()
@@ -151,7 +151,7 @@ func _build_ui() -> void:
 	row_speed.add_child(opt_speed)
 
 	_btn_show_truth = Button.new()
-	_btn_show_truth.text = "Show Truth（调试）"
+	_btn_show_truth.text = "Show Truth (debug)"
 	_btn_show_truth.toggle_mode = true
 	_btn_show_truth.toggled.connect(_on_show_truth)
 	_panel.add_child(_btn_show_truth)
@@ -166,7 +166,7 @@ func _build_ui() -> void:
 
 	# --- 接触信息 ---
 	_lbl_track = Label.new()
-	_lbl_track.text = "接触: 无"
+	_lbl_track.text = "Contacts: none"
 	_lbl_track.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lbl_track.custom_minimum_size = Vector2(0, 64)
 	_panel.add_child(_lbl_track)
@@ -175,12 +175,12 @@ func _build_ui() -> void:
 
 	# --- 本艇机动控制（关键：让 TMA 收窄近慢/远快歧义）---
 	var own_title := Label.new()
-	own_title.text = "本艇机动"
+	own_title.text = "Own Ship Maneuver"
 	own_title.add_theme_font_size_override("font_size", 15)
 	_panel.add_child(own_title)
 
-	_spin_own_course = _add_spin("本艇航向 (°)", 0, 359, 1, 0)
-	_spin_own_speed = _add_spin("本艇航速 (kn)", 0, 30, 0.5, 0)
+	_spin_own_course = _add_spin("Own Course (°)", 0, 359, 1, 0)
+	_spin_own_speed = _add_spin("Own Speed (kn)", 0, 30, 0.5, 0)
 	_spin_own_course.value_changed.connect(_on_own_course)
 	_spin_own_speed.value_changed.connect(_on_own_speed)
 
@@ -189,11 +189,11 @@ func _build_ui() -> void:
 	row_turn.add_theme_constant_override("separation", 4)
 	_panel.add_child(row_turn)
 	var btn_l := Button.new()
-	btn_l.text = "左 5°"
+	btn_l.text = "Left 5°"
 	btn_l.pressed.connect(_on_turn_left)
 	row_turn.add_child(btn_l)
 	var btn_r := Button.new()
-	btn_r.text = "右 5°"
+	btn_r.text = "Right 5°"
 	btn_r.pressed.connect(_on_turn_right)
 	row_turn.add_child(btn_r)
 	var btn_faster := Button.new()
@@ -209,19 +209,19 @@ func _build_ui() -> void:
 
 	# --- TMA ---
 	var tma_title := Label.new()
-	tma_title.text = "TMA 解算"
+	tma_title.text = "TMA Solution"
 	tma_title.add_theme_font_size_override("font_size", 15)
 	_panel.add_child(tma_title)
 
 	_btn_fit = Button.new()
-	_btn_fit.text = "🔄 拟合 TMA"
+	_btn_fit.text = "🔄 Fit TMA"
 	_btn_fit.pressed.connect(_on_fit_tma)
 	_panel.add_child(_btn_fit)
 
-	_spin_bearing = _add_spin("方位 Bearing (°)", 0, 359, 1, 0)
-	_spin_range = _add_spin("距离 Range (m)", 100, 50000, 100, 0)
-	_spin_course = _add_spin("航向 Course (°)", 0, 359, 1, 0)
-	_spin_speed = _add_spin("航速 Speed (kn)", 0, 40, 0.5, 0)
+	_spin_bearing = _add_spin("Bearing (°)", 0, 359, 1, 0)
+	_spin_range = _add_spin("Range (m)", 100, 50000, 100, 0)
+	_spin_course = _add_spin("Course (°)", 0, 359, 1, 0)
+	_spin_speed = _add_spin("Speed (kn)", 0, 40, 0.5, 0)
 	_spin_bearing.value_changed.connect(func(v): trial.set_bearing(v))
 	_spin_range.value_changed.connect(func(v): trial.set_range(v))
 	_spin_course.value_changed.connect(func(v): trial.set_course(v))
@@ -431,7 +431,7 @@ func _update_panel() -> void:
 	if world == null:
 		return
 	var status: String = (
-		"时间 %.0fs | 测量 %d | %dx%s"
+		"Time %.0fs | Meas %d | %dx%s"
 		% [
 			world.sim_time,
 			world.measurements.size(),
@@ -442,19 +442,19 @@ func _update_panel() -> void:
 	_lbl_status.text = status
 
 	# 接触列表
-	var txt: String = "接触:"
+	var txt: String = "Contacts:"
 	var any: bool = false
 	for t in tracker.all_tracks():
 		if t.state != Track.TrackState.ACTIVE:
 			continue
 		var m: Measurement = t.latest_measurement()
 		txt += (
-			"\n%s  方位 %.0f°  (%d 测)"
+			"\n%s  Brg %.0f°  (%d meas)"
 			% [t.track_id, m.measured_bearing_deg, t.measurement_history.size()]
 		)
 		any = true
 	if not any:
-		txt += " 无"
+		txt += " none"
 	_lbl_track.text = txt
 
 	# Trial 参数回显（用户没在编辑时才覆盖，避免抢输入）
@@ -471,7 +471,7 @@ func _update_panel() -> void:
 	# Dot Stack
 	if dot_stack.residual_entries.size() > 0:
 		_lbl_dot.text = (
-			"Dot Stack: RMS %.2f° (%d 点)"
+			"Dot Stack: RMS %.2f° (%d pts)"
 			% [
 				dot_stack.rms_residual_deg(),
 				dot_stack.residual_entries.size(),
@@ -490,7 +490,7 @@ func _update_panel() -> void:
 func _on_pause() -> void:
 	_paused = not _paused
 	world.set_paused(_paused)
-	_btn_pause.text = "▶ 继续" if _paused else "⏸ 暂停"
+	_btn_pause.text = "▶ Resume" if _paused else "⏸ Pause"
 
 
 ## 本艇机动回调：直接改 Truth 状态，下次 tick 起生效。
@@ -552,7 +552,7 @@ func _on_mark() -> void:
 	if m == null:
 		return
 	tracker.mark(m, "S")
-	_update_status("手动 Mark: 新接触")
+	_update_status("Manual Mark: new contact")
 
 
 ## 拟合 TMA：用首个 ACTIVE track 的全部测量做加权最小二乘。
@@ -564,7 +564,7 @@ func _on_fit_tma() -> void:
 			best_track = t
 			break
 	if best_track == null:
-		_update_status("需要至少 4 条测量才能拟合")
+		_update_status("Need at least 4 measurements to fit")
 		return
 
 	var meas: Array = []
@@ -588,7 +588,7 @@ func _on_fit_tma() -> void:
 
 	var r: Dictionary = TmaSolver.solve(meas, start)
 	if not r.get("success", false):
-		_update_status("TMA 失败: " + str(r.get("error", "unknown")))
+		_update_status("TMA failed: " + str(r.get("error", "unknown")))
 		return
 
 	trial.from_solver(r)
@@ -661,14 +661,16 @@ func _closest_point(pa: Vector2, da: Vector2, pb: Vector2, db: Vector2) -> Array
 
 func _on_enter_solution() -> void:
 	if trial.range_m <= 0.0:
-		_update_status("先拟合 TMA 再提交")
+		_update_status("Fit TMA first, then submit")
 		return
 	system_sol = trial.commit(world.sim_time)
-	_update_status("System Solution 已提交")
+	_update_status("System Solution submitted")
 
 
 func _update_status(msg: String) -> void:
 	if world != null:
-		_lbl_status.text = "时间 %.0fs | 测量 %d\n%s" % [world.sim_time, world.measurements.size(), msg]
+		_lbl_status.text = (
+			"Time %.0fs | Meas %d\n%s" % [world.sim_time, world.measurements.size(), msg]
+		)
 	else:
 		_lbl_status.text = msg
