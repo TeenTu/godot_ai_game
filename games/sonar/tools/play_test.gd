@@ -9,6 +9,10 @@ extends SceneTree
 
 
 func _init() -> void:
+	_run()
+
+
+func _run() -> void:
 	# 1) 编译检查：NavUtils 可调用
 	var probe: float = NavUtils.wrap360(370.0)
 	if absf(probe - 10.0) > 0.001:
@@ -39,8 +43,43 @@ func _init() -> void:
 		quit(1)
 		return
 
+	# 4) 阶段三 UI 冒烟：实例化 SonarUI，走几帧，验证 UI 构建 + 仿真推进 + 关联
+	if not await _stage3_smoke():
+		quit(1)
+		return
+
 	print("PLAY_TEST result=PASS")
 	quit(0)
+
+
+## 阶段三冒烟：SonarUI 挂树走帧，验证无编译错误且仿真/接触链路工作。
+func _stage3_smoke() -> bool:
+	var ui: Control = (load("res://scripts/ui/main_ui.gd") as GDScript).new()
+	root.add_child(ui)
+	await process_frame
+	# headless --script 下引擎不自动调节点 _process，这里显式推进仿真
+	for i in range(12):
+		ui._process(0.5)
+	if ui.world == null:
+		print("PLAY_TEST result=FAIL (stage3 ui world is null)")
+		return false
+	if ui.world.sim_time <= 0.0:
+		print(
+			(
+				"PLAY_TEST result=FAIL (stage3 ui world did not advance: sim_time=%.1f meas=%d)"
+				% [ui.world.sim_time, ui.world.measurements.size()]
+			)
+		)
+		return false
+	if ui.tracker.count() <= 0:
+		print("PLAY_TEST result=FAIL (stage3 no tracks created)")
+		return false
+	var track_count: int = ui.tracker.count()
+	var sim_time: float = ui.world.sim_time
+	ui.queue_free()
+	await process_frame
+	print("sonar stage3 smoke: sim_time=%.1fs tracks=%d" % [sim_time, track_count])
+	return true
 
 
 ## 阶段二冒烟：构造固定场景 → Tracker 关联 → TMA 求解 → DotStack。

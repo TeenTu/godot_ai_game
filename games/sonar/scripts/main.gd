@@ -1,9 +1,11 @@
 extends Node2D
-## main.gd — 阶段一占位入口。
-## 阶段一仅有仿真内核（无 UI），此脚本只负责最小装配，避免 main.tscn 报错。
-## 阶段三会重写为完整的 UI 场景装配（声呐显示/海图/控制面板/Show Truth）。
+## main.gd — 场景入口。装配阶段三主 UI（SonarUI）。
+## 阶段一/二为纯逻辑内核，阶段三把内核接到可交互界面。
+
+const SonarUIScript := preload("res://scripts/ui/main_ui.gd")
 
 
 func _ready() -> void:
-	# 阶段一：可以跑一段确定性测量流做演示，但不绘制（纯逻辑已在 stage1_test.gd 验证）。
-	print("sonar stage1: simulation core ready (no UI)")
+	var ui: Control = SonarUIScript.new()
+	ui.name = "SonarUI"
+	add_child(ui)

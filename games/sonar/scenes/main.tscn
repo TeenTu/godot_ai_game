@@ -4,11 +4,3 @@
 
 [node name="Main" type="Node2D"]
 script = ExtResource("1_main")
-
-[node name="StageHint" type="Label" parent="."]
-offset_left = 40.0
-offset_top = 30.0
-offset_right = 700.0
-offset_bottom = 80.0
-theme_override_font_sizes/font_size = 24
-text = "潜艇声呐模拟 — Stage 1 仿真内核（无 UI）"
