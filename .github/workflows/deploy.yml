@@ -68,6 +68,14 @@ jobs:
         run: |
           mkdir -v -p build/web
           godot --headless --verbose --export-release "Web" build/web/index.html
+          # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
+          touch build/web/.nojekyll
+
+      - name: Headless gameplay smoke test
+        run: |
+          set -o pipefail
+          godot --headless --path . --script res://tools/play_test.gd 2>&1 | tee /tmp/play.log
+          grep -q "PLAY_TEST result=PASS" /tmp/play.log
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5

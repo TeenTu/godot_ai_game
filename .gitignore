@@ -2,6 +2,9 @@
 .godot/
 /android/
 
+# WorkBuddy 会话产物（记忆 / 临时文件），跟项目无关
+.workbuddy/
+
 # Export build output (rebuild by CI on every push to main)
 build/
 
