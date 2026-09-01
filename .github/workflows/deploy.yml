@@ -47,6 +47,16 @@ jobs:
         run: |
           gdlint games/ shared/
           gdformat --check games/ shared/
+      - name: Asset size gate (docs/asset_pipeline.md)
+        run: |
+          # 素材体积红线：单张 PNG 超过 512KB 视为不合格
+          oversized=$(find shared/assets games/*/assets/images -name "*.png" -size +512k 2>/dev/null || true)
+          if [ -n "$oversized" ]; then
+            echo "Asset(s) too large (>512KB):"
+            echo "$oversized"
+            exit 1
+          fi
+          echo "asset size gate: OK"
 
   export-web:
     name: Export Web builds (all games)

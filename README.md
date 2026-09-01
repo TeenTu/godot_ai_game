@@ -50,9 +50,25 @@ Godot 4.5 + GDScript 写的合成大西瓜：同级水果相撞就合体，一�
 
 多端适配与触控支持，独立于任何游戏（详见 [shared/addons/game_kit/README.md](shared/addons/game_kit/README.md)）：
 
-- `GameKitVirtualJoystick` — 虚拟摇杆（原生多点触控）
+- `GameKitVirtualJoystick` — 虚拟摇杆（原生多点触控，FIXED/DYNAMIC/FOLLOWING 三模式）
 - `GameKitSafeArea` — 刘海/手势条安全区适配
 - `GameKitTouchDebug` — 多点触控可视化调试层
+- `GameKitTouchButton` — 触屏按钮（程序化绘制）
+- `GameKitFsm` / `GameKitFsmState` — 通用层级状态机
+- `GameKitSfx` — 程序化音效（零音频素材）
+
+## AI 素材管线 shared/assets
+
+用生图模型（ImageGen / Codex CLI 多渠道）为游戏生成美术素材的完整管线，
+**双层资产 + 风格契约 + 雪碧图校验门禁**（详见 [docs/asset_pipeline.md](docs/asset_pipeline.md)）：
+
+- **双层资产**：共享层 `shared/assets/`（跨游戏复用）+ 游戏专用层 `games/<名>/assets/images/`（同名覆盖共享）
+- **风格契约**：每个游戏用 `project.godot` 的 `[game_kit] asset_style="<style-id>"` 声明风格，
+  契约（`contract.yaml` + 锚点图）定义 prompt 模板与生成参数，素材按契约自动注入
+- **多渠道**：ImageGen（WorkBuddy 内置）/ Codex CLI（本机）/ 未来模型统一产出规格
+- **质量门禁**：`tools/check_sprite_sheet.py` 校验雪碧图（网格/透明/空帧/贴边/居中/粘连），
+  不合格输出返工清单；`tools/postprocess_image.py` 去白成透明 + 调色板量化压缩
+- 当前风格契约：`flat-cartoon`（扁平卡通风，suika 水果 + dodge 飞船/陨石/道具）
 
 ## Project layout
 
