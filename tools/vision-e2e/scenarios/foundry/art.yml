@@ -1,0 +1,39 @@
+# Backpack Foundry —— 买量风素材渲染验证场景（需要 DEEPSEEK_API_KEY）
+#
+# 背景：曾发生"本地 headless 加载 ALL OK 但线上全部空白"的事故
+# （FileAccess.file_exists 在导出包不跟随 .import remap）。
+# 本场景用视觉模型对真实渲染画面断言：背景/HUD 图标/商店建筑图标必须可见。
+game: foundry
+base_url: /
+viewport: { width: 720, height: 1280 }
+
+scenarios:
+  - name: 买量风背景渲染（暖色渐变而非灰底）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    then:
+      - vision_assert:
+          question: 游戏背景是否为橙色/黄色系的暖色渐变（而非纯灰或纯黑底）？
+          expect:
+            warm_bg: true
+
+  - name: HUD 顶栏图标渲染（金币/工人/闪电等小图标可见）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    then:
+      - vision_assert:
+          question: 顶部状态栏里，数字左边是否能看到小图标图形（如蓝色圆环、金色硬币、工人头像、闪电）？
+          expect:
+            hud_icons: true
+
+  - name: 商店卡片建筑图标渲染（非纯色块）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    then:
+      - vision_assert:
+          question: Shop 区域的三张卡片内部是否各有一个卡通建筑图案（齿轮/房屋/机器造型），而不是纯色空白块？
+          expect:
+            shop_icons: true

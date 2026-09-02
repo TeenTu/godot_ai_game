@@ -81,7 +81,9 @@ func _process(_delta: float) -> void:
 
 
 func _try_load_tex(path: String) -> Texture2D:
-	if not FileAccess.file_exists(path):
+	# FileAccess.file_exists() does NOT follow .import remaps in exported
+	# builds (raw .png is stripped from the pck) -> use ResourceLoader.exists.
+	if not ResourceLoader.exists(path, "Texture2D"):
 		return null
 	var t = load(path)
 	if t is Texture2D:

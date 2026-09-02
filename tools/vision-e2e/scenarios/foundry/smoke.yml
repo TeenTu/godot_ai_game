@@ -1,0 +1,35 @@
+# Backpack Foundry —— 测试钩子 + 核心流程场景
+#
+# smoke 部分：?test=1 时 window.__gameState 必须可读（不依赖视觉 API，mock 模式可跑）
+# flow 部分：买卡 → 放置 → 开工，phase 必须推进（PREPARE=0 → PLAY=1）
+game: foundry
+base_url: /
+viewport: { width: 720, height: 1280 }
+
+scenarios:
+  - name: 测试钩子能发布 window.__gameState（round/is_over 可读）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    then:
+      - hook_assert:
+          expect:
+            round: { gte: 1 }
+            is_over: false
+
+  - name: 买卡→放置→开工 全流程（phase 推进到 PLAY）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    when:
+      - click_at: { x: 30, y: 73 } # 商店第一张卡
+      - wait: 700
+      - click_at: { x: 42, y: 37 } # 网格中央格子放置
+      - wait: 700
+      - click_at: { x: 50, y: 97 } # Go! 按钮
+      - wait: 1500
+    then:
+      - hook_assert:
+          expect:
+            phase: { gte: 1 }
+            is_over: false
