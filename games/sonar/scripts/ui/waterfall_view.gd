@@ -29,7 +29,11 @@ var x_min: float = -180.0
 var x_max: float = 180.0
 var db_min: float = -28.0
 var db_max: float = 8.0
-var rows: Array = []  # [{t, values: PackedFloat32Array}]
+# 方位-时间瀑布的显示基准（需求§一.2）：
+#   "rel"   RELATIVE 艇艏相对（默认，艇艏=0，x=-180..180）
+#   "true"  TRUE STABILIZED 真北稳定（x=0..360，逐行按 own course 平移）
+var bearing_mode: String = "rel"
+var rows: Array = []  # [{t, values: PackedFloat32Array, course?(仅bearing)}]
 var cursor_value: float = NAN
 var cursor_time: float = -1.0
 var markers: Array = []  # [{x, color, label}] 竖线标记（谐波/转向）
@@ -75,13 +79,48 @@ func _rebuild_image() -> void:
 	var w: int = maxi(int(rows[0]["values"].size()), 1)
 	var h: int = maxi(rows.size(), 2)
 	_img = Image.create(w, h, false, Image.FORMAT_RGB8)
+	var true_mode: bool = axis_mode == "bearing" and bearing_mode == "true"
 	for r in range(rows.size()):
 		var vals: PackedFloat32Array = rows[r]["values"]
-		for c in range(w):
-			var db: float = float(vals[c]) if c < vals.size() else db_min
-			var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
-			_img.set_pixel(c, h - 1 - r, _cmap(t))
+		if true_mode:
+			# TRUE STABILIZED：该行存储为艇艏相对(-180..180,每格2°)。
+			# 转真北稳定：真角 θt = wrap360(course + rel)，搬移到真方位桶(0..360)。
+			var course: float = float(rows[r].get("course", 0.0))
+			var deg_per_col: float = (x_max - x_min) / float(w)  # 期望 360/w
+			for c in range(vals.size()):
+				var rel: float = x_min + float(c) * deg_per_col  # 该列的相对角度
+				var true_deg: float = fposmod(course + rel, 360.0)
+				var tc: int = clampi(
+					int(floor((true_deg - x_min) / (x_max - x_min) * float(w))),
+					0,
+					w - 1,
+				)
+				var db: float = float(vals[c])
+				var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
+				_img.set_pixel(tc, h - 1 - r, _cmap(t))
+		else:
+			for c in range(w):
+				var db: float = float(vals[c]) if c < vals.size() else db_min
+				var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
+				_img.set_pixel(c, h - 1 - r, _cmap(t))
 	_tex = ImageTexture.create_from_image(_img)
+
+
+## 切换方位瀑布的显示基准（RELATIVE / TRUE STABILIZED），并同步 x 轴范围。
+func set_bearing_mode(mode: String) -> void:
+	if mode != "rel" and mode != "true":
+		return
+	if bearing_mode == mode:
+		return
+	bearing_mode = mode
+	if mode == "true":
+		x_min = 0.0
+		x_max = 360.0
+	else:
+		x_min = -180.0
+		x_max = 180.0
+	_img_dirty = true
+	queue_redraw()
 
 
 func _cmap(t: float) -> Color:
