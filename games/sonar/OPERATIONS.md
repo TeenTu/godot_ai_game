@@ -13,12 +13,22 @@
 │ Bearing  │  - 网格（2000m/格）           │  - 标题            │
 │ Display  │  - OWN 蓝三角（本艇）          │  - Pause/Mark      │
 │ 220px    │  - 本艇历史轨迹（淡蓝线）       │  - Speed 倍速      │
-│          │  - 接触 LOB 线（彩色射线）      │  - Show Truth      │
-│          │  - TMA 轨迹（橙红折线）        │  - 状态栏/接触列表   │
-│          │  - TRIAL 绿点+速度箭头        │  - 本艇机动区       │
-│          │  - SYSTEM 黄圈                │  - TMA 解算区       │
-│          │  - Truth 红方块（调试）        │  - Dot Stack       │
-└──────────┴──────────────────────────────┴───────────────────┘
+│          │  - 历史 LOB 扇形束             │  - Show Truth      │
+│          │    （时间衰减+±2σ扇区，        │  - 状态栏/接触列表   │
+│          │     离群测量画虚线）           │  - 本艇机动区       │
+│          │  - 拟合轨迹（粗实线+白色       │  - Auto Fit TMA    │
+│          │    时间刻度圆点）             │  - 状态机详情面板    │
+│          │  - 备选解（低饱和虚线+权重）    │  - Trial 编辑区     │
+│          │  - TRIAL 绿点+速度箭头        │  - Dot Stack       │
+│          │  - 当前位置不确定圈(1σ/2σ)     │                    │
+│          │  - SYSTEM 黄圈               │                    │
+│          │  - Truth 红方块（调试）        │                    │
+├──────────┴──────────────────────────────┴───────────────────┤
+│ Bearing-Time 图（BearingTimePlot，150px）                      │
+│  - 实测方位点+±1σ误差棒（按 track 着色）                       │
+│  - 最优解预测方位曲线（粗实线）/备选解（虚线）                   │
+│  - 本艇转向时刻竖线；方位跨 0/360 自动展开防跳变                 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -41,28 +51,41 @@
 - 继续等，让 `Meas` 计数增长（每 2 秒 +1 条测量）。
 - **预期**：`Contacts: S01 Brg X° (N meas)` 里的测量数 N 持续增加，S01 是唯一接触。
 
-### 步骤 3：拟合 TMA（核心验证）
-- 点击右侧 **🔄 Fit TMA** 按钮（可能需要向下滚动面板）。
+### 步骤 3：自动拟合 TMA（核心验证）
+- 点击右侧 **Auto Fit TMA** 按钮（可能需要向下滚动面板）。
+- 求解器对全部历史测量做全局多初值 + 稳健拟合，结果写入 **Trial**（不会自动进入 System Solution）。
 - **预期**：
-  - 状态栏出现 `TMA ✓ B..° R..m C..° S..kn RMS..°`。
-  - TMA 解算区的 Bearing/Range/Course/Speed 四个输入框被自动填充。
-  - 海图出现 **TRIAL 绿色圆点 + 速度向量箭头**，以及橙红色 TMA 预测轨迹折线。
-  - Dot Stack 显示 `RMS x.xx° (N pts)`。
+  - 状态面板出现状态机结果之一：
+    `CONVERGED`（收敛）/ `PROVISIONAL`（暂定）/ `INSUFFICIENT_MEASUREMENTS`
+    （测量太少）/ `INSUFFICIENT_GEOMETRY`（单观测腿不可观测）/ `MULTIMODAL`
+    （多解）/ `MANEUVER_SUSPECTED`（疑似目标机动）/ `BOUNDARY_HIT`
+    （解撞搜索边界）/ `STALE`（数据过旧）。
+  - 面板同时显示：RMSE、可观测性 rank/cond、位置/航速不确定度、
+    观测腿数 legs、备选解权重、剔除离群数 rej。
+  - 海图出现拟合轨迹（粗实线）+ **白色时间刻度圆点**（刻度必须落在对应 LOB 上）
+    + 当前位置不确定圈（1σ/2σ）+ 600s 外推预测。
+  - 存在备选解时（权重 ≥0.02）海图显示低饱和虚线轨迹及权重标注。
+  - 底部 Bearing-Time 图出现实测点与模型预测曲线。
+  - TRIAL 绿点被自动拟合结果填充；Dot Stack 显示 `RMS x.xx° (N pts)`
+    （只用 inlier 测量，离群点不计入）。
 
 > ⚠️ 注意（预期行为，非 bug）：
-> 本艇不机动时，纯方位 TMA 存在「近慢/远快」歧义——拟合出的距离/航速
-> 可能明显偏离真值（例如 R 只有几百米而真值几千米）。这是需求文档明确
-> 描述的 TMA 病态特性，需要本艇机动才能收窄。打开 Show Truth 可对照。
+> - 本艇不机动（单观测腿）时纯方位 TMA 不可观测，状态应为
+>   `INSUFFICIENT_GEOMETRY` 或 `MULTIMODAL`，且**不会给出虚假的小误差椭圆**
+>   （协方差仅在单峰且可观测时输出）。
+> - 多解时不会武断选一个，而是列出备选假设及权重，需本艇机动收窄。
 
 ### 步骤 4：本艇机动（验证歧义收窄能力）
 - 在 **Own Ship Maneuver** 区点击「Right 5°」数次（或直接改 Own Course），
   再点「+2kn」一两次。
-- 继续跑 30~60 秒，让新测量积累。
-- 再次点击 **Fit TMA**。
+- 继续跑 30~60 秒，让新测量积累（形成第二观测腿）。
+- 再次点击 **Auto Fit TMA**。
 - **预期**：
-  - 海图 OWN 三角和轨迹明显转向/弯折。
-  - 方位盘艏向（蓝色粗线）随航向改变。
-  - 第二次拟合的解可能变化（不保证必然收敛，但这是玩法核心：多次机动 + 观测）。
+  - 状态面板 `legs` 变为 ≥2（累计基线法按本艇位移方向变化计数）。
+  - 海图 OWN 三角和轨迹明显转向/弯折；Bearing-Time 图出现本艇转向竖线。
+  - 拟合不确定度（Pos ±xx m / Spd ±x.x kn）相比单腿显著收窄。
+  - 若目标本身在转向，状态会变为 `MANEUVER_SUSPECTED`——
+    此时不做离群剔除（连续同号大残差是机动特征，不是坏点）。
 
 ### 步骤 5：Show Truth 调试（验证 Truth 隔离）
 - 勾选 **Show Truth (debug)**。
@@ -74,8 +97,10 @@
 - 在完成一次满意的拟合后，点击 **✅ Enter Solution**。
 - **预期**：
   - 状态栏显示 `System Solution submitted`。
+  - 若当前拟合状态为 `INSUFFICIENT_GEOMETRY` / `MULTIMODAL` / `STALE`，
+    会额外提示 LOW confidence（提交但明确告知置信度低）。
   - 海图出现 **SYSTEM 黄色圆圈**（提交的火控解）。
-  - 之后新测量不会自动改 SYSTEM 解（需重新拟合 + 再次 Enter）。
+  - 之后新测量不会自动改 SYSTEM 解（需重新 Auto Fit + 再次 Enter）。
 
 ### 步骤 7：手动微调 Trial（验证参数编辑）
 - 修改 TMA 区任意参数（如 Bearing 或 Speed），观察海图：
@@ -102,7 +127,11 @@
 
 | 现象 | 说明 |
 |---|---|
-| TMA 距离/航速看起来"不对" | 纯方位 TMA 病态歧义，需机动 + 多观测腿（需求文档验收标准） |
+| 状态显示 INSUFFICIENT_GEOMETRY | 单观测腿不可观测，需本艇机动形成第二腿（正常） |
+| 状态显示 MULTIMODAL | 多个假设权重接近，看海图备选解虚线，机动后重拟合 |
+| 状态显示 STALE | 最新测量已超出 600s 时限（本艇没动也会触发），继续积累数据即可 |
+| 状态显示 BOUNDARY_HIT | 解撞到搜索边界，通常是测量太少或几何病态 |
+| FIT 标签没有 ±xx m | 协方差仅在单峰且可观测时输出，不可观测时故意不给误差椭圆 |
 | 找不到 TMA Course/Speed | 右侧面板需向下滚动（已加 ScrollContainer） |
 | 英文显示 | Web 版 Godot 默认字体无中文字形，已全部英文化 |
 | 接触一直是 S01 | 单目标场景只有一个接触，属正常 |
@@ -118,4 +147,14 @@ godot --headless --path games/sonar --script res://tools/stage1_test.gd
 godot --headless --path games/sonar --script res://tools/stage2_test.gd
 godot --headless --path games/sonar --script res://tools/play_test.gd
 ```
-均需输出 `PASS`。CI（GitHub Actions）每次 push 自动跑 lint + 冒烟 + Web 导出。
+均需输出 `PASS`。其中 play_test 包含 TMA 自动拟合验收测试 7 项
+（两腿精确恢复 / 单腿不可观测 / 0-360 跨越 / 圆弧机动 / 目标机动检测 /
+STALE 时限 / Truth 隔离），输出 `TMA_ACCEPT tN ok` 共 7/7。
+
+UI 截图验证（窗口模式，输出 `tools/ui_preview.png`）：
+```bash
+godot --path games/sonar --script res://tools/ui_snapshot.gd
+```
+预期 fit 状态 `CONVERGED`、`legs=2`（场景中本艇在 240s 处 +70° 转向）。
+
+CI（GitHub Actions）每次 push 自动跑 lint + 冒烟 + Web 导出。
