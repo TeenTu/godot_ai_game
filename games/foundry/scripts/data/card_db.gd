@@ -7,7 +7,7 @@ extends RefCounted
 const BUILDINGS: Array[Dictionary] = [
 	{
 		"id": "mine",
-		"name": "矿场",
+		"name": "Mine",
 		"family": "blue",
 		"size": Vector2i(2, 1),
 		"cost": 3,
@@ -21,7 +21,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "forge",
-		"name": "熔炉",
+		"name": "Forge",
 		"family": "red",
 		"size": Vector2i(1, 1),
 		"cost": 2,
@@ -35,7 +35,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "workshop",
-		"name": "工坊",
+		"name": "Workshop",
 		"family": "amber",
 		"size": Vector2i(2, 1),
 		"cost": 3,
@@ -49,7 +49,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "warehouse",
-		"name": "仓库",
+		"name": "Warehouse",
 		"family": "green",
 		"size": Vector2i(2, 2),
 		"cost": 5,
@@ -63,7 +63,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "market",
-		"name": "市场",
+		"name": "Market",
 		"family": "pink",
 		"size": Vector2i(1, 1),
 		"cost": 2,
@@ -77,7 +77,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "barracks",
-		"name": "兵营",
+		"name": "Barracks",
 		"family": "crimson",
 		"size": Vector2i(2, 1),
 		"cost": 4,
@@ -91,7 +91,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "lab",
-		"name": "实验室",
+		"name": "Lab",
 		"family": "purple",
 		"size": Vector2i(1, 1),
 		"cost": 4,
@@ -105,7 +105,7 @@ const BUILDINGS: Array[Dictionary] = [
 	},
 	{
 		"id": "gearbox",
-		"name": "齿轮箱",
+		"name": "Gearbox",
 		"family": "gray",
 		"size": Vector2i(1, 1),
 		"cost": 1,
@@ -120,14 +120,28 @@ const BUILDINGS: Array[Dictionary] = [
 ]
 
 const ACTIONS: Array[Dictionary] = [
-	{"id": "strike", "name": "猛击", "cost": 1, "flat_power": 3, "mult": 1.0, "flat_gold": 0},
-	{"id": "scrap", "name": "废料", "cost": 0, "flat_power": 1, "mult": 1.0, "flat_gold": 1},
-	{"id": "gear_up", "name": "上齿轮", "cost": 1, "flat_power": 0, "mult": 1.3, "flat_gold": 0},
-	{"id": "blueprint", "name": "蓝图", "cost": 1, "flat_power": 2, "mult": 1.0, "flat_gold": 1},
-	{"id": "rush", "name": "冲刺", "cost": 2, "flat_power": 6, "mult": 1.0, "flat_gold": 0},
-	{"id": "bargain", "name": "砍价", "cost": 0, "flat_power": 0, "mult": 1.0, "flat_gold": 3},
-	{"id": "overclock", "name": "超频", "cost": 2, "flat_power": 0, "mult": 1.6, "flat_gold": 0},
-	{"id": "steal", "name": "偷电", "cost": 1, "flat_power": 4, "mult": 1.0, "flat_gold": 0},
+	{"id": "strike", "name": "Strike", "cost": 1, "flat_power": 3, "mult": 1.0, "flat_gold": 0},
+	{"id": "scrap", "name": "Scrap", "cost": 0, "flat_power": 1, "mult": 1.0, "flat_gold": 1},
+	{"id": "gear_up", "name": "Gear Up", "cost": 1, "flat_power": 0, "mult": 1.3, "flat_gold": 0},
+	{
+		"id": "blueprint",
+		"name": "Blueprint",
+		"cost": 1,
+		"flat_power": 2,
+		"mult": 1.0,
+		"flat_gold": 1
+	},
+	{"id": "rush", "name": "Rush", "cost": 2, "flat_power": 6, "mult": 1.0, "flat_gold": 0},
+	{"id": "bargain", "name": "Bargain", "cost": 0, "flat_power": 0, "mult": 1.0, "flat_gold": 3},
+	{
+		"id": "overclock",
+		"name": "Overclock",
+		"cost": 2,
+		"flat_power": 0,
+		"mult": 1.6,
+		"flat_gold": 0
+	},
+	{"id": "steal", "name": "Steal", "cost": 1, "flat_power": 4, "mult": 1.0, "flat_gold": 0},
 ]
 
 const FAMILY_COLORS: Dictionary = {

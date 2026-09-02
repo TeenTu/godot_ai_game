@@ -6,17 +6,17 @@ extends RefCounted
 ## （幽灵战力 = 玩家历史平均 × 难度系数，见 game_state.gd）。
 
 const NAMES: Array[String] = [
-	"老铁匠",
-	"火炉阿强",
-	"齿轮狂人",
-	"仓库管理员",
-	"蓝领小李",
-	"夜班保安",
-	"流水线女王",
-	"废料大亨",
+	"Iron Mike",
+	"Furnace Karl",
+	"Gear Grinder",
+	"Warehouse Tom",
+	"Bluecollar Lee",
+	"Night Shift",
+	"Assembly Queen",
+	"Scrap Tycoon",
 ]
 
-const BUILD_TYPES: Array[String] = ["火焰", "工业", "商业", "科技"]
+const BUILD_TYPES: Array[String] = ["Fire", "Industry", "Commerce", "Tech"]
 
 
 static func make_ghost(rng: RandomNumberGenerator, difficulty: int) -> Dictionary:

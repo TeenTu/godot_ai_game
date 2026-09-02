@@ -177,11 +177,13 @@ func _test_full_game(seed_val: int, games: int) -> void:
 					game.next_round()
 		_check(
 			game.is_over and game.round == FoundryGame.TOTAL_ROUNDS,
-			"对局 %d 完成 (比分 %d:%d)" % [g + 1, game.my_score, game.ghost_score]
+			"Match %d done (score %d:%d)" % [g + 1, game.my_score, game.ghost_score]
 		)
 		total_power_sum += game.my_score
 		if game.my_score > game.ghost_score:
 			wins += 1
-	print("  战绩: ", wins, "/", games, " 胜 (难度2幽灵, 动态难度跟手式)")
-	# 动态难度特性断言：幽灵贴着你打，应该既有胜也有负，不会 0/N 或 N/N
-	_check(wins > 0 and wins < games, "动态难度产生混合战绩 %d/%d (非碾压)" % [wins, games])
+	print("  Record: ", wins, "/", games, " wins (D2 ghost, AI auto-play)")
+	# Dynamic-difficulty sanity: should produce a mixed record, not all wins or all losses
+	_check(
+		wins > 0 and wins < games, "Dynamic difficulty yields mixed record %d/%d" % [wins, games]
+	)

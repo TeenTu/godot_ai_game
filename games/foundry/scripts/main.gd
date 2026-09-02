@@ -41,10 +41,29 @@ func _ready() -> void:
 	game = FoundryGame.new(0, {})
 	_state = game.to_dict()
 	_bg_texture = _try_load_tex("res://assets/bg/bg_workshop.png")
+	print("[Backpack Foundry v2.0] buy-game art + VS overlay (build=%s)" % _check_art_status())
 	_build_ui()
 	_rebuild()
 	set_process(true)
 	_test_hook_connect()
+
+
+## 启动时检查关键素材是否加载成功，输出到 console（F12 可看）方便用户/我们确认。
+func _check_art_status() -> String:
+	var ok: Array = []
+	var missing: Array = []
+	if _bg_texture != null:
+		ok.append("bg")
+	else:
+		missing.append("bg")
+	for id in ["mine", "forge", "gearbox"]:
+		if _get_building_icon(id) != null:
+			ok.append(id)
+		else:
+			missing.append(id)
+	if missing.is_empty():
+		return "ALL OK (" + ",".join(ok) + ")"
+	return "MISSING=" + ",".join(missing)
 
 
 func _process(_delta: float) -> void:
@@ -173,11 +192,11 @@ func _make_btn(
 func _build_hud() -> void:
 	var bar := _make_panel(self, Vector2(8, 8), Vector2(704, 72), true)
 	var items := [
-		{"key": "round", "label": "回合", "color": COLOR_TEXT_LIGHT},
-		{"key": "score", "label": "比分", "color": COLOR_TEXT_LIGHT},
-		{"key": "gold", "label": "金币", "color": COLOR_GOLD},
-		{"key": "workers", "label": "工人", "color": COLOR_WORKER},
-		{"key": "energy", "label": "能量", "color": COLOR_ENERGY},
+		{"key": "round", "label": "Round", "color": COLOR_TEXT_LIGHT},
+		{"key": "score", "label": "Score", "color": COLOR_TEXT_LIGHT},
+		{"key": "gold", "label": "Gold", "color": COLOR_GOLD},
+		{"key": "workers", "label": "Workers", "color": COLOR_WORKER},
+		{"key": "energy", "label": "Energy", "color": COLOR_ENERGY},
 	]
 	var x := 12
 	for it in items:
@@ -216,7 +235,7 @@ func _build_shop() -> void:
 	var panel := _make_panel(self, Vector2(8, 792), Vector2(704, 196), true)
 	_nodes["shop_panel"] = panel
 	_nodes["shop_title"] = _make_label(
-		panel, "商店", 22, Vector2(16, 10), Vector2(100, 36), COLOR_GOLD
+		panel, "Shop", 22, Vector2(16, 10), Vector2(100, 36), COLOR_GOLD
 	)
 	for i in 3:
 		var card := Button.new()
@@ -233,7 +252,7 @@ func _build_hand() -> void:
 	var panel := _make_panel(self, Vector2(8, 996), Vector2(704, 188), true)
 	_nodes["hand_panel"] = panel
 	_nodes["hand_title"] = _make_label(
-		panel, "手牌", 22, Vector2(16, 8), Vector2(100, 32), COLOR_TEXT_LIGHT
+		panel, "Hand", 22, Vector2(16, 8), Vector2(100, 32), COLOR_TEXT_LIGHT
 	)
 	for i in 5:
 		var card := Button.new()
@@ -247,7 +266,7 @@ func _build_hand() -> void:
 
 
 func _build_action_button() -> void:
-	var btn := _make_btn(self, "开工!", Vector2(150, 1204), Vector2(420, 64), COLOR_BTN)
+	var btn := _make_btn(self, "Go!", Vector2(150, 1204), Vector2(420, 64), COLOR_BTN)
 	btn.pressed.connect(_on_action_pressed)
 	_nodes["btn_action"] = btn
 
@@ -293,13 +312,13 @@ func _refresh_hud() -> void:
 
 func _refresh_opponent() -> void:
 	_set_text("opp_name", "对手 %s D%d" % [_state["ghost_name"], _state["ghost_diff"]])
-	_set_text("opp_type", "流派: " + str(_state["ghost_build"]))
+	_set_text("opp_type", "Style: " + str(_state["ghost_build"]))
 	if game.phase == FoundryGame.Phase.VS or game.phase == FoundryGame.Phase.GAME_OVER:
 		_set_text(
-			"opp_pow", "你 %d  vs 幽灵 %d" % [_state["round_power"], _state["ghost_round_power"]]
+			"opp_pow", "You %d  vs  Ghost %d" % [_state["round_power"], _state["ghost_round_power"]]
 		)
 	else:
-		_set_text("opp_pow", "幽灵战力跟随你")
+		_set_text("opp_pow", "Ghost mirrors your power")
 
 
 func _refresh_grid() -> void:
@@ -417,7 +436,7 @@ func _refresh_hand() -> void:
 		)
 		_make_label(
 			btn,
-			"费用" + str(card["cost"]),
+			"Cost " + str(card["cost"]),
 			14,
 			Vector2(6, 100),
 			Vector2(116, 26),
@@ -432,11 +451,11 @@ func _refresh_action_button() -> void:
 	var btn: Button = _nodes["btn_action"]
 	match game.phase:
 		FoundryGame.Phase.PREPARE:
-			btn.text = "开工!"
+			btn.text = "Go!"
 			btn.visible = true
 			btn.add_theme_stylebox_override("normal", _style_box(COLOR_BTN, 24, 4))
 		FoundryGame.Phase.PLAY:
-			btn.text = "结束回合"
+			btn.text = "End Turn"
 			btn.visible = true
 			btn.add_theme_stylebox_override("normal", _style_box(COLOR_BTN_ALT, 24, 4))
 		FoundryGame.Phase.VS, FoundryGame.Phase.GAME_OVER:
@@ -455,11 +474,11 @@ func _refresh_guide() -> void:
 		else:
 			msg = "平局 %d : %d" % [ms, gs]
 	elif game.round == 1 and game.phase == FoundryGame.Phase.PREPARE:
-		msg = "第 1 步: 点商店买 1 张卡 → 点网格放置 → 点「开工!」"
+		msg = "Step 1: tap Shop to buy a card -> tap grid to place -> tap Go!"
 	elif game.phase == FoundryGame.Phase.PREPARE:
-		msg = "买卡放置，点建筑切换工位(绿框=激活)"
+		msg = "Buy/place cards, tap buildings to toggle workers (green = on)"
 	elif game.phase == FoundryGame.Phase.PLAY:
-		msg = "点手牌打出，然后结束回合"
+		msg = "Play cards (blue = enough energy), then End Turn"
 	elif game.phase == FoundryGame.Phase.VS:
 		var r: String = str(_state["last_result"])
 		if r == "win":
@@ -539,7 +558,7 @@ func _update_preview_est() -> void:
 		if out["gold"] > 0 or out["power"] > 0:
 			lbl.text = "+%d金 +%d战" % [out["gold"], out["power"]]
 		else:
-			lbl.text = "不能放这里"
+			lbl.text = "Cannot place here"
 
 
 ## 试探式计算某位置放置后的产出（不改动棋盘）
@@ -594,11 +613,13 @@ func _on_action_pressed() -> void:
 				var gain: int = game.gold - before
 				_pulse_buildings()
 				if gain > 0:
-					_spawn_float_text(Vector2(360, 860), "金币 +%d" % gain, COLOR_GOLD)
+					_spawn_float_text(Vector2(360, 860), "Gold +%d" % gain, COLOR_GOLD)
 				_rebuild()
 		FoundryGame.Phase.PLAY:
 			if game.finish_play():
-				_spawn_float_text(Vector2(360, 480), "战力 %d" % _state["round_power"], COLOR_POWER)
+				_spawn_float_text(
+					Vector2(360, 480), "Power %d" % _state["round_power"], COLOR_POWER
+				)
 				_rebuild()
 		FoundryGame.Phase.VS:
 			if game.next_round():
@@ -708,7 +729,7 @@ func _build_vs_overlay() -> void:
 	you_fill.size = Vector2(0, 32)
 	panel.add_child(you_fill)
 	_nodes["vs_you_fill"] = you_fill
-	_make_label(panel, "你", 26, Vector2(20, 138), Vector2(60, 44))
+	_make_label(panel, "You", 26, Vector2(20, 138), Vector2(60, 44))
 	var you_num_lbl: Label = _make_label(
 		panel, "0", 30, Vector2(478, 138), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
 	)
@@ -726,7 +747,7 @@ func _build_vs_overlay() -> void:
 	g_fill.size = Vector2(0, 32)
 	panel.add_child(g_fill)
 	_nodes["vs_ghost_fill"] = g_fill
-	_make_label(panel, "幽灵", 26, Vector2(20, 196), Vector2(60, 44))
+	_make_label(panel, "Ghost", 26, Vector2(20, 196), Vector2(60, 44))
 	var ghost_num_lbl: Label = _make_label(
 		panel, "0", 30, Vector2(478, 196), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
 	)
@@ -736,7 +757,9 @@ func _build_vs_overlay() -> void:
 		panel, "", 22, Vector2(20, 256), Vector2(520, 36), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
 	)
 
-	var btn := _make_btn(panel, "下一回合", Vector2(180, 310), Vector2(200, 68), COLOR_BTN_ALT, 30)
+	var btn := _make_btn(
+		panel, "Next Round", Vector2(180, 310), Vector2(200, 68), COLOR_BTN_ALT, 30
+	)
 	btn.pressed.connect(_on_vs_btn)
 	_nodes["vs_btn"] = btn
 
@@ -761,26 +784,29 @@ func _refresh_vs_overlay() -> void:
 		var ms: int = int(_state["my_score"])
 		var gs: int = int(_state["ghost_score"])
 		if ms > gs:
-			_set_text_color("vs_title", "胜 出!", COLOR_GOLD)
+			_set_text_color("vs_title", "VICTORY!", COLOR_GOLD)
 		elif ms < gs:
-			_set_text_color("vs_title", "惜 败", COLOR_POWER)
+			_set_text_color("vs_title", "DEFEAT", COLOR_POWER)
 		else:
-			_set_text_color("vs_title", "平 局", COLOR_TEXT)
-		_set_text("vs_score", "总比分  %d : %d" % [ms, gs])
-		(_nodes["vs_btn"] as Button).text = "再来一局"
+			_set_text_color("vs_title", "DRAW", COLOR_TEXT)
+		_set_text("vs_score", "Final  %d : %d" % [ms, gs])
+		(_nodes["vs_btn"] as Button).text = "Play Again"
 		# GAME_OVER 直接静态显示最终值
 		_set_vs_bars(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
 	else:
 		_set_text_color(
 			"vs_title",
-			"胜!" if result == "win" else ("败!" if result == "lose" else "平局"),
+			"Win!" if result == "win" else ("Lose!" if result == "lose" else "平局"),
 			COLOR_GOLD if result == "win" else (COLOR_POWER if result == "lose" else COLOR_TEXT),
 		)
 		_set_text(
 			"vs_score",
-			"本回合  你 %d  vs  幽灵 %d" % [_state["round_power"], _state["ghost_round_power"]]
+			(
+				"This Round  You %d  vs  Ghost %d"
+				% [_state["round_power"], _state["ghost_round_power"]]
+			)
 		)
-		(_nodes["vs_btn"] as Button).text = "下一回合"
+		(_nodes["vs_btn"] as Button).text = "Next Round"
 		if _vs_played_round != game.round:
 			_vs_played_round = game.round
 			_play_vs_anim(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
