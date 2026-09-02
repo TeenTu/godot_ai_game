@@ -65,8 +65,8 @@
 ```
 quota(n) =
   n<=4  : 2 + n                    # W1..W4 = 3/4/5/6，教学段
-  n<10  : 5 + 2*(n-4)              # W5..W9 = 9/11/13/15/17，稳步加压
-  n>=10 : 18 + 2*(n-10), 上限 30   # W10=18 起台阶，W15 触顶 30
+  n<10  : 9 + 2*(n-5)              # W5..W9 = 9/11/13/15/17，稳步加压
+  n>=10 : 18 + 2*(n-10), 上限 30   # W10=18 起台阶，W16 触顶 30
 ```
 
 要点：W10 从 17 跳到 18 看似温和，但叠加"血量上一档 + 精英波"三者同帧，玩家
@@ -162,7 +162,7 @@ quota(n) =
 | 常量（建议名） | 默认值 | 调整空间 | 说明 |
 |---|---|---|---|
 | `WAVE_QUOTA_EARLY_BASE` | 2 | 2–3 | W≤4：quota = 2+n |
-| `WAVE_QUOTA_MID_BASE` | 5 | 4–6 | W5–9：quota = 5+2*(n-4) |
+| `WAVE_QUOTA_MID_BASE` | 9 | 8–10 | W5–9：quota = 9+2*(n-5) |
 | `WAVE_QUOTA_LATE_BASE` | 18 | 16–20 | W≥10：quota = 18+2*(n-10) |
 | `WAVE_QUOTA_STEP` | 2 | 1–3 | W≥10 每波增量 |
 | `WAVE_QUOTA_CAP` | 30 | 24–36 | 配额封顶（性能红线：同屏 ≤12，见下） |
@@ -196,7 +196,8 @@ quota(n) =
    `wave_cleared` 信号（wave、bonus 数值查表正确）→ step 超过间歇时长 →
    `wave == n+1` 且 `wave_started` 已发。
 2. **配额公式边界**：`_wave_quota(1)==3`、`_wave_quota(4)==6`、`_wave_quota(5)==9`、
-   `_wave_quota(10)==18`、`_wave_quota(15)==30`、`_wave_quota(99)==30`（封顶）。
+   `_wave_quota(10)==18`、`_wave_quota(15)==28`、`_wave_quota(16)==30`（首次触顶）、
+   `_wave_quota(99)==30`（封顶）。
 3. **间歇计时**：`_between_waves == true` 期间 `_next_wave_cd` 按 §3.4 查表值递减；
    W1–4 波间歇为 2.5s（step(2.4) 后未换波、step(2.6) 后已换波）。
 4. **属性缩放**：W5 波 `spawn_enemy_at` 出的敌人 `hp == 4`；W10 波 `hp == 5`、
