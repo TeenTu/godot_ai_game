@@ -30,6 +30,8 @@ var _main: Node
 
 
 func _initialize() -> void:
+	# 固定全局 RNG：游戏逻辑存在未播种的 randf 调用，否则 mixed-record 断言偶发翻车
+	seed(20260902)
 	var ps: PackedScene = load("res://scenes/main.tscn") as PackedScene
 	if ps == null:
 		_failures += 1

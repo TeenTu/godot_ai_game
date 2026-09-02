@@ -119,8 +119,7 @@ func _process(_delta: float) -> void:
 
 
 func _try_load_tex(path: String) -> Texture2D:
-	# FileAccess.file_exists() does NOT follow .import remaps in exported
-	# builds (raw .png is stripped from the pck) -> use ResourceLoader.exists.
+	# Raw .png is stripped from exported pck -> must check via .import remap.
 	if not ResourceLoader.exists(path, "Texture2D"):
 		return null
 	var t = load(path)
@@ -674,6 +673,12 @@ func _on_shop_pressed(idx: int) -> void:
 		return
 	if game.buy_card(idx):
 		_play_sfx("coin")
+		var cost := int(_state["shop"][idx]["cost"])
+		var card: Button = _nodes["shop_%d" % idx]
+		_spawn_float_text(
+			card.global_position + Vector2(46, 40), "-%d Gold" % cost, Color("#FF6B6B")
+		)
+		FoundryJuice.pop(card)
 		_show_dragged_preview()
 		_rebuild()
 
@@ -694,6 +699,7 @@ func _on_action_pressed() -> void:
 			if game.finish_prepare():
 				var gain: int = game.gold - before
 				_play_sfx("go")
+				FoundryJuice.pop(_nodes["btn_action"])
 				_pulse_buildings()
 				if gain > 0:
 					_spawn_float_text(Vector2(360, 860), "Gold +%d" % gain, COLOR_GOLD)
@@ -701,6 +707,7 @@ func _on_action_pressed() -> void:
 		FoundryGame.Phase.PLAY:
 			if game.finish_play():
 				_play_sfx("go")
+				FoundryJuice.pop(_nodes["btn_action"])
 				_spawn_float_text(
 					Vector2(360, 480), "Power %d" % _state["round_power"], COLOR_POWER
 				)
@@ -918,6 +925,7 @@ func _play_vs_anim(you: int, ghost: int, result: String) -> void:
 		return
 	_vs_animating = true
 	_play_sfx("vs")
+	FoundryJuice.shake(self, 6.0, 0.5)
 	var you_fill: ColorRect = _nodes["vs_you_fill"]
 	var ghost_fill: ColorRect = _nodes["vs_ghost_fill"]
 	you_fill.size.x = 0
@@ -936,12 +944,21 @@ func _play_vs_anim(you: int, ghost: int, result: String) -> void:
 		tw.tween_property(you_fill, "modulate", COLOR_GOLD, 0.1)
 		tw.tween_property(you_fill, "modulate", Color.WHITE, 0.25)
 		tw.tween_property(ghost_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
-		tw.tween_callback(func() -> void: _play_sfx("win"))
+		tw.tween_callback(_finish_vs.bind(true))
 	elif result == "lose":
 		tw.tween_property(ghost_fill, "modulate", COLOR_GOLD, 0.1)
 		tw.tween_property(ghost_fill, "modulate", Color.WHITE, 0.25)
 		tw.tween_property(you_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
-		tw.tween_callback(func() -> void: _play_sfx("lose"))
+		tw.tween_callback(_finish_vs.bind(false))
+
+
+## VS 动画落幕：胜负音 + 赢家撒花 / 输家重震
+func _finish_vs(won: bool) -> void:
+	_play_sfx("win" if won else "lose")
+	if won:
+		FoundryJuice.confetti(self, Vector2(360, 380))
+	else:
+		FoundryJuice.shake(self, 11.0, 0.45)
 
 
 func _tween_you_num(v: float) -> void:
