@@ -64,8 +64,7 @@ func _is_test_mode() -> bool:
 	if not Engine.has_singleton("JavaScriptBridge"):
 		return false
 	var v: Variant = Engine.get_singleton("JavaScriptBridge").call(
-		"eval",
-		"new URLSearchParams(location.search).get('test')"
+		"eval", "new URLSearchParams(location.search).get('test')"
 	)
 	if typeof(v) != TYPE_STRING:
 		return false

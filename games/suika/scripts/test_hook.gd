@@ -41,8 +41,7 @@ func _ready() -> void:
 	if in_test:
 		var bridge2: Object = Engine.get_singleton("JavaScriptBridge")
 		var seed_v: Variant = bridge2.call(
-			"eval",
-			"new URLSearchParams(location.search).get('seed')"
+			"eval", "new URLSearchParams(location.search).get('seed')"
 		)
 		if typeof(seed_v) == TYPE_STRING and (seed_v as String) != "":
 			var n: int = int(seed_v)
@@ -78,10 +77,7 @@ func set_seed(n: int) -> void:
 ## JS 的 true/false → GDScript Variant 偶发不正确，字符串最稳。
 func _detect_test_mode() -> bool:
 	var bridge: Object = Engine.get_singleton("JavaScriptBridge")
-	var result: Variant = bridge.call(
-		"eval",
-		"new URLSearchParams(location.search).get('test')"
-	)
+	var result: Variant = bridge.call("eval", "new URLSearchParams(location.search).get('test')")
 	if typeof(result) != TYPE_STRING:
 		return false
 	return (result as String) == "1"
