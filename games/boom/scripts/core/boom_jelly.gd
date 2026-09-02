@@ -18,6 +18,7 @@ const ATTACK_CD: float = 1.3
 const KNOCK_SPEED: float = 4.6
 const HIT_RADIUS: float = 0.95
 const MAX_HP: int = 3
+const RADIUS: float = 0.6
 
 const PALETTES: Array[Color] = [
 	Color(0.45, 0.85, 0.45),  # 草绿
@@ -26,7 +27,12 @@ const PALETTES: Array[Color] = [
 ]
 
 var hp: int = MAX_HP
-var radius: float = 0.6
+var radius: float = RADIUS
+# M4 §3.3/§4：波次阶梯与精英参数由 BoomGame 在出生时写入（不改 FSM）。
+var walk_speed: float = WALK_SPEED
+var lunge_speed: float = LUNGE_SPEED
+var base_scale: float = 1.0  # 精英体型 ×1.4，叠加在动画缩放之上
+var elite: bool = false  # 精英标记（死亡金币雨由 BoomGame 结算）
 var phase: int = Phase.CHASE
 var phase_t: float = 0.0
 var attack_cd: float = 1.2
@@ -218,7 +224,7 @@ func physics_update(
 				phase_t = 0.0
 				lunge_dir = toward
 		Phase.LUNGE:
-			position += lunge_dir * LUNGE_SPEED * delta
+			position += lunge_dir * lunge_speed * delta
 			_apply_scale(Vector3(1.35, 0.62, 1.35))
 			body_mat.emission = Color(1.0, 0.75, 0.3)
 			body_mat.emission_energy_multiplier = 2.0
@@ -234,7 +240,7 @@ func physics_update(
 				if pause_t <= 0.0:
 					# 沿朝向玩家方向走，叠加横摆与随机停顿。
 					var sway := Vector3(toward.z, 0.0, -toward.x) * sin(anim_t * 2.7) * 0.35
-					position += (toward * WALK_SPEED + sway) * delta
+					position += (toward * walk_speed + sway) * delta
 					if randf() < delta * 0.22:
 						pause_t = randf_range(0.25, 0.7)
 				else:
@@ -244,7 +250,8 @@ func physics_update(
 		_telegraph.visible = phase == Phase.WINDUP
 		if _telegraph.visible:
 			var ring_scale := 1.0 + sin(anim_t * 14.0) * 0.12
-			_telegraph.scale = Vector3(ring_scale, 1.0, ring_scale)
+			# 精英 telegraph 放大一档（§4：体型差 + 圈放大，复用同一网格）。
+			_telegraph.scale = Vector3(ring_scale, 1.0, ring_scale) * base_scale
 
 	# 相遇分离：把挤压自己的邻居推开一点，别叠成一坨。
 	for other in others:
@@ -275,4 +282,4 @@ func _apply_scale(target: Vector3) -> void:
 		lerpf(target.y, 0.5, squash) / wobble,
 		lerpf(target.z, 1.35, squash) * wobble
 	)
-	scale = s
+	scale = s * base_scale

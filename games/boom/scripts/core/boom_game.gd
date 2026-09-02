@@ -49,6 +49,38 @@ const RESULT_STAR_WAVE_1: int = 2
 const RESULT_STAR_WAVE_2: int = 4
 const RESULT_STAR_WAVE_3: int = 6
 
+# ---- M4 波次系统（design_m4_waves.md §3/§4/§6，全部数值常量化调参不改逻辑）----
+const WAVE_QUOTA_EARLY_BASE: int = 2  # W≤4：quota = 2+n → 3/4/5/6（教学段）
+const WAVE_QUOTA_EARLY_END: int = 4
+const WAVE_QUOTA_MID_BASE: int = 9  # W5–9：9+2*(n-5) → 9/11/13/15/17（§3.2 列值 + §7.2 断言）
+const WAVE_QUOTA_MID_END: int = 9
+const WAVE_QUOTA_LATE_BASE: int = 18  # W≥10：18+2*(n-10)，W10 台阶
+const WAVE_QUOTA_STEP: int = 2
+const WAVE_QUOTA_CAP: int = 30  # 配额封顶（性能红线：同屏 ≤12）
+# 每 5 波一档（W1-4/W5-9/W10-14/W15-19/W20-24/W25+）→ 有效 HP 3/4/5/6/7/8。
+const WAVE_HP_MULTS: Array[float] = [1.0, 1.34, 1.67, 2.0, 2.34, 2.67]
+# 速度系数分段（W1-9/W10-14/W15-19/W20+）；1.3 为硬红线：再快前摇冲撞不可躲。
+const WAVE_SPEED_MULTS: Array[float] = [1.0, 1.0, 1.1, 1.2, 1.3]
+const WAVE_REST_READY: float = 2.0  # 开局准备时长（W1 首刷前）
+const WAVE_REST_EARLY: float = 2.5  # W1–4 波间歇
+const WAVE_REST_MID: float = 2.0  # W5–9
+const WAVE_REST_LATE: float = 1.5  # W10–14
+const WAVE_REST_MIN: float = 1.0  # W15+（下限）
+const WAVE_REST_EARLY_END: int = 4
+const WAVE_REST_MID_END: int = 9
+const WAVE_REST_LATE_END: int = 14
+const WAVE_BONUS_BASE: int = 20  # 波奖励 = base + wave*per_wave
+const WAVE_BONUS_PER_WAVE: int = 10
+const WAVE_STAGE_EVERY: int = 10  # 台阶波周期（W10/20…）：奖励 ×2
+const WAVE_STAGE_BONUS_MULT: int = 2
+const ELITE_EVERY_N: int = 5  # 每 5 波（W5/10/15…）最后一只为精英
+const ELITE_HP_MULT: float = 3.0  # 精英血量 = 当波有效 HP × 3
+const ELITE_SCALE: float = 1.4  # 精英体型
+const ELITE_SPEED_MULT: float = 0.85  # 精英更慢（更大更肉但好打）
+const ELITE_COIN_COUNT: int = 8  # 死亡金币雨枚数
+const ELITE_COIN_VALUE: int = 5  # 单枚金币值（雨合计 40）
+const MAX_ALIVE_CAP: int = 12  # 同屏上限封顶 9→12（§6 联动）
+
 var player: BoomPlayer
 var enemies: Array = []
 var bullets: Array = []  # BoomBullet 池
@@ -485,10 +517,23 @@ func _finalize_kill(jelly: BoomJelly) -> void:
 	_last_killstop = now
 	_freeze_left = maxf(_freeze_left, dur)
 	enemy_died.emit(jelly.position)
+	if jelly.elite:
+		_elite_coin_rain(jelly.position)
 	enemies.erase(jelly)
 	if is_instance_valid(jelly):
 		remove_child(jelly)
 		jelly.queue_free()
+
+
+## §4 精英死亡金币雨：ELITE_COIN_COUNT 枚 × ELITE_COIN_VALUE 逐枚入账，
+## 逐枚沿 prop_broken 管线散射（表现层复用金币结算 + 飘字，零新增经济系统）。
+func _elite_coin_rain(pos: Vector3) -> void:
+	for i in ELITE_COIN_COUNT:
+		var ang := TAU * float(i) / float(ELITE_COIN_COUNT) + randf_range(-0.25, 0.25)
+		var drop := pos + Vector3(cos(ang), 0.0, sin(ang)) * randf_range(0.5, 1.1)
+		coins += ELITE_COIN_VALUE
+		score += ELITE_COIN_VALUE
+		prop_broken.emit(drop, ELITE_COIN_VALUE)
 
 
 # ------------------------------------------------------------------ 敌人
@@ -502,15 +547,32 @@ func _tick_enemies(delta: float) -> void:
 		jelly.physics_update(delta, player.position, enemies, ENEMY_BOUND_X, ENEMY_BOUND_Z)
 
 
-func spawn_enemy_at(pos: Vector3) -> BoomJelly:
+func spawn_enemy_at(pos: Vector3, elite: bool = false) -> BoomJelly:
 	var jelly := BoomJelly.new()
 	jelly.position = pos
+	_apply_wave_scaling(jelly, elite)
 	enemies.append(jelly)
 	add_child(jelly)
 	return jelly
 
 
-func _spawn_edge_enemy() -> void:
+## §3.3/§4：按当波阶梯缩放敌人属性（hp = round(3*mult)，速度乘系数）；
+## elite 追加参数放大（血 ×3 / 体型 ×1.4 / 速度 ×0.85），不加新 AI 行为。
+func _apply_wave_scaling(jelly: BoomJelly, elite: bool) -> void:
+	var hp := int(round(float(BoomJelly.MAX_HP) * WAVE_HP_MULTS[_hp_tier(wave)]))
+	var sp_mult: float = WAVE_SPEED_MULTS[_speed_tier(wave)]
+	if elite:
+		hp = int(round(float(hp) * ELITE_HP_MULT))
+		sp_mult *= ELITE_SPEED_MULT
+		jelly.elite = true
+		jelly.base_scale = ELITE_SCALE
+		jelly.radius = BoomJelly.RADIUS * ELITE_SCALE
+	jelly.hp = hp
+	jelly.walk_speed = BoomJelly.WALK_SPEED * sp_mult
+	jelly.lunge_speed = BoomJelly.LUNGE_SPEED * sp_mult
+
+
+func _spawn_edge_enemy(elite: bool = false) -> void:
 	for attempt in 12:
 		var side := randi() % 4
 		var pos := Vector3(0.0, 0.0, 0.0)
@@ -524,22 +586,60 @@ func _spawn_edge_enemy() -> void:
 			_:
 				pos = Vector3(ENEMY_BOUND_X, 0.0, randf_range(-ENEMY_BOUND_Z, ENEMY_BOUND_Z))
 		if pos.distance_to(player.position) >= 4.0:
-			spawn_enemy_at(pos)
+			spawn_enemy_at(pos, elite)
 			return
 	# 兜底：随手刷一个远点。
 	var fallback := Vector3(randf_range(-ENEMY_BOUND_X, ENEMY_BOUND_X), 0.0, -ENEMY_BOUND_Z)
-	spawn_enemy_at(fallback)
+	spawn_enemy_at(fallback, elite)
 
 
 # ------------------------------------------------------------------ 波次
 
 
 func _wave_quota(n: int) -> int:
-	return clampi(3 + (n - 1), 3, 24)
+	# §3.2 配额分段：教学段 2+n → 中段每波 +2 → W10 台阶 18 起，封顶 30。
+	if n <= WAVE_QUOTA_EARLY_END:
+		return WAVE_QUOTA_EARLY_BASE + n
+	if n <= WAVE_QUOTA_MID_END:
+		return WAVE_QUOTA_MID_BASE + WAVE_QUOTA_STEP * (n - WAVE_QUOTA_EARLY_END - 1)
+	return mini(
+		WAVE_QUOTA_LATE_BASE + WAVE_QUOTA_STEP * (n - WAVE_QUOTA_MID_END - 1), WAVE_QUOTA_CAP
+	)
+
+
+@warning_ignore("integer_division")
+func _hp_tier(n: int) -> int:
+	# W1-4→0 / W5-9→1 / W10-14→2 / W15-19→3 / W20-24→4 / W25+→5。
+	return mini(n / 5, WAVE_HP_MULTS.size() - 1)
+
+
+@warning_ignore("integer_division")
+func _speed_tier(n: int) -> int:
+	# W1-9→1.0 / W10-14→1.1 / W15-19→1.2 / W20+→1.3（封顶硬红线）。
+	return mini(n / 5, WAVE_SPEED_MULTS.size() - 1)
+
+
+func _wave_rest(n: int) -> float:
+	# §3.4 波间歇阶梯：2.5s 起、每 5 波降 0.5s、下限 1.0s。
+	if n <= WAVE_REST_EARLY_END:
+		return WAVE_REST_EARLY
+	if n <= WAVE_REST_MID_END:
+		return WAVE_REST_MID
+	if n <= WAVE_REST_LATE_END:
+		return WAVE_REST_LATE
+	return WAVE_REST_MIN
+
+
+func _wave_bonus(n: int) -> int:
+	# §3.5 波结算奖励查表；W10/20 台阶波 ×2（台阶仪式感）。
+	var bonus := WAVE_BONUS_BASE + n * WAVE_BONUS_PER_WAVE
+	if n % WAVE_STAGE_EVERY == 0:
+		bonus *= WAVE_STAGE_BONUS_MULT
+	return bonus
 
 
 func _max_alive() -> int:
-	return clampi(2 + wave, 2, 9)
+	return clampi(2 + wave, 2, MAX_ALIVE_CAP)
 
 
 func _spawn_interval() -> float:
@@ -549,7 +649,8 @@ func _spawn_interval() -> float:
 func _begin_wave() -> void:
 	_quota_current = _wave_quota(wave)
 	_spawned_total = 0
-	_spawn_cd = 0.6
+	# W1 首刷前留开局准备时长（§3.4），其后每波 0.6s 内开刷。
+	_spawn_cd = WAVE_REST_READY if wave == 1 else 0.6
 	_between_waves = false
 	wave_started.emit(wave)
 
@@ -565,11 +666,11 @@ func _tick_spawns(delta: float) -> void:
 		return
 	if _spawned_total >= _quota_current:
 		if enemies.is_empty():
-			var bonus: int = 20 + wave * 10
+			var bonus := _wave_bonus(wave)
 			score += bonus
 			wave_cleared.emit(wave, bonus)
 			_between_waves = true
-			_next_wave_cd = 1.8
+			_next_wave_cd = _wave_rest(wave)
 		return
 	if not auto_spawn:
 		return
@@ -578,7 +679,12 @@ func _tick_spawns(delta: float) -> void:
 		if _spawn_cd <= 0.0:
 			_spawn_cd = _spawn_interval()
 			_spawned_total += 1
-			_spawn_edge_enemy()
+			_spawn_edge_enemy(_is_elite_spawn())
+
+
+## §4 精英周期：每 ELITE_EVERY_N 波的最后一只刷出为精英（W5/10/15…）。
+func _is_elite_spawn() -> bool:
+	return wave % ELITE_EVERY_N == 0 and _spawned_total >= _quota_current
 
 
 ## 测试/调试用：标记当前波次已经刷满（配合 spawn_enemy_at 后手动结算波次）。

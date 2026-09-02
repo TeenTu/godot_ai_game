@@ -17,6 +17,13 @@ extends SceneTree
 ##   [skillcd] BoomSkillSystem 冷却：CD 中连发只触发 1 次，CD 归零可再触发
 ##   [m3-logic] M3 纯逻辑：击杀播报阈值(2/3/5→DOUBLE/TRIPLE/RAMPAGE)、结算星级(2/4/6 波)
 ##   [m3-settle] M3 结算状态机：game over → 0.3x 慢镜头 → 恢复 1.0x 启动结算序列
+##   [m4-wave]  M4 波次系统（design_m4_waves.md §7）：
+##              1. 配额分段边界 W1/4/5/9/10/封顶 30
+##              2. 间歇阶梯 2.5/2.0/1.5/1.0 + 清波后 step(2.4) 不换波、越 2.5s 换波
+##              3. 属性阶梯 W1/W5/W10 HP 3/4/5、W10 速度 1.7×1.1、W40 封顶 1.3
+##              4. 精英标记 W5 最后一只/W4 否；精英 HP12/radius 0.84/速度 ×0.85
+##              5. 精英死亡金币雨 8×5=40 逐枚入账；波奖励查表 + 台阶 ×2
+##              6. 同屏上限 12 封顶；auto_spawn=false 手动刷怪回归
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -59,6 +66,7 @@ func _process(_delta: float) -> bool:
 		_test_skill_system_cd()
 		_test_m3_logic()
 		_test_m3_settlement()
+		_test_m4_waves()
 		_finish()
 	return false
 
@@ -429,6 +437,115 @@ func _test_m3_settlement() -> void:
 	_main.call("_end_slowmo")
 	_check(is_equal_approx(Engine.time_scale, 1.0), "慢镜头恢复 1.0x")
 	_check(int(_main.get("_slowmo_until_ms")) == 0, "慢镜头计时已清零（序列已启动）")
+
+
+# ------------------------------------------------------------------ M4 波次系统
+
+
+func _test_m4_waves() -> void:
+	print("[m4-wave]")
+	# §7.2 配额分段公式边界值。
+	var g := _new_game()
+	_check(g._wave_quota(1) == 3, "quota W1 = 3（2+n 教学段）")
+	_check(g._wave_quota(4) == 6, "quota W4 = 6")
+	_check(g._wave_quota(5) == 9, "quota W5 = 9（中段起步）")
+	_check(g._wave_quota(9) == 17, "quota W9 = 17")
+	_check(g._wave_quota(10) == 18, "quota W10 = 18（台阶）")
+	_check(g._wave_quota(99) == 30, "quota W99 封顶 30")
+	# §3.4 间歇阶梯查表。
+	_check(is_equal_approx(g._wave_rest(1), 2.5), "rest W1 = 2.5s")
+	_check(is_equal_approx(g._wave_rest(4), 2.5), "rest W4 = 2.5s")
+	_check(is_equal_approx(g._wave_rest(5), 2.0), "rest W5 = 2.0s")
+	_check(is_equal_approx(g._wave_rest(10), 1.5), "rest W10 = 1.5s")
+	_check(is_equal_approx(g._wave_rest(15), 1.0), "rest W15 = 1.0s（下限）")
+	_check(is_equal_approx(g._wave_rest(40), 1.0), "rest W40 = 1.0s")
+	# §3.5 波奖励查表 + 台阶波 ×2。
+	_check(g._wave_bonus(1) == 30, "bonus W1 = 30")
+	_check(g._wave_bonus(9) == 110, "bonus W9 = 110")
+	_check(g._wave_bonus(10) == 240, "bonus W10 = 240（台阶 ×2）")
+	_check(g._wave_bonus(20) == 440, "bonus W20 = 440（台阶 ×2）")
+	# §6 同屏上限 9→12。
+	g.wave = 8
+	_check(g._max_alive() == 10, "max_alive W8 = 10")
+	g.wave = 10
+	_check(g._max_alive() == 12, "max_alive W10 = 12")
+	g.wave = 50
+	_check(g._max_alive() == 12, "max_alive W50 封顶 12")
+	g.free()
+	# §7.4 属性阶梯：HP 3→4→5、速度 1.0→1.1→1.3 封顶（硬红线）。
+	var g2 := _new_game()
+	_check(g2.spawn_enemy_at(Vector3(0.0, 0.0, -5.0)).hp == 3, "W1 敌 HP = 3")
+	g2.wave = 5
+	_check(g2.spawn_enemy_at(Vector3(2.0, 0.0, 0.0)).hp == 4, "W5 敌 HP = 4")
+	g2.wave = 10
+	var j10 := g2.spawn_enemy_at(Vector3(4.0, 0.0, 0.0))
+	_check(j10.hp == 5, "W10 敌 HP = 5")
+	_check(absf(j10.walk_speed - 1.7 * 1.1) < 0.01, "W10 速度 ≈ 1.7×1.1")
+	_check(absf(j10.lunge_speed - 11.0 * 1.1) < 0.01, "W10 冲撞速度 ≈ 11×1.1")
+	g2.wave = 40
+	var j40 := g2.spawn_enemy_at(Vector3(-4.0, 0.0, 0.0))
+	_check(absf(j40.walk_speed - 1.7 * 1.3) < 0.01, "W40 速度封顶 1.7×1.3（硬红线）")
+	_check(j40.hp == 8, "W40 敌 HP 封顶 = 8")
+	g2.free()
+	# §7.5 精英：W5 最后一只 HP×3 / 体型×1.4 / 速度×0.85，死亡金币雨 40。
+	var g3 := _new_game()
+	g3.wave = 5
+	var elite := g3.spawn_enemy_at(Vector3(0.0, 0.0, -5.0), true)
+	_check(elite.hp == 12, "W5 精英 HP = round(4×3) = 12")
+	_check(absf(elite.radius - 0.6 * 1.4) < 0.001, "精英 radius ≈ 0.6×1.4")
+	_check(absf(elite.walk_speed - 1.7 * 0.85) < 0.01, "精英速度 = 1.7×0.85（更慢）")
+	_check(elite.elite, "精英标记已置位")
+	# 精英只在配额最后一只触发：未满额否 / 满额是 / W4 满额否。
+	g3._quota_current = g3._wave_quota(5)
+	g3._spawned_total = g3._quota_current - 1
+	_check(not g3._is_elite_spawn(), "W5 非最后一只不触发精英")
+	g3._spawned_total = g3._quota_current
+	_check(g3._is_elite_spawn(), "W5 最后一只触发精英")
+	g3.wave = 4
+	g3._quota_current = g3._wave_quota(4)
+	g3._spawned_total = g3._quota_current
+	_check(not g3._is_elite_spawn(), "W4 不触发精英")
+	# 击杀精英 → 金币雨 8×5 = 40 逐枚入账（§7.5 断言总额）。
+	g3.player.invuln_left = 10.0
+	var guard := 0
+	while guard < MAX_FRAMES and not elite.is_dead():
+		guard += 1
+		g3.player.invuln_left = 10.0
+		g3.step(DT)
+	_check(elite.is_dead(), "精英被自动火力击杀")
+	_check(
+		g3.coins == BoomGame.ELITE_COIN_COUNT * BoomGame.ELITE_COIN_VALUE,
+		"精英金币雨入账 40 (coins=%d)" % g3.coins
+	)
+	g3.free()
+	# §7.1/§7.3 波次推进：清波信号查表 bonus → 间歇 2.4s 不换波 → 越 2.5s 换波。
+	var g4 := _new_game()
+	g4.player.invuln_left = 10.0
+	var jelly := g4.spawn_enemy_at(Vector3(0.0, 0.0, -5.5))
+	g4.force_wave_spawned_done()
+	var cleared: Array = []
+	var started: Array = []
+	g4.wave_cleared.connect(func(w: int, b: int) -> void: cleared.append([w, b]))
+	g4.wave_started.connect(func(w: int) -> void: started.append(w))
+	var guard2 := 0
+	while guard2 < MAX_FRAMES and cleared.is_empty():
+		guard2 += 1
+		g4.player.invuln_left = 10.0
+		g4.step(DT)
+	_check(
+		cleared.size() == 1 and cleared[0][0] == 1 and cleared[0][1] == 30,
+		"wave_cleared(1, bonus=30) 查表正确"
+	)
+	_run(g4, int(2.4 / DT))
+	_check(g4.wave == 1, "间歇 2.4s 未换波（W1 间歇 2.5s）")
+	_run(g4, int(0.5 / DT))
+	_check(g4.wave == 2, "越过 2.5s 后推进到 W2")
+	_check(started.size() == 1, "W2 wave_started 已发 (n=%d)" % started.size())
+	# §7.7 auto_spawn=false 回归：手动刷怪路径不受配额逻辑影响。
+	_check(g4.enemies.is_empty(), "auto_spawn=false 无自动刷怪")
+	var manual := g4.spawn_enemy_at(Vector3(0.0, 0.0, -6.0))
+	_check(manual != null and g4.enemies.size() == 1, "手动 spawn_enemy_at 正常入列")
+	g4.free()
 
 
 # ------------------------------------------------------------------ helpers
