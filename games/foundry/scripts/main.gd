@@ -710,8 +710,7 @@ func _build_vs_overlay() -> void:
 	_nodes["vs_you_fill"] = you_fill
 	_make_label(panel, "你", 26, Vector2(20, 138), Vector2(60, 44))
 	var you_num_lbl: Label = _make_label(
-		panel, "0", 30, Vector2(478, 138), Vector2(60, 44),
-		COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
+		panel, "0", 30, Vector2(478, 138), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
 	)
 	_nodes["vs_you_num"] = you_num_lbl
 
@@ -729,8 +728,7 @@ func _build_vs_overlay() -> void:
 	_nodes["vs_ghost_fill"] = g_fill
 	_make_label(panel, "幽灵", 26, Vector2(20, 196), Vector2(60, 44))
 	var ghost_num_lbl: Label = _make_label(
-		panel, "0", 30, Vector2(478, 196), Vector2(60, 44),
-		COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
+		panel, "0", 30, Vector2(478, 196), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
 	)
 	_nodes["vs_ghost_num"] = ghost_num_lbl
 
