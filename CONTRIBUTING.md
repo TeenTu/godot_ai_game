@@ -19,8 +19,11 @@
 
 | worktree / 路径 | 分支 | 负责游戏 | 用途 |
 |---|---|---|---|
-| `E:\Github\godot_ai_game`（主） | `main` | Sonar + 发布把关 | Sonar 主线开发；合并 boom-dev；最终 push main 触发 CI |
-| `E:\Github\worktrees\boom` | `boom-dev` | Boom | Boom 独立开发现场（由 Boom 专属 Agent 使用） |
+| `E:\Github\godot_ai_game`（主） | `main` | **集成发布口（Codex CLI）** | 专职把各 dev 分支解决冲突、起 PR、合并回 main；push main 触发 CI/部署。开发不在此做 |
+| `E:\Github\worktrees\sonar` | `sonar-dev` | Sonar | Sonar 独立开发现场（Sonar Agent 使用） |
+| `E:\Github\worktrees\boom` | `boom-dev` | Boom | Boom 独立开发现场（Boom Agent 使用） |
+
+> main 的集成者是 **Codex CLI**。各游戏 Agent 在自己的 dev worktree 写完一批 → push 到远端 dev 分支 → 交给 Codex CLI 解决冲突并起 PR / 合并回 main（详见 §4）。Agent 不直接 push main。
 
 新增 worktree 的命令（在主仓库执行）：
 
@@ -69,27 +72,29 @@ git worktree remove <路径>               # 移除（先确保分支无未提�
 
 ---
 
-## 4. 分支与合入 main 的节奏（CI 只在 main 跑）
+## 4. 分支与合入 main 的节奏（CI 只在 main 跑；main 集成者是 Codex CLI）
 
-CI（`.github/workflows/deploy.yml`）只在 **push 到 `main`** 时触发并部署。因此：
+CI（`.github/workflows/deploy.yml`）只在 **push 到 `main`** 时触发并部署。
+main 是"集成发布口"，**不是开发场**。分工如下：
 
-- 各游戏开发在**自己的 worktree / 分支**上进行（如 `boom-dev`），可随意 commit、本地跑测试。
-- **合入 `main` 前**该游戏分支应已完成并本地验证通过。
-- 合入方式（推荐 `--no-ff` 保留合并记录）：
-  ```bash
-  # 在要合入的分支上，先同步最新 main
-  git fetch origin
-  git rebase origin/main          # 或 git merge origin/main
-  # 确认没有误删他人文件
-  git diff origin/main --stat --stat | grep -E '^ .*games/(?!<你的>)' || echo "无越界改动"
-  # 切到 main，合入
-  git checkout main
-  git merge --no-ff <你的分支>
-  git push origin main            # 触发 CI
-  ```
-- 合入后**等 CI 全绿**（lint + 全部游戏 export-web 冒烟）。若 CI 失败，先在 main 修复或回退，
-  不要让 main 长期处于红。
-- main 之上不直接做大改；大改走分支合入。
+### 4.1 各游戏 Agent（Sonar / Boom 等）
+
+- 只在**自己的 dev worktree / 分支**（`sonar-dev` / `boom-dev`）上开发：随便 commit、本地跑测试、push 到远端同名 dev 分支。
+- 一批做完了，**不要自己动 main**。通知集成者（Codex CLI）"`sonar-dev` 有一批可合"。
+
+### 4.2 集成者（Codex CLI，唯一允许 push main 的角色）
+
+Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责：
+
+1. 拉取目标 dev 分支 + 最新 main。
+2. **rebase dev 分支到 origin/main**，解决冲突（冲突只可能来自 `shared/` 或公共文件——按 §3 处理；各游戏目录物理隔离不会撞）。
+3. 校验没误删他人文件：`git diff origin/main --stat`，确认没有删除别的 `games/<游戏>/` 文件。
+4. **跑全量冒烟**（见 §5），确认全部游戏 play_test PASS。
+5. 在 `main` 上 `git merge --no-ff <dev分支>`（或通过 GitHub 起 PR 合并）。
+6. `git push origin main` → 触发 CI，等全绿；CI 红则先修或回退。
+
+> 关键：**只有 Codex CLI（集成者）操作 main**。各游戏 Agent 的 push 权限止步于自己的 dev 分支。
+> 这样"谁合入 main、谁来保证 main 始终全绿"职责唯一，从根上杜绝多 Agent 互踩 main。
 
 ---
 
@@ -116,8 +121,9 @@ gdlint games/ shared/ && gdformat --check games/ shared/
 
 ## 6. 目录 / 环境速查（2026-09 迁移后）
 
-- **仓库主工作区**：`E:\Github\godot_ai_game`（main）
+- **仓库主工作区（集成口，Codex CLI）**：`E:\Github\godot_ai_game`（main）
+- **Sonar worktree**：`E:\Github\worktrees\sonar`（sonar-dev）
 - **Boom worktree**：`E:\Github\worktrees\boom`（boom-dev）
-- **旧地址 `E:\OneDrive\Task\godot-web-game` 已废弃清理**，勿再使用。
+- 旧地址 `E:\OneDrive\Task\godot-web-game` 已废弃清理，勿再使用。
 - 仓库：`https://github.com/TeenTu/godot_ai_game` → Pages：`https://teentu.github.io/godot_ai_game/<game>/`
 - Godot 4.5、隔离 Python、gdlint/gdformat、Codex CLI 等详见 `AGENTS.md`。
