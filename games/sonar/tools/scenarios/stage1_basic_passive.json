@@ -24,7 +24,15 @@
     "course_deg": 0.0,
     "speed_kn": 4.0,
     "turn_rate_deg_s": 0.0,
-    "acceleration_kn_s": 0.0
+    "acceleration_kn_s": 0.0,
+    "tow": {
+      "tow_length_m": 400.0,
+      "deploy_time_s": 90.0,
+      "retract_time_s": 60.0,
+      "full_length_heading_tau_s": 45.0,
+      "short_length_heading_tau_s": 8.0,
+      "settle_deg": 3.0
+    }
   },
   "own_acoustic": {
     "broadband_base_level_db": 45.0,

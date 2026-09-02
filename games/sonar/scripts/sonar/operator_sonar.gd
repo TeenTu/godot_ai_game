@@ -121,18 +121,28 @@ func _array_def() -> Dictionary:
 	return ARRAY_DEFS[active_array_id]
 
 
-## 当前阵列的物理航向(deg)：BOW/FLANK = own.course；TOWED 用拖曳阵自身航向
-## （批次2 拖曳阵状态机将注入带转向滞后的 array_heading，此处先回退 own.course）。
+## 当前阵列的物理航向(deg)：BOW/FLANK = own.course；TOWED 用拖曳阵自身航向。
+## TOWED 下优先走 own 的拖曳阵状态机（带转向滞后的 array_heading）；
+## own 未配置拖曳阵时退化为 own.course（与旧行为一致，测试不受影响）。
 func _array_heading_deg() -> float:
-	if (
-		active_array_id == "TOWED"
-		and _own_ref != null
-		and _own_ref.get("array_heading_deg") != null
-	):
-		return float(_own_ref.array_heading_deg)
 	if _own_ref == null:
 		return 0.0
+	if active_array_id == "TOWED":
+		var t: TowedArray = _own_ref.get("towed")
+		if t != null:
+			return t.array_heading_deg
 	return float(_own_ref.course_deg)
+
+
+## TOWED 拖曳阵的"可用度"0..1：部署进度 × 转向沉降。BOW/FLANK 恒 1。
+## OperatorSonar 用它缩放 TOWED 的有效增益/信噪余量，体现"没放完/刚转向时阵弱"。
+func _towed_usable_factor() -> float:
+	if active_array_id != "TOWED" or _own_ref == null:
+		return 1.0
+	var t: TowedArray = _own_ref.get("towed")
+	if t == null:
+		return 1.0
+	return t.usable_fraction()
 
 
 ## 该目标(阵列相对方位)是否落在当前阵列的覆盖内。
@@ -209,6 +219,8 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		if not in_array_coverage(array_rel, def):
 			continue
 		var dir_gain: float = _array_direction_gain_db(array_rel, def)
+		# 拖曳阵可用度（部署/沉降）缩放增益；BOW/FLANK 恒 1
+		dir_gain += 10.0 * log(maxf(_towed_usable_factor(), 1e-3)) / log(10.0)
 		var speed_kn: float = float(tgt.speed_kn)
 		var tl: float = maxf(0.0, 20.0 * log(maxf(rng_m, 1.0)) / log(10.0) * 1.2)
 		var noise: float = _env.effective_noise_db(500.0, own_speed)
