@@ -1,4 +1,4 @@
-# Sonar 操作验证手册（Stage 1-3，TMA 可视化重构版）
+# Sonar 操作验证手册（Stage 1-3）
 
 > 线上地址：https://teentu.github.io/godot_ai_game/sonar/
 > 本地运行：`godot --path games/sonar`（Godot 4.5）
@@ -30,53 +30,6 @@
 │  - 本艇转向时刻竖线；方位跨 0/360 自动展开防跳变                 │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-## 1.5 可视化重构要点（本次新增）
-
-- **接触选择**：Contacts 列表可点击，Auto Fit 只作用于选中接触（Selected: S01 行
-  同步显示 B/R/C/S）；未选中的接触在海图上降到 alpha 0.12。
-- **LOB 减载**：默认只画 ≤24 条代表性 LOB（最新 4 / 最旧 2 / 观测腿边界 / 均匀
-  抽样）；σ 扇区只在悬停或选中测量时显示；离群点红虚线 + X 标记；
-  "All LOB History" 开关可展开全部。
-- **海图相机**：滚轮缩放（1~60 km）、左键拖拽平移、Reset View / Auto Frame；
-  左下比例尺、右上北向标记、自适应 km 网格；右下图例。
-- **拟合轨迹**：白 3px + 橙描边；≤12 个 mm:ss 时间刻度（可点击联动残差图）；
-  备选解 A/B/C 编号 + 三种虚线；Trial 青菱形、System 紫双环。
-- **Bearing-Time 图**（240px）：局部动态纵轴（跨北连续展开），可切 360° Overview；
-  悬停测量 → 海图联动显示 o_i / p_i / z_i / θ̂_i / e_i / e_iσ。
-- **残差图（新增）**：e_i 随时间分布，deg/sigma 轴点击切换，±1/2/3σ 带，
-  RMS/bias/max/used/rej 统计；离群点红 X。
-- **不确定度**：4x4 协方差外推（P_now = F P Fᵀ + Q），海图画 95% 置信椭圆；
-  rank<4 / cond>1e4 / MULTIMODAL 时不画椭圆。
-- **性能**：LOB / BT / 残差数组只在「新测量 / 新拟合 / 选择或图层变化」时重建。
-
-截图回归（7 状态，带渲染环境运行）：
-```bash
-godot --path games/sonar --script res://tools/ui_regression.gd
-# 输出 tools/regression/{NO_FIT,CONVERGED,MULTIMODAL,INSUFFICIENT_GEOMETRY,
-#   STALE,OUTLIER,NORTH_CROSSING}.png
-```
-
-## 1.6 Sonar Operator Layer（阶段三收尾）
-
-- **信息链纪律**：Truth 只进入声场与阵列采样（OperatorSonar.update）；
-  对外输出仅操作员视角数据（瀑布行/分类/DEMON 估计），绝不暴露目标真值。
-  Measurement 只由 玩家 Mark / 已分配 Tracker / Autocrew 产生。
-- **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（±55..125°，高增益高精度）/
-  TOWED（120..240°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
-- **瀑布图**：Broadband（方位-时间，点击游标 Mark）、Narrowband/LOFAR
-  （频率-时间 + DEMON 谐波标记联动）、DEMON 包络谱。
-- **概率分类**：观测（桨叶率/音线数/响度）与情报库模板 softmax → MERCHANT /
-  WARNOTHINGSHIP / SUBSONAR 概率。
-- **DEMON 测速**：轴转速+桨叶数估计；航速用情报库 kn_per_br_hz 先验换算，
-  带 sigma，仅作 TMA 软约束（confidence>0.3 且 sigma<6 才注入 solve_auto）。
-- **默认关闭自动 Mark / 建 Track**；Autocrew 复选框可开（PD≥0.85 自动 Mark）。
-- **无头验收**：`tools/operator_test.gd` —— 玩家不知 Truth：噪声发现(169s) →
-  宽带 41 次 Mark → 窄带识别 MERCHANT → DEMON 测速 12.0±3.6kn(真值12) →
-  本艇 +70° 机动两腿 TMA CONVERGED → 提交 System Solution → 全部断言 PASS。
-  运行：`godot --headless --path games/sonar --script res://tools/operator_test.gd`
-- 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
-  （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 
 ---
 
@@ -167,25 +120,6 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 声呐方位积累 → Mark 接触 / 自动 S01 → 本艇机动 → Fit TMA
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
-
-## 3.5 阶段四：武器与攻击
-
-提交 System Solution 后 🚀 Fire 按钮亮起。鱼雷自决策（不读玩家位置/Truth）：
-
-```
-Fire（仅读 SystemSolution）→ 直航 → 安全距离后 seeker ENABLED
-→ 蛇形 SEARCH → 主动声自导 ACQUIRE（变橙色）
-→ PURSUIT 追踪 → 命中（damage_state=sunk，紫色环消失）
-```
-
-无头验收：
-```bash
-godot --headless --path games/sonar --script res://tools/weapon_test.gd
-# 看到 WEAPON_TEST result=PASS
-```
-
-UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Tubes 标签 / 鱼雷日志（5 行），main_ui
-收到 `fire_requested` 后用自身 own 位置执行发射，武器面板不持有 Truth own。
 
 ---
 

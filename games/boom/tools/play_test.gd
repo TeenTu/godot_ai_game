@@ -9,6 +9,11 @@ extends SceneTree
 ##             3. 命中致死：3 点血被泡泡打到死、击杀计数/分数变化
 ##             4. 波次推进：清空当前波后 wave 增长、获得清波奖励
 ##   [hitnum]  BoomHitNum 飘字池：击杀信号触发 spawn 后池中活跃实例可取
+##   [skills]  M2 技能逻辑（BoomGame.cast_* 直接驱动，不走手势）：
+##             1. fan：cast_fan_shot 返回 5 且子弹池活跃数 +5；命中可击杀单敌
+##             2. chain：三敌各在跳跃范围内 -> enemy_damaged 触发 3 次（链 3 跳）
+##             3. nuke：6m 内 AOE BULLET_DMG*4 致死 + 触发顿帧；范围外不受
+##   [skillcd] BoomSkillSystem 冷却：CD 中连发只触发 1 次，CD 归零可再触发
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -45,6 +50,8 @@ func _process(_delta: float) -> bool:
 		_test_auto_fire_kill()
 		_test_hitnum()
 		_test_wave_advance()
+		_test_skills()
+		_test_skill_system_cd()
 		_finish()
 	return false
 
@@ -85,6 +92,8 @@ func _test_smoke() -> void:
 	_check(has_joy, "joystick 已构建")
 	_check(has_fx, "fx 已构建")
 	_check(_main.get("hitnum") != null, "hitnum 飘字模块已注入")
+	_check(_main.get("skill_sys") != null, "skill_sys 技能系统已注入")
+	_check(_main.get("skill_fx") != null, "skill_fx 技能特效已注入")
 	if not has_sim:
 		return
 	var sim := _main.get("sim") as BoomGame
@@ -194,6 +203,106 @@ func _test_wave_advance() -> void:
 			pass
 	_check(g.wave == 2, "清空首波后 wave 推进到 2")
 	_check(g.score >= 10, "击杀 + 清波奖励后分数累积 (score=%d)" % g.score)
+
+
+# ------------------------------------------------------------------ M2 技能（BoomGame 层）
+
+
+func _test_skills() -> void:
+	print("[skills]")
+	# 3 个独立游戏实例，避免击杀/顿帧串扰，保证各自断言干净。
+	_test_fan_hit()
+	_test_chain_hits()
+	_test_nuke_aoe()
+
+
+func _test_fan_hit() -> void:
+	var g := _new_game()
+	g.player.invuln_left = 10.0
+	# 正前方放一个敌人，扇形中线对准它。
+	var jelly := g.spawn_enemy_at(Vector3(0.0, 0.0, -5.0))
+	var before: int = _active_bullets(g)
+	var n: int = g.cast_fan_shot()
+	_check(n == BoomGame.FAN_COUNT, "fan 发射 %d 发 (返回 %d)" % [BoomGame.FAN_COUNT, n])
+	_check(_active_bullets(g) == before + BoomGame.FAN_COUNT, "fan 后活跃子弹 +%d" % BoomGame.FAN_COUNT)
+	# 让扇形子弹飞行命中单敌（3HP，多发齐中应致死）。
+	var guard := 0
+	while guard < MAX_FRAMES and not jelly.is_dead():
+		guard += 1
+		g.player.invuln_left = 10.0
+		g.step(DT)
+	_check(jelly.is_dead(), "fan 扇形 5 发命中单敌致死")
+
+
+func _test_chain_hits() -> void:
+	var g := _new_game()
+	g.player.invuln_left = 10.0
+	# 三个敌人彼此链式分布在跳跃范围内（8m 内），首跳从最近敌人起。
+	var a := g.spawn_enemy_at(Vector3(0.0, 0.0, -3.0))
+	var b := g.spawn_enemy_at(Vector3(0.0, 0.0, -3.0 - 4.0))
+	var c := g.spawn_enemy_at(Vector3(0.0, 0.0, -3.0 - 8.0))
+	# a 距玩家最近(-3)，a->b 4m，b->c 4m，均在链程内。
+	# GDScript lambda 对局部 int 按值捕获，必须用容器(Array)承载计数才能回写。
+	var dmg_box: Array = [0]
+	g.enemy_damaged.connect(func(_pos: Vector3, _dir: Vector3) -> void: dmg_box[0] += 1)
+	g.cast_chain_arc()  # 返回值(命中数组)仅当致死才填；此处以 damaged 计数为准。
+	var damaged: int = dmg_box[0]
+	# 每跳至少造成 1 伤害：三次伤害跳各触发一次 damaged。
+	_check(damaged == 3, "chain 命中 3 个不同敌人 (damaged=%d)" % damaged)
+	_check(not a.is_dead() and not b.is_dead() and not c.is_dead(), "chain 三敌未被秒杀（各受少量伤害）")
+
+
+func _test_nuke_aoe() -> void:
+	var g := _new_game()
+	g.player.invuln_left = 10.0
+	# 范围内敌（玩家原点，4m < 6m）应被 4 伤害一击秒；范围外(8m)不受。
+	var inside := g.spawn_enemy_at(Vector3(4.0, 0.0, 0.0))
+	var outside := g.spawn_enemy_at(Vector3(8.0, 0.0, 0.0))
+	var dmg_before: float = g._freeze_left
+	var hits: Array = g.cast_aoe_nuke()
+	_check(hits.size() == 1, "nuke 命中 1 个范围内敌 (hits=%d)" % hits.size())
+	_check(inside.is_dead(), "nuke 范围内敌被 4 伤秒杀")
+	_check(g.kills == 1, "nuke 击杀计数 +1")
+	_check(outside.is_dead() == false, "nuke 范围外敌未受伤害")
+	_check(g._freeze_left >= 0.14 and g._freeze_left > dmg_before, "nuke 命中触发 0.14s 顿帧")
+
+
+# ------------------------------------------------------------------ BoomSkillSystem 冷却
+
+
+func _test_skill_system_cd() -> void:
+	print("[skillcd]")
+	var g := _new_game()
+	var sys := BoomSkillSystem.new()
+	sys.game = g
+	g.add_child(sys)
+	# GDScript lambda 按值捕获局部 int；用容器承载计数才能跨信号累加。
+	var fired_box: Array = [0]
+	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
+	# 就绪态第一次 tap 应触发 fan。
+	sys.handle_tap()
+	var fired_count: int = fired_box[0]
+	_check(fired_count == 1, "就绪态 tap 触发 fan 1 次")
+	var st: Dictionary = sys.get_state()
+	_check(st["fan"] > 0.0, "fan 施放后进入 CD (cooldown_left=%.2f)" % st["fan"])
+	# 冷却中连发不触发（fan CD 3s 未到）。
+	sys.handle_tap()
+	fired_count = fired_box[0]
+	_check(fired_count == 1, "CD 中 tap 不重复触发 fan")
+	# 其它技能独立不受 fan CD 影响。
+	sys.handle_swipe_left()
+	sys.handle_swipe_right()
+	fired_count = fired_box[0]
+	_check(fired_count == 3, "chain/nuke 就绪，另两技能仍可触发 (fired=%d)" % fired_count)
+	# 越过 fan CD 后即可再次触发。
+	sys.tick(BoomSkillSystem.FAN_COOLDOWN + 0.1)
+	var st2: Dictionary = sys.get_state()
+	_check(st2["fan"] <= 0.0, "tick 越过 CD 后 fan 冷却归零 (%.2f)" % st2["fan"])
+	sys.handle_tap()
+	fired_count = fired_box[0]
+	_check(fired_count == 4, "CD 归零后 tap 再触发 fan (fired=%d)" % fired_count)
+	g.remove_child(sys)
+	sys.free()
 
 
 # ------------------------------------------------------------------ helpers

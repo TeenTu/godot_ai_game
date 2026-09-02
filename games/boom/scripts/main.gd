@@ -6,6 +6,12 @@ extends Node
 const HUD_W: float = 720.0
 const HUD_H: float = 1280.0
 
+# ---- M2 技能手势区 / 识别参数（design_m2_danmaku.md §2）----
+const SKILL_ZONE_X: float = 0.65  # 触点 x 归一 > 0.65 = 右侧技能手势区
+const TAP_MAX_TIME: float = 0.20
+const TAP_MAX_DIST: float = 14.0
+const SWIPE_MIN_DIST: float = 110.0
+
 const COL_BUBBLE: Color = Color(0.45, 0.85, 1.0)
 const COL_ENEMY: Color = Color(0.55, 0.9, 0.5)
 const COL_ACCENT: Color = Color(1.0, 0.9, 0.5)
@@ -18,6 +24,11 @@ var fx: BoomFx
 var hitnum: BoomHitNum
 var audio: BoomAudio
 var joystick: GameKitVirtualJoystick
+var skill_sys: BoomSkillSystem
+var skill_fx: BoomSkillFx
+
+# M2 手势识别状态：touch_index -> {sx,sy,t,dx,dy}
+var _gestures: Dictionary = {}
 
 var _score_label: Label
 var _wave_label: Label
@@ -51,6 +62,12 @@ func _ready() -> void:
 	world.add_child(cam)
 	audio = BoomAudio.new()
 	add_child(audio)
+	# M2 技能：逻辑系统 + 视觉 FX（先建逻辑，main.gd 在 physics 里 tick；FX 挂 world）。
+	skill_sys = BoomSkillSystem.new()
+	skill_sys.game = sim
+	add_child(skill_sys)
+	skill_fx = BoomSkillFx.new()
+	world.add_child(skill_fx)
 	_build_hud()
 	_connect_signals()
 	_started = true
@@ -61,6 +78,8 @@ func _physics_process(_delta: float) -> void:
 	if not _started or sim == null:
 		return
 	sim.input_move = joystick.output
+	if skill_sys != null:
+		skill_sys.tick(_delta)
 	_dmg_flash = maxf(0.0, _dmg_flash - _delta * 2.4)
 	_vignette.color.a = _dmg_flash
 	# 击杀白闪淡出：峰值 0.15、~3.0/s → ≤50ms 归零（§3.3 防晕铁律 3）。
@@ -68,6 +87,60 @@ func _physics_process(_delta: float) -> void:
 	if _kill_white != null:
 		_kill_white.color.a = _kill_white_a
 	_hud_refresh()
+
+
+# ------------------------------------------------------------------ M2 技能手势
+
+
+## 把屏幕/物理坐标经 canvas 逆变换回 720×1280 设计空间（与摇杆同一坐标系）。
+func _to_canvas(sp: Vector2) -> Vector2:
+	return get_viewport().get_canvas_transform().affine_inverse() * sp
+
+
+## 屏幕右侧(触点设计x > 屏宽*SKILL_ZONE_X)的触摸由本节点做手势识别：
+## tap = 爆裂弹幕 / ←swipe = 闪电链 / →swipe = 核爆。
+## 左侧触点不在此处理——交给虚拟摇杆(DYNAMIC,已设 exclude_right_x)。
+func _input(event: InputEvent) -> void:
+	if skill_sys == null or sim == null:
+		return
+	if event is InputEventScreenTouch:
+		var idx: int = event.index
+		var cp: Vector2 = _to_canvas(event.position)
+		if event.pressed:
+			# 仅在右侧技能区开一条手势轨迹。
+			if cp.x > HUD_W * SKILL_ZONE_X:
+				_gestures[idx] = {
+					"sx": cp.x,
+					"sy": cp.y,
+					"t": Time.get_ticks_msec(),
+					"dx": 0.0,
+					"dy": 0.0,
+				}
+			return
+		# 释放：归类手势。
+		if not _gestures.has(idx):
+			return
+		var g: Dictionary = _gestures[idx]
+		_gestures.erase(idx)
+		var dt: float = float(Time.get_ticks_msec() - int(g["t"])) / 1000.0
+		var dist: float = Vector2(g["dx"], g["dy"]).length()
+		var adx: float = absf(g["dx"])
+		var ady: float = absf(g["dy"])
+		if dt <= TAP_MAX_TIME and dist <= TAP_MAX_DIST:
+			skill_sys.handle_tap()
+		elif adx >= SWIPE_MIN_DIST and adx > ady * 2.0:
+			if g["dx"] < 0.0:
+				skill_sys.handle_swipe_left()
+			else:
+				skill_sys.handle_swipe_right()
+	elif event is InputEventScreenDrag:
+		var idx: int = event.index
+		if not _gestures.has(idx):
+			return
+		var cp: Vector2 = _to_canvas(event.position)
+		var g: Dictionary = _gestures[idx]
+		g["dx"] = cp.x - g["sx"]
+		g["dy"] = cp.y - g["sy"]
 
 
 ## vision-e2e 用：与 test_hook.gd::_detect_test_mode 语义一致。
@@ -85,7 +158,8 @@ func _is_test_mode() -> bool:
 
 
 func _test_hook_get_state() -> Dictionary:
-	return {
+	var jg: Dictionary = joystick.get_debug_geom()
+	var state: Dictionary = {
 		"score": sim.score,
 		"wave": sim.wave,
 		"kills": sim.kills,
@@ -97,7 +171,20 @@ func _test_hook_get_state() -> Dictionary:
 		"over": sim.is_over,
 		"x": sim.player.position.x,
 		"z": sim.player.position.z,
+		"joy_pressed": jg["pressed"],
+		"joy_bx": jg["base_x"],
+		"joy_by": jg["base_y"],
+		"joy_kx": jg["knob_x"],
+		"joy_ky": jg["knob_y"],
 	}
+	if skill_sys == null:
+		return state
+	var sk: Dictionary = skill_sys.get_state()
+	state["sk_fan"] = sk["fan"]
+	state["sk_chain"] = sk["chain"]
+	state["sk_nuke"] = sk["nuke"]
+	state["sk_ready"] = sk["ready"]
+	return state
 
 
 func _active_bullet_count() -> int:
@@ -119,6 +206,33 @@ func _connect_signals() -> void:
 	sim.wave_started.connect(_on_wave_started)
 	sim.wave_cleared.connect(_on_wave_cleared)
 	sim.game_over.connect(_on_game_over)
+	skill_sys.skill_fired.connect(_on_skill_fired)
+
+
+func _on_skill_fired(skill_id: String, result: Variant) -> void:
+	var ppos: Vector3 = sim.player.position
+	var hits: Array = result if result is Array else []
+	match skill_id:
+		"fan":
+			audio.play("shoot", -9.0)
+			skill_fx.muzzle_flash(
+				ppos + Vector3(0.0, 0.5, 0.0), sim.player.facing, BoomSkillSystem.FAN_COLOR
+			)
+		"chain":
+			audio.play("graze", -6.0)
+			if not hits.is_empty():
+				var prev: Vector3 = ppos + Vector3(0.0, 0.5, 0.0)
+				for jelly in hits:
+					var hp: Vector3 = (jelly as BoomJelly).position + Vector3(0.0, 0.5, 0.0)
+					skill_fx.arc_bolt(prev, hp, BoomSkillSystem.CHAIN_COLOR)
+					prev = hp
+				_show_toast("CHAIN!")
+		"nuke":
+			audio.play("boom", -4.0)
+			_trigger_kill_flash()
+			skill_fx.shockwave(ppos, BoomGame.NUKE_RADIUS, BoomSkillSystem.NUKE_COLOR)
+			skill_fx.burst(ppos + Vector3(0.0, 0.6, 0.0), BoomSkillSystem.NUKE_COLOR, 40)
+			_show_toast("NUKE!")
 
 
 func _on_shot_fired(pos: Vector3) -> void:
@@ -283,7 +397,7 @@ func _build_hud() -> void:
 
 	_hint_label = _make_label(
 		hud,
-		"DRAG TO MOVE  \u00b7  AUTO FIRE",
+		"LEFT: MOVE   \u00b7  RIGHT TAP: FAN   \u00b7  \u2190 CHAIN   \u2192 NUKE",
 		16,
 		Color(1, 1, 1, 0.35),
 		Vector2(0, 1058),
@@ -325,6 +439,7 @@ func _build_joystick(hud: Control) -> void:
 	joystick.base_radius = 84.0
 	joystick.knob_radius = 34.0
 	joystick.dead_zone = 0.08
+	joystick.exclude_right_x = SKILL_ZONE_X
 	joystick.position = Vector2(8, 900)
 	joystick.size = Vector2(360, 372)
 	hud.add_child(joystick)

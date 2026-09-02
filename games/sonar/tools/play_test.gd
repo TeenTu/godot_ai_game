@@ -62,9 +62,6 @@ func _stage3_smoke() -> bool:
 	var ui: Control = (load("res://scripts/ui/main_ui.gd") as GDScript).new()
 	root.add_child(ui)
 	await process_frame
-	# Operator Layer 默认关闭自动测量；本冒烟测试模拟 Autocrew 模式
-	if ui.world != null:
-		ui.world.auto_measurements = true
 	# headless --script 下引擎不自动调节点 _process，这里显式推进仿真
 	for i in range(12):
 		ui._process(0.5)
@@ -85,24 +82,16 @@ func _stage3_smoke() -> bool:
 	var track_count: int = ui.tracker.count()
 	var sim_time: float = ui.world.sim_time
 
-	# TMA 拟合链路冒烟：推进足够测量后选中接触再 Auto Fit，验证 last_fit 与注入
+	# TMA 拟合链路冒烟：推进足够测量后调 Auto Fit，验证 last_fit 与注入
 	for i in range(120):
 		ui._process(0.5)
-	if ui.selected_track_id == "":
-		for t in ui.tracker.all_tracks():
-			if t.state == Track.TrackState.ACTIVE:
-				ui.selected_track_id = t.track_id
-				break
-	ui._dirty = true
-	ui._rebuild_display_data()
 	ui._on_fit_tma()
 	var fit_ok: bool = (
 		not ui.last_fit.is_empty()
 		and bool(ui.last_fit.get("success", false))
 		and not ui._chart.fit_hypotheses.is_empty()
-		and not ui._chart.fit_ticks.is_empty()
+		and not ui._chart.fit_meas_times.is_empty()
 		and not ui._bt_plot.model_curves.is_empty()
-		and not ui._res_plot.residuals.is_empty()
 	)
 	if not fit_ok:
 		print("PLAY_TEST result=FAIL (stage3 fit flow: last_fit/injection incomplete)")
