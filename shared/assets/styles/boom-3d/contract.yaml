@@ -1,0 +1,25 @@
+id: boom-3d
+name: 高饱和暖色 3D 卡通风
+description: >-
+  高饱和暖色 3D 卡通风格，为竖屏俯视角解压割草射击《砰砰小队》定制。气质像
+  永远亮着暖阳的游乐园气球大战：暖橙(#FF8A3D)与亮青(#2BD9FF)撞色、金币金(#FFC93C)
+  点缀；圆润软体大圆角剪影，果冻/气球/泡泡质感的可爱敌怪；柔和漫射光、低对比、
+  无硬阴影、无黑色描边；危险预警用正红(#FF3B4E)小面积信号色。注意：本契约产出
+  2D 贴图与图标资源（供 3D 模型贴图或 UI 使用），不是 3D 模型网格，不画文字与
+  真实武器，不出现照片写实质感。
+anchor: anchor.png
+prompt_template: >-
+  高饱和暖色 3D 卡通渲染游戏贴图，{subject}，圆润软体大圆角剪影，暖橙(#FF8A3D)
+  与亮青(#2BD9FF)撞色、金币金(#FFC93C)点缀，果冻或气球或糖果糖渍质感，柔和漫射光、
+  低对比、无硬阴影、无黑色描边，主体居中且完整，透明背景，无文字无水印，无照片写实感
+# 各分类在 prompt_template 后追加的指令（供素材请求方/生图 agent 按类目拼接）：
+#   characters / enemies : "{角色或敌人造型描述，见 docs/art_bible_boom.md §7/§8}，面向镜头"
+#   props                : "单个可破坏物或道具，{对象}，圆角造型"
+#   icons                : "单个圆润游戏图标，{对象}，圆底卡片构图，高对比纯色"
+#   backgrounds          : "竖向全屏氛围背景，{场景}，允许方形底，暖橙到亮青柔和渐变"
+#   floors               : "俯视无缝平铺地面纹理，{材质}，top-down tileable，边缘必须循环"
+image_params:
+  size: 1024x1024
+  quality: high
+  background: transparent
+categories: [characters, enemies, props, icons, backgrounds, floors]
