@@ -231,3 +231,37 @@ static func summary(r: Dictionary) -> String:
 	for ln in lines:
 		text += ln + "\n"
 	return text
+
+
+static func outlier_times(last_fit: Dictionary, track_id: String) -> Dictionary:
+	var out: Dictionary = {}
+	if last_fit.is_empty() or str(last_fit.get("track_id", "")) != track_id:
+		return out
+	for res in last_fit.get("residuals", []):
+		if not bool(res.get("inlier", true)):
+			out[float(res["time"])] = true
+	return out
+
+
+static func leg_boundary_times(meas: Array) -> Array:
+	var ms: Array = meas
+	var turns: Array = []
+	if ms.size() < 3:
+		return turns
+	var anchor := Vector2(ms[0].observer_east_m, ms[0].observer_north_m)
+	var prev_heading: float = INF
+	for i in range(1, ms.size()):
+		var cur := Vector2(ms[i].observer_east_m, ms[i].observer_north_m)
+		var d: Vector2 = cur - anchor
+		if d.length() < 10.0:
+			continue
+		var heading: float = rad_to_deg(atan2(d.x, d.y))
+		if prev_heading != INF and absf(NavUtils.angle_diff(heading, prev_heading)) > 15.0:
+			turns.append(ms[i].timestamp)
+		prev_heading = heading
+		anchor = cur
+	return turns
+
+
+static func own_turn_times(ms: Array) -> Array:
+	return leg_boundary_times(ms)

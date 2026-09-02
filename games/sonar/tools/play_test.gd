@@ -62,6 +62,9 @@ func _stage3_smoke() -> bool:
 	var ui: Control = (load("res://scripts/ui/main_ui.gd") as GDScript).new()
 	root.add_child(ui)
 	await process_frame
+	# Operator Layer 默认关闭自动测量；本冒烟测试模拟 Autocrew 模式
+	if ui.world != null:
+		ui.world.auto_measurements = true
 	# headless --script 下引擎不自动调节点 _process，这里显式推进仿真
 	for i in range(12):
 		ui._process(0.5)

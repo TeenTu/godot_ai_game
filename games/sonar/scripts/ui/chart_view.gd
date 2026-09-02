@@ -330,6 +330,8 @@ func _draw_lobs() -> void:
 	var t_latest: float = -INF
 	for lob in reps:
 		t_latest = maxf(t_latest, float(lob["time"]))
+	# 矢量线：LOB 是射线，屏幕空间延伸到海图边界，缩放不改变线型。
+	var ray_len_px: float = size.length() * 1.5
 	for lob in reps:
 		var t: float = float(lob["time"])
 		var is_latest: bool = t >= t_latest
@@ -338,9 +340,8 @@ func _draw_lobs() -> void:
 		var col: Color = lob.get("color", Color(1.0, 0.85, 0.3))
 		var origin_s := world_to_screen(lob["origin"])
 		var brad: float = deg_to_rad(float(lob["bearing_deg"]))
-		var dir := Vector2(sin(brad), cos(brad))
-		var end_w: Vector2 = lob["origin"] + dir * view_radius_m * 1.3
-		var end_s := world_to_screen(end_w)
+		var dir_px := Vector2(sin(brad), -cos(brad))  # 屏幕 y 向下
+		var end_s: Vector2 = origin_s + dir_px * ray_len_px
 		if not inlier:
 			_draw_dashed(origin_s, end_s, COL_OUTLIER, 1.5)
 			_draw_x(origin_s, COL_OUTLIER)

@@ -14,6 +14,9 @@ extends RefCounted
 var world: Dictionary = {}
 var sim_time: float = 0.0
 var measurements: Array = []  # 全部生成的 Measurement
+# Operator Layer：false 时传感器不再自动产生 Measurement，
+# 测量只能由玩家 Mark / 已分配 Tracker / Autocrew 产生。
+var auto_measurements: bool = true
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
 var _paused: bool = false
 var _time_scale: float = 1.0
@@ -34,6 +37,9 @@ func load_scenario(scenario: Dictionary) -> void:
 func tick() -> void:
 	if _paused:
 		return
+	if not auto_measurements:
+		_advance_only()
+		return
 	var dt: float = world["dt"]
 	sim_time += dt
 
@@ -48,6 +54,15 @@ func tick() -> void:
 		if sim_time >= next_t:
 			_emit_for_sensor(sensor)
 			_sensor_timers[sensor.sensor_id] = sim_time + sensor.update_interval_s
+
+
+## 仅推进实体运动（Operator 模式：无自动测量）。
+func _advance_only() -> void:
+	var dt: float = world["dt"]
+	sim_time += dt
+	world["own"].advance(dt)
+	for t in world["targets"]:
+		t.advance(dt)
 
 
 ## 为某个传感器生成一次测量（针对所有目标）。

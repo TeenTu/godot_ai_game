@@ -57,6 +57,27 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 #   STALE,OUTLIER,NORTH_CROSSING}.png
 ```
 
+## 1.6 Sonar Operator Layer（阶段三收尾）
+
+- **信息链纪律**：Truth 只进入声场与阵列采样（OperatorSonar.update）；
+  对外输出仅操作员视角数据（瀑布行/分类/DEMON 估计），绝不暴露目标真值。
+  Measurement 只由 玩家 Mark / 已分配 Tracker / Autocrew 产生。
+- **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（±55..125°，高增益高精度）/
+  TOWED（120..240°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
+- **瀑布图**：Broadband（方位-时间，点击游标 Mark）、Narrowband/LOFAR
+  （频率-时间 + DEMON 谐波标记联动）、DEMON 包络谱。
+- **概率分类**：观测（桨叶率/音线数/响度）与情报库模板 softmax → MERCHANT /
+  WARNOTHINGSHIP / SUBSONAR 概率。
+- **DEMON 测速**：轴转速+桨叶数估计；航速用情报库 kn_per_br_hz 先验换算，
+  带 sigma，仅作 TMA 软约束（confidence>0.3 且 sigma<6 才注入 solve_auto）。
+- **默认关闭自动 Mark / 建 Track**；Autocrew 复选框可开（PD≥0.85 自动 Mark）。
+- **无头验收**：`tools/operator_test.gd` —— 玩家不知 Truth：噪声发现(169s) →
+  宽带 41 次 Mark → 窄带识别 MERCHANT → DEMON 测速 12.0±3.6kn(真值12) →
+  本艇 +70° 机动两腿 TMA CONVERGED → 提交 System Solution → 全部断言 PASS。
+  运行：`godot --headless --path games/sonar --script res://tools/operator_test.gd`
+- 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
+  （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
+
 ---
 
 ## 2. 验证流程（推荐顺序）

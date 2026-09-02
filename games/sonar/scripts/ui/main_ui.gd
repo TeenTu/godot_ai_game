@@ -30,6 +30,8 @@ var system_sol: SystemSolution = null
 var dot_stack: DotStack = null
 var last_fit: Dictionary = {}  # 最近一次 TmaFitResult（含 track_id）
 var selected_track_id: String = ""
+var op: OperatorSonar = null  # Sonar Operator Layer（Truth 只进这里）
+var _op_panel: OperatorPanel = null
 
 var _chart: ChartView = null
 var _bearing: BearingDisplay = null
@@ -46,6 +48,7 @@ var _btn_fit: Button = null
 var _btn_enter: Button = null
 var _lbl_selected: Label = null
 var _lbl_tma: Label = null
+var _sec_fit: VBoxContainer = null
 var _spin_bearing: SpinBox = null
 var _spin_range: SpinBox = null
 var _spin_course: SpinBox = null
@@ -84,6 +87,11 @@ func _ready() -> void:
 		tracker.set_rng(rng)
 	tracker.set_capacity(8)
 	tracker.set_auto_interval(5.0)
+
+	# Operator Layer：关闭自动测量，Truth 只能经声场/阵列采样进入操作员视图
+	world.auto_measurements = false
+	op = OperatorSonar.new()
+	op.setup(world.world)
 
 	trial = TrialSolution.new()
 	system_sol = null
@@ -171,13 +179,30 @@ func _build_panel() -> void:
 	opt_speed.item_selected.connect(_on_speed)
 	row0.add_child(opt_speed)
 
+	# ---- Sonar Operator Layer（核心操作区，置于面板顶部）----
+	var op_sec := _make_section("Sonar Operator")
+	_op_panel = OperatorPanel.new()
+	_section_body(op_sec).add_child(_op_panel)
+	_op_panel.mark_requested.connect(_on_op_mark)
+	_op_panel.array_changed.connect(
+		func(aid: String):
+			op.set_array(aid)
+			_update_status("Array -> " + aid)
+	)
+	_op_panel.autocrew_toggled.connect(
+		func(on: bool): _update_status("Autocrew " + ("ON" if on else "OFF"))
+	)
+	_panel.add_child(op_sec)
+	_panel.add_child(HSeparator.new())
+
 	# 关键信息区（验收：1280x720 无需滚动可见）
 	_lbl_status = Label.new()
 	_lbl_status.text = ""
 	_lbl_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lbl_status.custom_minimum_size = Vector2(0, 44)
 	_lbl_status.add_theme_font_size_override("font_size", 14)
-	_panel.add_child(_lbl_status)
+	var sec_status := _make_section("Status")
+	_section_body(sec_status).add_child(_lbl_status)
+	_panel.add_child(sec_status)
 
 	_lbl_selected = Label.new()
 	_lbl_selected.text = "Selected: none"
@@ -192,9 +217,10 @@ func _build_panel() -> void:
 	_lbl_tma = Label.new()
 	_lbl_tma.text = "No fit yet."
 	_lbl_tma.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lbl_tma.custom_minimum_size = Vector2(0, 88)
 	_lbl_tma.add_theme_font_size_override("font_size", 14)
-	_panel.add_child(_lbl_tma)
+	_sec_fit = _make_section("Fit Details")
+	_section_body(_sec_fit).add_child(_lbl_tma)
+	_panel.add_child(_sec_fit)
 
 	_btn_enter = Button.new()
 	_btn_enter.text = "✅ Accept as System"
@@ -205,6 +231,7 @@ func _build_panel() -> void:
 	_build_contact_list()
 	_panel.add_child(HSeparator.new())
 	_build_layer_toggles()
+
 	_panel.add_child(HSeparator.new())
 
 	# 本艇机动
@@ -358,6 +385,7 @@ func _process(delta: float) -> void:
 		steps += 1
 
 	_feed_new_measurements()
+	_op_step()
 	if world.measurements.size() != _last_meas_count:
 		_last_meas_count = world.measurements.size()
 		_dirty = true
@@ -371,12 +399,16 @@ func _feed_new_measurements() -> void:
 	var ms: Array = world.measurements
 	while _processed_meas < ms.size():
 		var m: Measurement = ms[_processed_meas]
-		if _processed_meas == 0:
-			tracker.mark(m, "S")
-		else:
-			var t: Track = tracker.feed(m)
-			if t == null:
+		if world.auto_measurements:
+			# 旧模式：自动关联/建 Track
+			if _processed_meas == 0:
 				tracker.mark(m, "S")
+			else:
+				var t: Track = tracker.feed(m)
+				if t == null:
+					tracker.mark(m, "S")
+		# Operator 模式：测量已在 Mark/Autocrew 时喂给 tracker，
+		# 这里只推进消费游标。
 		_processed_meas += 1
 
 
@@ -390,11 +422,11 @@ func _rebuild_display_data() -> void:
 	_dirty = false
 	var now: float = world.sim_time
 	var sel: Track = _selected_track()
-	var outlier_times: Dictionary = _outlier_times()
+	var outlier_times: Dictionary = TmaUiData.outlier_times(last_fit, selected_track_id)
 	# 1) LOB（选中接触高亮着色，其他接触降到 alpha 由 chart 处理色弱化标记）
 	var all_lobs: Array = []
 	var meas_index: Array = []
-	var leg_bounds: Array = _leg_boundary_times()
+	var leg_bounds: Array = TmaUiData.leg_boundary_times(world.measurements)
 	for t in tracker.all_tracks():
 		if t.state != Track.TrackState.ACTIVE:
 			continue
@@ -443,7 +475,9 @@ func _rebuild_display_data() -> void:
 	if last_fit.is_empty() or str(last_fit.get("track_id", "")) != selected_track_id:
 		_chart.fit_status = "NO_FIT"
 	_chart.fit_hypotheses = TmaUiData.chart_hypotheses(last_fit, selected_track_id)
-	_chart.fit_ticks = TmaUiData.fit_tick_times(last_fit, selected_track_id, _leg_boundary_times())
+	_chart.fit_ticks = TmaUiData.fit_tick_times(
+		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
+	)
 	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
 
 	# 2) Bearing-Time（选中 track，标注 track_id）
@@ -470,7 +504,7 @@ func _rebuild_display_data() -> void:
 			t_max = maxf(t_max, m.timestamp)
 	_bt_plot.meas_points = points
 	_bt_plot.model_curves = TmaUiData.bt_curves(last_fit, selected_track_id)
-	_bt_plot.turn_times = _own_turn_times()
+	_bt_plot.turn_times = TmaUiData.own_turn_times(world.measurements)
 	_bt_plot.track_id = selected_track_id
 	_bt_plot.set_time_window(
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
@@ -489,38 +523,29 @@ func _rebuild_display_data() -> void:
 
 
 ## 海图假设：最优 + 权重最高的 ≤3 个备选（A/B/C 编号）。
-func _outlier_times() -> Dictionary:
-	var out: Dictionary = {}
-	if last_fit.is_empty() or str(last_fit.get("track_id", "")) != selected_track_id:
-		return out
-	for res in last_fit.get("residuals", []):
-		if not bool(res.get("inlier", true)):
-			out[float(res["time"])] = true
-	return out
+## 可折叠区块：标题按钮 + 内容容器；再次点击标题折叠/展开。
+func _make_section(title_text: String) -> VBoxContainer:
+	var box := VBoxContainer.new()
+	var head := Button.new()
+	head.text = "▾ " + title_text
+	head.flat = true
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.add_theme_font_size_override("font_size", 14)
+	var body := VBoxContainer.new()
+	head.pressed.connect(
+		func():
+			body.visible = not body.visible
+			head.text = ("▾ " if body.visible else "▸ ") + title_text
+	)
+	box.add_child(head)
+	box.add_child(body)
+	box.set_meta("body", body)
+	return box
 
 
-func _leg_boundary_times() -> Array:
-	var ms: Array = world.measurements
-	var turns: Array = []
-	if ms.size() < 3:
-		return turns
-	var anchor := Vector2(ms[0].observer_east_m, ms[0].observer_north_m)
-	var prev_heading: float = INF
-	for i in range(1, ms.size()):
-		var cur := Vector2(ms[i].observer_east_m, ms[i].observer_north_m)
-		var d: Vector2 = cur - anchor
-		if d.length() < 10.0:
-			continue
-		var heading: float = rad_to_deg(atan2(d.x, d.y))
-		if prev_heading != INF and absf(NavUtils.angle_diff(heading, prev_heading)) > 15.0:
-			turns.append(ms[i].timestamp)
-		prev_heading = heading
-		anchor = cur
-	return turns
-
-
-func _own_turn_times() -> Array:
-	return _leg_boundary_times()
+## 从可折叠区块取内容容器（_make_section 返回外层 box 时用）。
+func _section_body(box: VBoxContainer) -> VBoxContainer:
+	return box.get_meta("body") as VBoxContainer
 
 
 func _selected_track() -> Track:
@@ -835,7 +860,14 @@ func _on_fit_tma() -> void:
 	for m in sel.measurement_history:
 		meas.append(_meas_to_dict(m))
 
-	var r: Dictionary = TmaSolver.solve_auto(meas, {"now_time": world.sim_time})
+	var opts: Dictionary = {"now_time": world.sim_time}
+	# DEMON 航速仅作为带 sigma 的软约束，不替代 bearing-only 拟合
+	if op != null and not op.demon_estimate.is_empty():
+		var de: Dictionary = op.demon_estimate
+		if float(de.get("confidence", 0.0)) > 0.3 and float(de.get("speed_sigma_kn", 99.0)) < 6.0:
+			opts["demon_speed_kn"] = float(de["speed_kn"])
+			opts["demon_sigma_kn"] = float(de["speed_sigma_kn"])
+	var r: Dictionary = TmaSolver.solve_auto(meas, opts)
 	r["track_id"] = sel.track_id
 	if not bool(r.get("success", false)):
 		last_fit = r
@@ -929,3 +961,38 @@ func _update_status(msg: String) -> void:
 		)
 	else:
 		_lbl_status.text = msg
+
+
+## Operator 层每帧推进（OperatorSonar 内部节流）；有新行才刷新面板。
+func _op_step() -> void:
+	if op == null or _op_panel == null:
+		return
+	op.update(world.sim_time, world.world["targets"], world.world["target_acs"])
+	if _op_panel.autocrew_on():
+		for m in op.autocrew_step(world.sim_time):
+			world.measurements.append(m)
+			var t: Track = tracker.feed(m)
+			if t == null:
+				tracker.mark(m, "M")
+			_dirty = true
+			_update_status("Autocrew marked a new detection")
+	_op_panel.refresh(op)
+
+
+## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
+func _on_op_mark(x_value: float) -> void:
+	var brg: float = fposmod(x_value, 360.0)
+	var m: Measurement = op.create_mark(brg, world.sim_time)
+	world.measurements.append(m)
+	var t: Track = null
+	if selected_track_id != "":
+		for tr in tracker.all_tracks():
+			if tr.track_id == selected_track_id:
+				t = tracker.feed(m, 8.0)
+				break
+	if t == null:
+		t = tracker.mark(m, "M")
+	selected_track_id = t.track_id
+	_dirty = true
+	_last_meas_count = world.measurements.size()
+	_update_status("Marked %.1f deg -> %s" % [brg, t.track_id])

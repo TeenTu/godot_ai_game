@@ -15,6 +15,9 @@ func _prepare(sim_frames: int, turn_at: int = -1) -> Control:
 	root.add_child(ui)
 	root.size = Vector2i(1280, 720)
 	await process_frame
+	# Operator Layer 默认关闭自动测量；本回归模拟 Autocrew 模式
+	if ui.world != null:
+		ui.world.auto_measurements = true
 	for i in range(sim_frames):
 		ui._process(0.5)
 		if i == turn_at:
