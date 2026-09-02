@@ -126,6 +126,12 @@ jobs:
             mkdir -v -p "$BASEDIR/dist/$name"
             godot --headless --path "$game" --verbose \
               --export-release "Web" "$BASEDIR/dist/$name/index.html"
+            # Cache-bust: 给 pck 请求追加 commit 前缀，浏览器永不吃到旧包
+            # （Godot 加载器支持 mainPack 覆盖，fetch 带查询串不影响加载）。
+            sed -i "s|\"args\":\[\]|\"args\":[],\"mainPack\":\"index.pck?v=${GITHUB_SHA::7}\"|" \
+              "$BASEDIR/dist/$name/index.html"
+            grep -q "mainPack" "$BASEDIR/dist/$name/index.html" \
+              || { echo "cache-bust patch FAILED for $name"; exit 1; }
             # 关掉 Pages 的 Jekyll，免得它吞掉带下划线的文件
             touch "$BASEDIR/dist/$name/.nojekyll"
           done
