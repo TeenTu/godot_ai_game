@@ -91,7 +91,7 @@ main 是"集成发布口"，**不是开发场**。分工如下：
 
 流程：
 
-1. 开发 Agent 在自己 dev 分支开发完成，本地过门禁（§5 全量冒烟 + gdlint/gdformat）后 `git push origin <dev分支>`。
+1. 开发 Agent 在自己 dev 分支开发完成，本地过门禁（§5 分级冒烟 + 范围 gdlint/gdformat）后 `git push origin <dev分支>`。
 2. push 成功后，开发 Agent **立即主动触发一次** `codex exec`（§4.2 指令），把 review + 起记录 + 合入 main + CI 验证整体交给 Codex CLI。
 3. **当轮必须确认 codex exec 结果**：合入成功（origin/main 前进、CI 全绿、dev 与 main 对齐）即收尾；若被门禁拦下（Codex 守纪律列人工点），修复后**重发一次 codex exec**，直至合入。不允许把触发延后、遗忘或外包给后台任务。
 4. 不得新建 automation 承担"检测待合批次 / 补触发 / 校验"类职责。集成是**每次开发完成的显式动作**，由开发 Agent 亲手按下。
@@ -110,7 +110,7 @@ Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责�
 1. 拉取目标 dev 分支 + 最新 main。
 2. **rebase dev 分支到 origin/main**，解决冲突（冲突只可能来自 `shared/` 或公共文件——按 §3 处理；各游戏目录物理隔离不会撞）。
 3. 校验没误删他人文件：`git diff origin/main --stat`，确认没有删除别的 `games/<游戏>/` 文件。
-4. **跑全量冒烟**（见 §5），确认全部游戏 play_test PASS。
+4. **按 §5.1 分级跑冒烟**：本批 diff 未触碰 `shared/` 则只冒烟当前游戏；触碰 `shared/` / `.github/` / 仓库级 `tools/` 则全量冒烟。相应 play_test 须 PASS。
 5. 在 `main` 上 `git merge --no-ff <dev分支>`（或通过 GitHub 起 PR 合并）。
 6. `git push origin main` → 触发 CI，等全绿；CI 红则先修或回退。
 
@@ -121,22 +121,42 @@ Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责�
 
 ## 5. 合入前 / 日常本地验证（防"把别人游戏弄坏"）
 
-任何一次 `push main` 前，必须跑**全量冒烟**确认没弄坏其它游戏：
+### 5.1 冒烟范围分级（2026-09-03 新增：尽量减少 Codex CLI 工作量）
+
+判定依据 = 本次 dev 批次相对 `origin/main` 的 diff **是否触碰 `shared/`**（共享套件 / addons / 共享样式 / 素材）：
+
+- **未触碰 `shared/`**（只改了本分支自己的 `games/<你的游戏>/`，或纯文档如 CONTRIBUTING.md / 本游戏 README）：
+  → Codex CLI 与开发 Agent **只需冒烟当前游戏**，lint/format 只跑当前游戏目录。
+- **触碰了 `shared/`**，或 `.github/`（CI/deploy）、仓库级 `tools/` 等会影响多游戏构建的公共文件：
+  → **全量冒烟**（suika / dodge / sonar / boom 四游戏）+ 全目录 gdlint/gdformat。
+- **无论哪种范围，§4.2 步骤 3 的越界检查始终执行**：`git diff origin/main --stat` 不得删除其它 `games/<游戏>/` 文件——这是防"把别人游戏弄坏"的根本，与冒烟范围无关。
+- 冒烟范围是**下限不是上限**：Codex CLI 若对共享/公共改动的影响面不确定，可自行升级为全量冒烟。
+
+单游戏冒烟（仅改动本游戏时）：
 
 ```bash
 cd <你的 worktree>
-bash tools/sync_shared.sh                    # 注入共享 addons 到各游戏
-# 对每个游戏逐个冒烟（headless）
+bash tools/sync_shared.sh
+GODOT=<Godot 4.5 路径>
+"$GODOT" --headless --path games/<你的游戏> --import && \
+"$GODOT" --headless --path games/<你的游戏> --script res://tools/play_test.gd
+gdlint games/<你的游戏>/ && gdformat --check games/<你的游戏>/
+```
+
+全量冒烟（触碰 shared/ 或公共文件时）：
+
+```bash
+cd <你的 worktree>
+bash tools/sync_shared.sh
 GODOT=<Godot 4.5 路径>
 for g in suika dodge sonar boom; do
   "$GODOT" --headless --path games/$g --import && \
   "$GODOT" --headless --path games/$g --script res://tools/play_test.gd
 done
-# gdlint / gdformat 必须跑全目录（单游戏会漏）
 gdlint games/ shared/ && gdformat --check games/ shared/
 ```
 
-> 任一游戏 play_test 非 PASS 即不可 push main。
+> 任一被要求冒烟的游戏 play_test 非 PASS 即不可 push main。
 
 ---
 
