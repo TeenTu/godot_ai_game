@@ -35,17 +35,44 @@ var _icon_textures: Dictionary = {}
 var _bg_texture: Texture2D
 var _vs_played_round: int = 0  # 本局已播放过 VS 动画的回合号（防重播）
 var _vs_animating: bool = false
+var _sfx: Dictionary = {}
 
 
 func _ready() -> void:
 	game = FoundryGame.new(0, {})
 	_state = game.to_dict()
 	_bg_texture = _try_load_tex("res://assets/bg/bg_workshop.png")
+	_load_sfx()
 	print("[Backpack Foundry v2.0] buy-game art + VS overlay (build=%s)" % _check_art_status())
 	_build_ui()
 	_rebuild()
 	set_process(true)
 	_test_hook_connect()
+
+
+## 加载程序化生成的 8-bit 音效（tools/gen_sfx.py 产出）
+func _load_sfx() -> void:
+	for n in ["click", "coin", "place", "go", "win", "lose", "vs"]:
+		_sfx[n] = _try_load_audio("res://assets/audio/sfx_%s.wav" % n)
+
+
+func _try_load_audio(path: String) -> AudioStream:
+	if not ResourceLoader.exists(path, "AudioStream"):
+		return null
+	var t = load(path)
+	return t as AudioStream
+
+
+func _play_sfx(sfx_name: String) -> void:
+	var stream: AudioStream = _sfx.get(sfx_name)
+	if stream == null:
+		return
+	var p := AudioStreamPlayer.new()
+	p.stream = stream
+	p.bus = "Master"
+	add_child(p)
+	p.finished.connect(p.queue_free)
+	p.play()
 
 
 ## 启动时检查关键素材是否加载成功，输出到 console（F12 可看）方便用户/我们确认。
@@ -622,10 +649,12 @@ func _preview_output(card: Dictionary, pos: Vector2i) -> Dictionary:
 func _on_grid_pressed(pos: Vector2i) -> void:
 	if game.phase == FoundryGame.Phase.PREPARE and not game.taken_card.is_empty():
 		if game.place_card(pos):
+			_play_sfx("place")
 			_pulse_grid(pos)
 			_rebuild()
 	elif game.phase == FoundryGame.Phase.PREPARE:
 		if game.toggle_active(pos):
+			_play_sfx("click")
 			_rebuild()
 
 
@@ -633,6 +662,7 @@ func _on_shop_pressed(idx: int) -> void:
 	if game.phase != FoundryGame.Phase.PREPARE:
 		return
 	if game.buy_card(idx):
+		_play_sfx("coin")
 		_show_dragged_preview()
 		_rebuild()
 
@@ -641,6 +671,7 @@ func _on_hand_pressed(idx: int) -> void:
 	if game.phase != FoundryGame.Phase.PLAY:
 		return
 	if game.play_card(idx):
+		_play_sfx("vs")
 		_spawn_float_text(get_global_mouse_position(), "Played", COLOR_ENERGY)
 		_rebuild()
 
@@ -651,20 +682,24 @@ func _on_action_pressed() -> void:
 			var before: int = game.gold
 			if game.finish_prepare():
 				var gain: int = game.gold - before
+				_play_sfx("go")
 				_pulse_buildings()
 				if gain > 0:
 					_spawn_float_text(Vector2(360, 860), "Gold +%d" % gain, COLOR_GOLD)
 				_rebuild()
 		FoundryGame.Phase.PLAY:
 			if game.finish_play():
+				_play_sfx("go")
 				_spawn_float_text(
 					Vector2(360, 480), "Power %d" % _state["round_power"], COLOR_POWER
 				)
 				_rebuild()
 		FoundryGame.Phase.VS:
+			_play_sfx("click")
 			if game.next_round():
 				_rebuild()
 		FoundryGame.Phase.GAME_OVER:
+			_play_sfx("click")
 			game = FoundryGame.new(0, {})
 			_rebuild()
 
@@ -871,6 +906,7 @@ func _play_vs_anim(you: int, ghost: int, result: String) -> void:
 	if _vs_animating:
 		return
 	_vs_animating = true
+	_play_sfx("vs")
 	var you_fill: ColorRect = _nodes["vs_you_fill"]
 	var ghost_fill: ColorRect = _nodes["vs_ghost_fill"]
 	you_fill.size.x = 0
@@ -889,10 +925,12 @@ func _play_vs_anim(you: int, ghost: int, result: String) -> void:
 		tw.tween_property(you_fill, "modulate", COLOR_GOLD, 0.1)
 		tw.tween_property(you_fill, "modulate", Color.WHITE, 0.25)
 		tw.tween_property(ghost_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
+		tw.tween_callback(func() -> void: _play_sfx("win"))
 	elif result == "lose":
 		tw.tween_property(ghost_fill, "modulate", COLOR_GOLD, 0.1)
 		tw.tween_property(ghost_fill, "modulate", Color.WHITE, 0.25)
 		tw.tween_property(you_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
+		tw.tween_callback(func() -> void: _play_sfx("lose"))
 
 
 func _tween_you_num(v: float) -> void:
