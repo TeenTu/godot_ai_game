@@ -62,3 +62,6 @@
 - gdtoolkit 版本与 CI 一致（4.5.0），本地复现用全目录命令
 - 必须提交 `.uid` / `.import`；gitignore 覆盖 `build/` `dist/` `.godot/` `games/*/addons/` `assets/_shared/` `.workbuddy/`
 - 素材生成质量靠 ART_REQUEST.md 规格 + 拼图预览目检；配色统一走 contract.yaml 色板
+- **导出包加载资源用 `ResourceLoader.exists()`，禁止 `FileAccess.file_exists()`**——后者不跟随 .import remap，源 PNG 被 pck 剔除后永远 false（本地 headless 假阳性、线上全空白的 v2.2 事故根因）
+- headless 本地 ALL OK ≠ 线上正常；素材/UI 断言必须对真实导出产物跑 vision-e2e（`WEB_ROOT=<产物目录> ./run.sh`，线上直接传 URL）
+- vision-e2e 的 run.sh 中断时会漏杀 http.server（trap 不可靠）→ 跑前先查端口残留（curl 看 title 是否是目标游戏）；agent-browser 装 Chromium 需走代理 `HTTPS_PROXY=http://127.0.0.1:7890`
