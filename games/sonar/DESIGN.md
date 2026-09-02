@@ -155,6 +155,14 @@ update_interval_s, tracker_capacity, deployed
 deployment_progress, array_heading_deg, tow_length_m, settling_time_s
 ```
 
+> **TOWED 拖曳阵物理（批次2+，`scripts/towed_array.gd`）**：操作员层的 TOWED 阵列
+> 不再把 `array_heading` 恒等于本艇航向，而是由独立状态机表达物理生命周期：
+> 状态 `RETRACTED → DEPLOYING → DEPLOYED →(RETRIEVING→RETRACTED)`；
+> `deployment_progress` 按时间推进；全展后阵航向对本艇转向做一阶滞后收敛
+> （短缆滞后小、长缆滞后大），收敛前 `usable_fraction<1`、有效增益被压低。
+> 该状态机挂在 own(`TruthEntity.towed`)，随 `advance` 每步推进，纯逻辑可无头测。
+> 未配置 `own_ship.tow` 时本艇无拖曳阵，TOWED 退化为 follow own.course（兼容旧场景）。
+
 ### 3.5 Measurement
 ```
 measurement_id, timestamp, sensor_id

@@ -22,6 +22,14 @@ static func build(scenario: Dictionary) -> Dictionary:
 	var own_ac := AcousticProfile.new()
 	own_ac.from_dict(scenario.get("own_acoustic", {}))
 
+	# 拖曳阵（批次2+）：own_ship.tow 存在则给本艇挂一条物理拖曳阵。
+	# 未配置时为 null，OperatorSonar 的 TOWED 退化为 follow own.course（兼容旧测试）。
+	if own_dict.has("tow"):
+		var towed := TowedArray.new()
+		towed.setup(own_dict.get("tow", {}))
+		towed.array_heading_deg = float(own_dict.get("course_deg", 0.0))
+		own.towed = towed
+
 	# 目标（红方）—— 可多个
 	var targets: Array = []
 	var target_acs: Dictionary = {}

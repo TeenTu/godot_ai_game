@@ -12,6 +12,8 @@ extends VBoxContainer
 signal mark_requested(bearing_deg: float, as_true: bool)
 signal array_changed(array_id: String)
 signal autocrew_toggled(on: bool)
+signal towed_deploy_requested
+signal towed_retract_requested
 
 const MAX_ROWS_SHOWN: int = 80
 
@@ -23,6 +25,10 @@ var _lbl_bb_mode: Label = null  # 标注当前 BB 瀑布显示基准（RELATIVE 
 var _autocrew: CheckBox = null
 var _lbl_class: Label = null
 var _lbl_demon: Label = null
+var _tow_ctl: HBoxContainer = null  # TOWED 部署/回收按钮行
+var _btn_tow_deploy: Button = null
+var _btn_tow_retract: Button = null
+var _lbl_tow: Label = null  # TOWED 状态/阵航向/部署进度显示
 var _last_row_count: int = -1
 
 
@@ -48,6 +54,24 @@ func _init() -> void:
 	)
 	row.add_child(_autocrew)
 	add_child(row)
+
+	# TOWED 拖曳阵（批次2+）：部署/回收按钮 + 状态/阵航向显示。仅 TOWED 相关。
+	_tow_ctl = HBoxContainer.new()
+	_tow_ctl.add_theme_constant_override("separation", 4)
+	add_child(_tow_ctl)
+	_btn_tow_deploy = Button.new()
+	_btn_tow_deploy.text = "Deploy"
+	_btn_tow_deploy.pressed.connect(func(): towed_deploy_requested.emit())
+	_tow_ctl.add_child(_btn_tow_deploy)
+	_btn_tow_retract = Button.new()
+	_btn_tow_retract.text = "Retract"
+	_btn_tow_retract.pressed.connect(func(): towed_retract_requested.emit())
+	_tow_ctl.add_child(_btn_tow_retract)
+	_lbl_tow = Label.new()
+	_lbl_tow.text = "Towed: RETRACTED"
+	_lbl_tow.add_theme_font_size_override("font_size", 12)
+	_lbl_tow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_lbl_tow)
 
 	# BB 瀑布显示基准切换：RELATIVE(默认,艇艏=0°) / TRUE STABILIZED(真北稳定)
 	var bb_mode_row := HBoxContainer.new()
@@ -106,6 +130,16 @@ func _mk_label(txt: String) -> Label:
 	l.text = txt
 	l.add_theme_font_size_override("font_size", 12)
 	return l
+
+
+## 主 UI 设置 TOWED 状态显示文本（含可用度/部署进度/阵航向）。
+## active=true 表示当前选中 TOWED 阵列，显示部署/回收控件；否则隐藏。
+func set_towed_status(text: String, active: bool) -> void:
+	if _lbl_tow == null:
+		return
+	_lbl_tow.text = text
+	if _tow_ctl != null:
+		_tow_ctl.visible = active
 
 
 ## Operator 有新瀑布行时调用（只在行数变化时重建 UI 数据）。
