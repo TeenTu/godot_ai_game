@@ -56,11 +56,16 @@ func _check_art_status() -> String:
 		ok.append("bg")
 	else:
 		missing.append("bg")
-	for id in ["mine", "forge", "gearbox"]:
-		if _get_building_icon(id) != null:
-			ok.append(id)
+	for b in CardDB.BUILDINGS:
+		if _get_building_icon(b["id"]) != null:
+			ok.append(b["id"])
 		else:
-			missing.append(id)
+			missing.append(b["id"])
+	for ui_name in ["icon_coin", "icon_power", "icon_round", "icon_worker"]:
+		if _ui_tex(ui_name) != null:
+			ok.append(ui_name)
+		else:
+			missing.append(ui_name)
 	if missing.is_empty():
 		return "ALL OK (" + ",".join(ok) + ")"
 	return "MISSING=" + ",".join(missing)
@@ -189,21 +194,36 @@ func _make_btn(
 	return b
 
 
+func _ui_tex(name: String) -> Texture2D:
+	return _try_load_tex("res://assets/ui/%s.png" % name)
+
+
 func _build_hud() -> void:
 	var bar := _make_panel(self, Vector2(8, 8), Vector2(704, 72), true)
 	var items := [
-		{"key": "round", "label": "Round", "color": COLOR_TEXT_LIGHT},
-		{"key": "score", "label": "Score", "color": COLOR_TEXT_LIGHT},
-		{"key": "gold", "label": "Gold", "color": COLOR_GOLD},
-		{"key": "workers", "label": "Workers", "color": COLOR_WORKER},
-		{"key": "energy", "label": "Energy", "color": COLOR_ENERGY},
+		{"key": "round", "label": "", "icon": "icon_round", "color": COLOR_TEXT_LIGHT},
+		{"key": "score", "label": "Score", "icon": "", "color": COLOR_TEXT_LIGHT},
+		{"key": "gold", "label": "", "icon": "icon_coin", "color": COLOR_GOLD},
+		{"key": "workers", "label": "", "icon": "icon_worker", "color": COLOR_WORKER},
+		{"key": "energy", "label": "", "icon": "icon_power", "color": COLOR_ENERGY},
 	]
 	var x := 12
 	for it in items:
+		var icon_name: String = it["icon"]
+		if icon_name != "":
+			var tex := _ui_tex(icon_name)
+			if tex != null:
+				var tr := TextureRect.new()
+				tr.texture = tex
+				tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				tr.position = Vector2(x, 16)
+				tr.size = Vector2(40, 40)
+				bar.add_child(tr)
 		_nodes["hud_" + it["key"]] = _make_label(
-			bar, it["label"] + ": --", 20, Vector2(x, 14), Vector2(140, 44), it["color"]
+			bar, it["label"] + ": --", 20, Vector2(x + 46, 14), Vector2(90, 44), it["color"]
 		)
-		x += 140
+		x += 136
 
 
 func _build_opponent() -> void:
@@ -303,15 +323,15 @@ func _rebuild() -> void:
 
 
 func _refresh_hud() -> void:
-	_set_text("hud_round", "回合 %d/%d" % [_state["round"], _state["total_rounds"]])
-	_set_text("hud_score", "比分 %d:%d" % [_state["my_score"], _state["ghost_score"]])
-	_set_text("hud_gold", "金币 %d" % _state["gold"])
-	_set_text("hud_workers", "工人 %d/%d" % [_state["used_workers"], _state["workers"]])
-	_set_text("hud_energy", "能量 %d" % _state["energy"])
+	_set_text("hud_round", "R%d/%d" % [_state["round"], _state["total_rounds"]])
+	_set_text("hud_score", "%d:%d" % [_state["my_score"], _state["ghost_score"]])
+	_set_text("hud_gold", "%d" % _state["gold"])
+	_set_text("hud_workers", "%d/%d" % [_state["used_workers"], _state["workers"]])
+	_set_text("hud_energy", "%d" % _state["energy"])
 
 
 func _refresh_opponent() -> void:
-	_set_text("opp_name", "对手 %s D%d" % [_state["ghost_name"], _state["ghost_diff"]])
+	_set_text("opp_name", "%s D%d" % [_state["ghost_name"], _state["ghost_diff"]])
 	_set_text("opp_type", "Style: " + str(_state["ghost_build"]))
 	if game.phase == FoundryGame.Phase.VS or game.phase == FoundryGame.Phase.GAME_OVER:
 		_set_text(
@@ -425,11 +445,11 @@ func _refresh_hand() -> void:
 		var effect := ""
 		var fx_color := COLOR_POWER
 		if card["flat_power"] > 0:
-			effect = "+%d战" % card["flat_power"]
+			effect = "+%d PWR" % card["flat_power"]
 		elif card["mult"] > 1.0:
 			effect = "x%.1f" % card["mult"]
 		elif card["flat_gold"] > 0:
-			effect = "+%d金" % card["flat_gold"]
+			effect = "+%d G" % card["flat_gold"]
 			fx_color = COLOR_GOLD
 		_make_label(
 			btn, effect, 24, Vector2(6, 48), Vector2(116, 40), fx_color, HORIZONTAL_ALIGNMENT_CENTER
@@ -468,11 +488,11 @@ func _refresh_guide() -> void:
 		var ms: int = int(_state["my_score"])
 		var gs: int = int(_state["ghost_score"])
 		if ms > gs:
-			msg = "胜出! %d : %d" % [ms, gs]
+			msg = "VICTORY! %d : %d" % [ms, gs]
 		elif ms < gs:
-			msg = "惜败 %d : %d" % [ms, gs]
+			msg = "DEFEAT %d : %d" % [ms, gs]
 		else:
-			msg = "平局 %d : %d" % [ms, gs]
+			msg = "DRAW %d : %d" % [ms, gs]
 	elif game.round == 1 and game.phase == FoundryGame.Phase.PREPARE:
 		msg = "Step 1: tap Shop to buy a card -> tap grid to place -> tap Go!"
 	elif game.phase == FoundryGame.Phase.PREPARE:
@@ -482,11 +502,11 @@ func _refresh_guide() -> void:
 	elif game.phase == FoundryGame.Phase.VS:
 		var r: String = str(_state["last_result"])
 		if r == "win":
-			msg = "胜! %d > %d" % [_state["round_power"], _state["ghost_round_power"]]
+			msg = "Win! %d > %d" % [_state["round_power"], _state["ghost_round_power"]]
 		elif r == "lose":
-			msg = "败 %d < %d" % [_state["round_power"], _state["ghost_round_power"]]
+			msg = "Lose! %d < %d" % [_state["round_power"], _state["ghost_round_power"]]
 		else:
-			msg = "平局 %d = %d" % [_state["round_power"], _state["ghost_round_power"]]
+			msg = "DRAW %d = %d" % [_state["round_power"], _state["ghost_round_power"]]
 	_set_text("guide", msg)
 
 
@@ -556,7 +576,7 @@ func _update_preview_est() -> void:
 	if _nodes.has("preview_est"):
 		var lbl: Label = _nodes["preview_est"]
 		if out["gold"] > 0 or out["power"] > 0:
-			lbl.text = "+%d金 +%d战" % [out["gold"], out["power"]]
+			lbl.text = "+%dG +%dPWR" % [out["gold"], out["power"]]
 		else:
 			lbl.text = "Cannot place here"
 
@@ -601,7 +621,7 @@ func _on_hand_pressed(idx: int) -> void:
 	if game.phase != FoundryGame.Phase.PLAY:
 		return
 	if game.play_card(idx):
-		_spawn_float_text(get_global_mouse_position(), "打出", COLOR_ENERGY)
+		_spawn_float_text(get_global_mouse_position(), "Played", COLOR_ENERGY)
 		_rebuild()
 
 
@@ -796,7 +816,7 @@ func _refresh_vs_overlay() -> void:
 	else:
 		_set_text_color(
 			"vs_title",
-			"Win!" if result == "win" else ("Lose!" if result == "lose" else "平局"),
+			"Win!" if result == "win" else ("Lose!" if result == "lose" else "DRAW"),
 			COLOR_GOLD if result == "win" else (COLOR_POWER if result == "lose" else COLOR_TEXT),
 		)
 		_set_text(
