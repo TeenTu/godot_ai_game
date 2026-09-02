@@ -247,6 +247,7 @@ func _connect_signals() -> void:
 	sim.wave_cleared.connect(_on_wave_cleared)
 	sim.game_over.connect(_on_game_over)
 	sim.prop_broken.connect(_on_prop_broken)
+	sim.skill_bullet_hit.connect(_on_skill_bullet_hit)
 	skill_sys.skill_fired.connect(_on_skill_fired)
 
 
@@ -276,14 +277,34 @@ func _on_skill_fired(skill_id: String, result: Variant) -> void:
 					var hp: Vector3 = target.position + Vector3(0.0, 0.5, 0.0)
 					skill_fx.arc_bolt(prev, hp, BoomSkillSystem.CHAIN_COLOR)
 					prev = hp
-				_show_toast("CHAIN!")
+				# §4.2 技能飘字"链!" 紫色大字 1 个（命中才出，与电弧反馈同条件），
+				# 替代 M2 起的 "CHAIN!" toast——语义重复，二选一防同屏刷字。
+				_spawn_skill_float(ppos, "chain")
 		"nuke":
 			audio.play("boom", -4.0)
 			cam.add_trauma(0.6)  # §4.2 核爆：×1.2 重震屏（击杀 0.5 基准）
 			_trigger_kill_flash()
 			skill_fx.shockwave(ppos, BoomGame.NUKE_RADIUS, BoomSkillSystem.NUKE_COLOR)
 			skill_fx.burst(ppos + Vector3(0.0, 0.6, 0.0), BoomSkillSystem.NUKE_COLOR, 40)
-			_show_toast("NUKE!")
+			# §4.2 技能飘字"轰!" 金色巨型（玩家中心）；规格中的"+ 数字"由既有
+			# 伤害/得分飘字管线在命中点自然补齐，避免同点双飘字叠加刷屏。
+			# 替代 "NUKE!" toast，取舍同上。
+			_spawn_skill_float(ppos, "nuke")
+
+
+## §4.2 技能飘字统一入口：按 BoomSkillSystem.float_text_for 规格（文案/颜色/字号）
+## 在给定位置弹一个飘字，复用 BoomHitNum 既有对象池与上浮淡出管线。
+## fan=黄"嘭!"小字（每命中 1 个）/ chain=紫"链!"大字 / nuke=金"轰!"巨型。
+func _spawn_skill_float(pos: Vector3, skill_id: String) -> void:
+	if hitnum == null:
+		return
+	var spec: Dictionary = BoomSkillSystem.float_text_for(skill_id)
+	if spec.is_empty():
+		return
+	var text: String = spec["text"]
+	var col: Color = spec["color"]
+	var sc: float = spec["scale"]
+	hitnum.spawn(pos + Vector3(0.0, 0.5, 0.0), text, col, sc)
 
 
 func _on_shot_fired(pos: Vector3) -> void:
@@ -324,6 +345,11 @@ func _on_prop_broken(pos: Vector3, coin_value: int) -> void:
 	audio.play("pickup", -7.0)
 	if hitnum != null:
 		hitnum.spawn(pos + Vector3(0.0, 0.4, 0.0), "+%d" % coin_value, COL_GOLD, 1.15)
+
+
+func _on_skill_bullet_hit(pos: Vector3, skill_id: String) -> void:
+	# §4.2 爆裂弹幕：每个命中点 1 个 "嘭!" 黄色小字（弹道归属由 BoomBullet.variant 判定）。
+	_spawn_skill_float(pos, skill_id)
 
 
 func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:

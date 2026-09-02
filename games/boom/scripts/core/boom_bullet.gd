@@ -10,6 +10,8 @@ const RADIUS: float = 0.18
 var vel: Vector3 = Vector3.ZERO
 var life: float = 0.0
 var active: bool = false
+## 弹道变体归属：straight=普通弹 / fan=爆裂弹幕（§4.2 每命中飘字按此判定）。
+var variant: String = "straight"
 
 
 func _init() -> void:
@@ -37,6 +39,7 @@ func fire(from: Vector3, dir: Vector3) -> void:
 	vel = dir * SPEED
 	life = LIFETIME
 	active = true
+	variant = "straight"
 	visible = true
 
 

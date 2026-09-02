@@ -18,6 +18,17 @@ const FAN_COLOR: Color = Color(1.0, 0.75, 0.25)
 const CHAIN_COLOR: Color = Color(0.3, 0.85, 1.0)
 const NUKE_COLOR: Color = Color(1.0, 0.3, 0.3)
 
+# §4.2 技能飘字规格：fan=黄"嘭!"小字 / chain=紫"链!"大字 / nuke=金"轰!"巨型。
+const TEXT_FAN: String = "嘭!"
+const TEXT_CHAIN: String = "链!"
+const TEXT_NUKE: String = "轰!"
+const TEXT_COLOR_FAN: Color = Color(1.0, 0.9, 0.3)
+const TEXT_COLOR_CHAIN: Color = Color(0.7, 0.4, 1.0)
+const TEXT_COLOR_NUKE: Color = Color(1.0, 0.78, 0.25)
+const TEXT_SCALE_FAN: float = 0.85
+const TEXT_SCALE_CHAIN: float = 1.3
+const TEXT_SCALE_NUKE: float = 1.7
+
 # 注入的对局引用，由 main.gd 赋值
 var game: BoomGame
 
@@ -88,3 +99,16 @@ func reset() -> void:
 	fan_skill.cooldown_left = 0.0
 	chain_skill.cooldown_left = 0.0
 	nuke_skill.cooldown_left = 0.0
+
+
+## §4.2 技能飘字映射（纯逻辑，可无头测试）：skill_id -> {text, color, scale}。
+## 未登记的 skill_id 返回空字典（上层跳过生成）。
+static func float_text_for(skill_id: String) -> Dictionary:
+	match skill_id:
+		"fan":
+			return {"text": TEXT_FAN, "color": TEXT_COLOR_FAN, "scale": TEXT_SCALE_FAN}
+		"chain":
+			return {"text": TEXT_CHAIN, "color": TEXT_COLOR_CHAIN, "scale": TEXT_SCALE_CHAIN}
+		"nuke":
+			return {"text": TEXT_NUKE, "color": TEXT_COLOR_NUKE, "scale": TEXT_SCALE_NUKE}
+	return {}
