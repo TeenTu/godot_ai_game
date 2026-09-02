@@ -31,6 +31,8 @@ var audio: BoomAudio
 var joystick: GameKitVirtualJoystick
 var skill_sys: BoomSkillSystem
 var skill_fx: BoomSkillFx
+var skill_btns: Dictionary = {}  # skill_id -> BoomSkillButton（P1-1 技能 HUD，美术位图版）
+var waypoints: WaypointLayer = null  # M3 屏幕边缘目标标记
 
 # M2 手势识别状态：touch_index -> {sx,sy,t,dx,dy}
 var _gestures: Dictionary = {}
@@ -49,12 +51,18 @@ var _over_panel: Control
 var _over_title: Label
 var _over_stats: Label
 var _hint_label: Label
+var _combo_label: Label  # M3 击杀播报大字
+var _combo_tween: Tween = null
+var _result_stars: Array = []  # M3 结算星级 Label（依次弹出）
+var _slowmo_until_ms: int = 0  # 结算慢镜头结束的真实时刻（ms）
+var _result_final_score: int = 0
+var _result_counting: bool = false  # 结算数字滚动期间 _hud_refresh 不覆盖分数
 var _started := false
 var _dmg_flash := 0.0
-var _skill_buttons: Dictionary = {}
 
 
 func _ready() -> void:
+	Engine.time_scale = 1.0  # 场景重载/复用时兜底复位（Engine 级状态不随场景重置）。
 	if not _is_test_mode():
 		randomize()
 	world = _build_world()
@@ -93,6 +101,10 @@ func _physics_process(_delta: float) -> void:
 	_kill_white_a = maxf(0.0, _kill_white_a - _delta * 3.0)
 	if _kill_white != null:
 		_kill_white.color.a = _kill_white_a
+	# M3 结算慢镜头：0.3× 持续 0.35s（真实时钟），到点恢复并进结算序列。
+	if _slowmo_until_ms > 0 and Engine.time_scale < 1.0:
+		if Time.get_ticks_msec() >= _slowmo_until_ms:
+			_end_slowmo()
 	_hud_refresh()
 
 
@@ -102,6 +114,17 @@ func _physics_process(_delta: float) -> void:
 ## 把屏幕/物理坐标经 canvas 逆变换回 720×1280 设计空间（与摇杆同一坐标系）。
 func _to_canvas(sp: Vector2) -> Vector2:
 	return get_viewport().get_canvas_transform().affine_inverse() * sp
+
+
+## P1-1：设计坐标是否落在某个技能按钮内（按钮本体 + 12px 拇指容错）。
+func _skill_button_at(cp: Vector2) -> String:
+	for id in skill_btns:
+		var btn := skill_btns[id] as BoomSkillButton
+		if btn == null:
+			continue
+		if cp.distance_to(btn.position + btn.size * 0.5) <= btn.size.x * 0.5 + 12.0:
+			return id
+	return ""
 
 
 ## 屏幕右侧(触点设计x > 屏宽*SKILL_ZONE_X)的触摸由本节点做手势识别：
@@ -134,7 +157,16 @@ func _input(event: InputEvent) -> void:
 		var adx: float = absf(g["dx"])
 		var ady: float = absf(g["dy"])
 		if dt <= TAP_MAX_TIME and dist <= TAP_MAX_DIST:
-			skill_sys.handle_tap()
+			# P1-1：起手落在技能按钮圆内（含 12px 容错）→ 直接触发对应技能；
+			# 其余 tap 维持默认主技能（爆裂弹幕）。
+			var sid: String = _skill_button_at(Vector2(g["sx"], g["sy"]))
+			match sid:
+				"chain":
+					skill_sys.handle_swipe_left()
+				"nuke":
+					skill_sys.handle_swipe_right()
+				_:
+					skill_sys.handle_tap()
 		elif adx >= SWIPE_MIN_DIST and adx > ady * 2.0:
 			if g["dx"] < 0.0:
 				skill_sys.handle_swipe_left()
@@ -224,20 +256,30 @@ func _on_skill_fired(skill_id: String, result: Variant) -> void:
 	match skill_id:
 		"fan":
 			audio.play("shoot", -9.0)
+			cam.add_trauma(0.15)  # §4.2 爆裂弹幕：极轻震屏
 			skill_fx.muzzle_flash(
 				ppos + Vector3(0.0, 0.5, 0.0), sim.player.facing, BoomSkillSystem.FAN_COLOR
 			)
 		"chain":
 			audio.play("graze", -6.0)
 			if not hits.is_empty():
+				# §4.2 闪电链：首跳 0.06s 顿帧 + ×0.6 震屏 + 0.10 alpha 白闪(~30ms)。
+				sim.trigger_freeze(0.06)
+				cam.add_trauma(0.3)
+				_trigger_kill_flash(0.10)
+				# P1-2：hits 含存活者（衰减伤害是常态），每个命中目标都画电弧。
 				var prev: Vector3 = ppos + Vector3(0.0, 0.5, 0.0)
 				for jelly in hits:
-					var hp: Vector3 = (jelly as BoomJelly).position + Vector3(0.0, 0.5, 0.0)
+					var target := jelly as BoomJelly
+					if target == null:
+						continue
+					var hp: Vector3 = target.position + Vector3(0.0, 0.5, 0.0)
 					skill_fx.arc_bolt(prev, hp, BoomSkillSystem.CHAIN_COLOR)
 					prev = hp
 				_show_toast("CHAIN!")
 		"nuke":
 			audio.play("boom", -4.0)
+			cam.add_trauma(0.6)  # §4.2 核爆：×1.2 重震屏（击杀 0.5 基准）
 			_trigger_kill_flash()
 			skill_fx.shockwave(ppos, BoomGame.NUKE_RADIUS, BoomSkillSystem.NUKE_COLOR)
 			skill_fx.burst(ppos + Vector3(0.0, 0.6, 0.0), BoomSkillSystem.NUKE_COLOR, 40)
@@ -270,6 +312,8 @@ func _on_enemy_died(pos: Vector3) -> void:
 	if hitnum != null:
 		var scale_p := 1.3 if sim.combo >= 2 else 1.0
 		hitnum.spawn(pos, "+%d" % BoomGame.KILL_SCORE, BoomHitNum.COLOR_SCORE, scale_p)
+	# M3 击杀播报：DOUBLE / TRIPLE / RAMPAGE 大字 + 过冲抖动 0.3s。
+	_show_combo_announce(BoomGame.announce_for_combo(sim.combo))
 	if _hint_label != null:
 		_hint_label.queue_free()
 		_hint_label = null
@@ -296,15 +340,6 @@ func _on_wave_started(wave: int) -> void:
 func _on_wave_cleared(wave: int, bonus: int) -> void:
 	audio.play("wave_clear", -6.0)
 	_show_toast("WAVE %d CLEARED  +%d" % [wave, bonus])
-
-
-func _on_game_over(score: int) -> void:
-	audio.play("over", -4.0)
-	cam.add_trauma(0.8)
-	_over_stats.text = "SCORE  %d\nKILLS  %d" % [score, sim.kills]
-	_over_panel.visible = true
-	if _hint_label != null:
-		_hint_label.visible = false
 
 
 # ------------------------------------------------------------------ 3D 世界
@@ -520,9 +555,17 @@ func _build_hud() -> void:
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.visible = false
 
+	# M3 击杀播报大字（屏幕中央偏上，过冲抖动）。
+	_combo_label = _make_label(hud, "", 72, COL_ACCENT, Vector2(0, 386))
+	_combo_label.size = Vector2(720, 96)
+	_combo_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_combo_label.pivot_offset = _combo_label.size * 0.5
+	_combo_label.visible = false
+
 	_build_hp(hud)
 	_build_joystick(hud)
 	_build_skill_hud(hud)
+	_build_waypoints(hud)
 	_build_game_over(hud)
 
 
@@ -605,7 +648,7 @@ func _build_skill_hud(hud: Control) -> void:
 		button.position = Vector2(596.0, float(spec[5]))
 		button.setup(spec[0], spec[1], spec[2], spec[3], spec[4])
 		hud.add_child(button)
-		_skill_buttons[spec[0]] = button
+		skill_btns[spec[0]] = button
 
 
 func _build_hp(hud: Control) -> void:
@@ -639,9 +682,20 @@ func _build_joystick(hud: Control) -> void:
 	hud.add_child(joystick)
 
 
-func _trigger_kill_flash() -> void:
+## M3 目标指示（design_boom.md §7.3）：离屏敌人投影 + 屏幕边缘吸附箭头 + 距离。
+func _build_waypoints(hud: Control) -> void:
+	waypoints = WaypointLayer.new()
+	waypoints.cam = cam
+	waypoints.game = sim
+	hud.add_child(waypoints)
+	waypoints.set_anchors_preset(Control.PRESET_FULL_RECT)
+
+
+## 击杀/技能白闪：peak 0.15（击杀）或 0.10（闪电链 §4.2）；
+## _physics_process 以 3.0/s 衰减 → ≤50ms 归零（§3.3 防晕铁律 3）。
+func _trigger_kill_flash(peak: float = 0.15) -> void:
 	if _kill_white != null:
-		_kill_white_a = 0.15  # §3.3 上限 ≤0.15；_physics_process 以 3.0/s 衰减，≤50ms 归零。
+		_kill_white_a = peak
 
 
 func _build_game_over(hud: Control) -> void:
@@ -671,14 +725,25 @@ func _build_game_over(hud: Control) -> void:
 	_over_title.size = Vector2(520, 70)
 	_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
-	_over_stats = _make_label(_over_panel, "", 24, Color.WHITE, Vector2(0, 480))
+	_over_stats = _make_label(_over_panel, "", 24, Color.WHITE, Vector2(0, 430))
 	_over_stats.size = Vector2(720, 110)
 	_over_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+	# M3 结算星级：依次弹出（初始隐藏，_start_result_sequence 里按序过冲弹出）。
+	for i in 3:
+		var star := _make_label(
+			_over_panel, "\u2605", 64, Color(1.0, 0.85, 0.3), Vector2(238.0 + float(i) * 90.0, 580)
+		)
+		star.size = Vector2(80, 90)
+		star.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		star.pivot_offset = star.size * 0.5
+		star.visible = false
+		_result_stars.append(star)
 
 	var restart := Button.new()
 	restart.text = "TAP TO RETRY"
 	restart.add_theme_font_size_override("font_size", 30)
-	restart.position = Vector2(190, 700)
+	restart.position = Vector2(190, 720)
 	restart.size = Vector2(340, 90)
 	restart.pressed.connect(_on_retry)
 	_over_panel.add_child(restart)
@@ -686,6 +751,96 @@ func _build_game_over(hud: Control) -> void:
 
 func _on_retry() -> void:
 	get_tree().reload_current_scene()
+
+
+## M3 结算状态机（design_boom.md §7.2）：最后一击 0.3× 慢镜头(0.35s)
+## → 星级依次弹出 → 金币飞向计数器 + 分数数字滚动。
+func _on_game_over(score: int) -> void:
+	audio.play("over", -4.0)
+	cam.add_trauma(0.8)
+	_result_final_score = score
+	_over_stats.text = "SCORE  %d\nKILLS  %d" % [score, sim.kills]
+	_over_panel.visible = true
+	if _hint_label != null:
+		_hint_label.visible = false
+	Engine.time_scale = 0.3
+	_slowmo_until_ms = Time.get_ticks_msec() + 350
+
+
+## 结束慢镜头并启动结算序列（星级 → 金币 → 数字滚动）。
+func _end_slowmo() -> void:
+	if Engine.time_scale >= 1.0 and _slowmo_until_ms <= 0:
+		return
+	Engine.time_scale = 1.0
+	_slowmo_until_ms = 0
+	_start_result_sequence()
+
+
+## 慢镜头恢复后调用：星级逐个过冲弹出 → 金币飞计数器 → 分数滚动。
+func _start_result_sequence() -> void:
+	# 星级：按已达成的阈值亮金色，未达成的暗色占位；依次 0.25s 过冲弹出。
+	var earned: int = BoomGame.result_stars(sim.wave)
+	for i in _result_stars.size():
+		var star := _result_stars[i] as Label
+		if star == null:
+			continue
+		star.add_theme_color_override(
+			"font_color", Color(1.0, 0.85, 0.3) if i < earned else Color(0.28, 0.3, 0.36)
+		)
+		var tw := create_tween()
+		tw.tween_interval(0.25 * float(i + 1))
+		tw.tween_callback(_pop_star.bind(star))
+	# 金币飞向计数器 + 分数滚动（在星级之后）。
+	var coin_tw := create_tween()
+	coin_tw.tween_interval(0.25 * float(_result_stars.size()) + 0.15)
+	coin_tw.tween_callback(_fly_coins)
+	var roll := create_tween()
+	roll.tween_interval(0.25 * float(_result_stars.size()) + 0.3)
+	roll.tween_callback(_roll_score)
+
+
+func _pop_star(star: Label) -> void:
+	star.visible = true
+	star.scale = Vector2(1.8, 1.8)
+	star.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(star, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(
+		Tween.EASE_OUT
+	)
+	tw.tween_property(star, "modulate:a", 1.0, 0.15)
+
+
+## 金币粒子从面板中央飞向左上分数计数器。
+func _fly_coins() -> void:
+	var target: Vector2 = _score_label.position + Vector2(10.0, 10.0)
+	for i in 8:
+		var coin := _make_label(_over_panel, "\u25cf", 26, Color(1.0, 0.85, 0.3), Vector2.ZERO)
+		coin.size = Vector2(32, 32)
+		coin.z_index = 10
+		var start := (
+			Vector2(360, 660) + Vector2(randf_range(-130.0, 130.0), randf_range(-90.0, 90.0))
+		)
+		coin.position = start
+		var tw := create_tween()
+		tw.tween_interval(0.06 * float(i))
+		tw.tween_property(coin, "position", target, 0.45).set_trans(Tween.TRANS_QUAD).set_ease(
+			Tween.EASE_IN
+		)
+		tw.tween_property(coin, "modulate:a", 0.0, 0.1)
+		tw.tween_callback(coin.queue_free)
+
+
+## 分数数字滚动 0→final（滚动期间 _hud_refresh 不覆盖 _score_label）。
+func _roll_score() -> void:
+	_result_counting = true
+	var tw := create_tween()
+	tw.tween_method(_set_score_text, 0.0, float(_result_final_score), 0.9)
+	tw.tween_callback(func() -> void: _result_counting = false)
+
+
+func _set_score_text(v: float) -> void:
+	_score_label.text = str(int(v))
 
 
 func _make_label(parent: Node, text: String, font_size: int, color: Color, pos: Vector2) -> Label:
@@ -710,20 +865,54 @@ func _show_toast(text: String) -> void:
 	tw.tween_property(_toast, "modulate:a", 0.0, 0.4)
 
 
+## M3 击杀播报：大字 1.6×→1.0 过冲（TRANS_BACK，0.3s）后淡出；空文案不播。
+func _show_combo_announce(text: String) -> void:
+	if text == "" or _combo_label == null:
+		return
+	if _combo_tween != null and _combo_tween.is_valid():
+		_combo_tween.kill()
+	var color := COL_ACCENT
+	if text == "RAMPAGE":
+		color = COL_DANGER
+	elif text == "DOUBLE":
+		color = Color.WHITE
+	_combo_label.text = text
+	_combo_label.add_theme_color_override("font_color", color)
+	_combo_label.visible = true
+	_combo_label.modulate = Color(1, 1, 1, 1)
+	_combo_label.scale = Vector2(1.6, 1.6)
+	_combo_tween = create_tween()
+	(
+		_combo_tween
+		. tween_property(_combo_label, "scale", Vector2.ONE, 0.3)
+		. set_trans(Tween.TRANS_BACK)
+		. set_ease(Tween.EASE_OUT)
+	)
+	_combo_tween.tween_interval(0.35)
+	_combo_tween.tween_property(_combo_label, "modulate:a", 0.0, 0.25)
+	_combo_tween.tween_callback(func() -> void: _combo_label.visible = false)
+
+
 func _hud_refresh() -> void:
 	if sim == null:
 		return
-	_score_label.text = str(sim.score)
+	# 结算数字滚动期间由 tween 写分数，避免每帧覆盖造成回跳。
+	if not _result_counting:
+		_score_label.text = str(sim.score)
 	_kills_label.text = "KILLS %d   COMBO x%d" % [sim.kills, maxi(1, sim.combo)]
 	_wave_label.text = "WAVE %d" % sim.wave
 	if _coin_label != null:
 		_coin_label.text = str(sim.coins)
 	if skill_sys != null:
 		var skill_state := skill_sys.get_state()
-		for skill_id in _skill_buttons:
-			(_skill_buttons[skill_id] as BoomSkillButton).set_cooldown(float(skill_state[skill_id]))
+		for skill_id in skill_btns:
+			(skill_btns[skill_id] as BoomSkillButton).set_cooldown(float(skill_state[skill_id]))
 	for i in _hp_blocks.size():
 		var block := _hp_blocks[i] as ColorRect
 		if block == null:
 			continue
 		block.color = COL_CREAM if i < sim.player.hp else Color(0.52, 0.20, 0.12, 0.20)
+
+# ------------------------------------------------------------------ 程序化控件
+
+## M3 目标指示层已拆分至 scripts/ui/waypoint_layer.gd（class_name WaypointLayer）。
