@@ -47,6 +47,7 @@ var _vignette: ColorRect
 var _kill_white: ColorRect = null  # 击杀全屏泛白 overlay（峰值≤0.15，≤50ms 淡出）
 var _kill_white_a: float = 0.0
 var _toast: Label
+var _wave_cd_label: Label  # M4 §5 波间歇倒计时
 var _over_panel: Control
 var _over_title: Label
 var _over_stats: Label
@@ -360,12 +361,21 @@ func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:
 
 func _on_wave_started(wave: int) -> void:
 	audio.play("wave", -12.0)
-	_show_toast("WAVE %d" % wave)
+	# M4 §5 波次开场横幅：复用 M3 播报大字管线；精英波/台阶波换文案与颜色。
+	if wave % BoomGame.ELITE_EVERY_N == 0:
+		_show_wave_banner("WAVE %d · ELITE!" % wave, COL_DANGER)
+	elif wave % BoomGame.WAVE_STAGE_EVERY == 0:
+		_show_wave_banner("WAVE %d — STAGE UP!" % wave, COL_GOLD)
+	else:
+		_show_wave_banner("WAVE %d" % wave, COL_ACCENT)
 
 
 func _on_wave_cleared(wave: int, bonus: int) -> void:
 	audio.play("wave_clear", -6.0)
 	_show_toast("WAVE %d CLEARED  +%d" % [wave, bonus])
+	# M4 §5：波结算奖励飘字（波中心 = 玩家位置，bonus 此前已发但无表现）。
+	if hitnum != null:
+		hitnum.spawn(sim.player.position + Vector3(0.0, 1.2, 0.0), "+%d" % bonus, COL_GOLD, 1.3)
 
 
 # ------------------------------------------------------------------ 3D 世界
@@ -580,6 +590,12 @@ func _build_hud() -> void:
 	_toast.size = Vector2(720, 60)
 	_toast.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_toast.visible = false
+
+	# M4 §5 波间歇倒计时：屏幕上沿小字"下一波 N"，最后 1s 变红（§3.4 喘息半拍）。
+	_wave_cd_label = _make_label(hud, "", 22, COL_CREAM, Vector2(0, 96))
+	_wave_cd_label.size = Vector2(720, 30)
+	_wave_cd_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_wave_cd_label.visible = false
 
 	# M3 击杀播报大字（屏幕中央偏上，过冲抖动）。
 	_combo_label = _make_label(hud, "", 72, COL_ACCENT, Vector2(0, 386))
@@ -893,15 +909,26 @@ func _show_toast(text: String) -> void:
 
 ## M3 击杀播报：大字 1.6×→1.0 过冲（TRANS_BACK，0.3s）后淡出；空文案不播。
 func _show_combo_announce(text: String) -> void:
-	if text == "" or _combo_label == null:
+	if text == "":
 		return
-	if _combo_tween != null and _combo_tween.is_valid():
-		_combo_tween.kill()
 	var color := COL_ACCENT
 	if text == "RAMPAGE":
 		color = COL_DANGER
 	elif text == "DOUBLE":
 		color = Color.WHITE
+	_show_announce(text, color)
+
+
+## M4 §5 波次横幅：WAVE N（默认金）/ 台阶波（金）/ 精英波（红），复用播报动画。
+func _show_wave_banner(text: String, color: Color) -> void:
+	_show_announce(text, color)
+
+
+func _show_announce(text: String, color: Color) -> void:
+	if _combo_label == null:
+		return
+	if _combo_tween != null and _combo_tween.is_valid():
+		_combo_tween.kill()
 	_combo_label.text = text
 	_combo_label.add_theme_color_override("font_color", color)
 	_combo_label.visible = true
@@ -927,6 +954,17 @@ func _hud_refresh() -> void:
 		_score_label.text = str(sim.score)
 	_kills_label.text = "KILLS %d   COMBO x%d" % [sim.kills, maxi(1, sim.combo)]
 	_wave_label.text = "WAVE %d" % sim.wave
+	# M4 §5：间歇期显示"下一波 N"倒计时，最后 1s 变红提示。
+	if _wave_cd_label != null:
+		if sim._between_waves and sim._next_wave_cd > 0.0:
+			_wave_cd_label.visible = true
+			_wave_cd_label.text = "下一波 %d" % int(ceilf(sim._next_wave_cd))
+			var urgent := sim._next_wave_cd <= 1.0
+			_wave_cd_label.add_theme_color_override(
+				"font_color", COL_DANGER if urgent else COL_CREAM
+			)
+		else:
+			_wave_cd_label.visible = false
 	if _coin_label != null:
 		_coin_label.text = str(sim.coins)
 	if skill_sys != null:
