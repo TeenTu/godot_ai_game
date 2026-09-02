@@ -740,16 +740,7 @@ static func _covariance(valid: Array, t_ref: float, x: Vector4, inlier: Array) -
 			neg = true
 	if neg:
 		return {}
-	# 完整 4x4 状态协方差（尺度归一化空间）：
-	# P = [[P_EE, P_EN, ...], [P_EN, P_NN, ...], ...]
-	# 位置子矩阵 P_position = [[inv[0][0], inv[0][1]], [inv[1][0], inv[1][1]]]
-	return {
-		"p_e": inv[0][0],
-		"p_n": inv[1][1],
-		"v_e": inv[2][2],
-		"v_n": inv[3][3],
-		"matrix": inv,
-	}
+	return {"p_e": inv[0][0], "p_n": inv[1][1], "v_e": inv[2][2], "v_n": inv[3][3]}
 
 
 # =====================================================================

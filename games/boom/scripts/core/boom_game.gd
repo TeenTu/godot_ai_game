@@ -27,6 +27,15 @@ const COMBO_WINDOW: float = 2.0
 const AIM_LOCK_TIME: float = 0.15
 const AIM_ASSIST_RAD: float = 0.14  # ±8° 吸附锥（0.14 rad）
 
+# ---- M2 技能参数（design_m2_danmaku.md）----
+const FAN_COUNT: int = 5
+const FAN_SPREAD_RAD: float = deg_to_rad(15.0)
+const CHAIN_MAX_TARGETS: int = 3
+const CHAIN_JUMP_RANGE: float = 8.0
+const CHAIN_DECAY: float = 0.7
+const NUKE_RADIUS: float = 6.0
+const NUKE_DMG_MULT: int = 4
+
 var player: BoomPlayer
 var enemies: Array = []
 var bullets: Array = []  # BoomBullet 池
@@ -223,6 +232,105 @@ func _spawn_bullet(from: Vector3, dir: Vector3) -> void:
 	_bullet_idx = (_bullet_idx + 1) % bullets.size()
 	b.fire(from, dir)
 	shot_fired.emit(from)
+
+
+# ------------------------------------------------------------------ 技能（M2）
+
+
+## 当前瞄准的最远敌人（供闪电链起点/扇形朝向）。无可攻击目标返回 null。
+func nearest_attacker() -> BoomJelly:
+	return _nearest_enemy()
+
+
+## 爆裂弹幕：朝最近敌人方向射出 FAN_COUNT 发扇形散弹（复用子弹池，走既有命中/回收）。
+## 无目标时朝玩家朝向扇形散射。返回实际发射数（顿帧/特效由上层订阅 shot_fired）。
+func cast_fan_shot() -> int:
+	var muzzle: Vector3 = player.position + player.basis * player.muzzle.position
+	var base_dir: Vector3 = player.facing
+	var target := _nearest_enemy()
+	if target != null:
+		base_dir = _aim_dir(muzzle, target)
+	var count: int = 0
+	var span := FAN_SPREAD_RAD
+	var step_rad := 0.0 if FAN_COUNT == 1 else span * 2.0 / float(FAN_COUNT - 1)
+	for i in FAN_COUNT:
+		var off := -span + float(i) * step_rad
+		var dir := base_dir.rotated(Vector3.UP, off)
+		_spawn_bullet(muzzle, dir)
+		count += 1
+	return count
+
+
+## 闪电链：以最近敌人为起点，向其它敌人链式弹跳 CHAIN_MAX_TARGETS 次，每次伤害衰减 CHAIN_DECAY。
+## 返回被命中的敌人数组（供上层画电弧/飘字/顿帧）。起点 null 返回空数组。
+func cast_chain_arc() -> Array:
+	var hits: Array = []
+	var from := player.position
+	var dmg := float(BULLET_DMG)
+	var start := _nearest_enemy()
+	if start == null:
+		return hits
+	_apply_skill_hit(start, int(round(dmg)), hits)
+	from = start.position
+	var chain := [start]
+	for _i in CHAIN_MAX_TARGETS - 1:
+		dmg *= CHAIN_DECAY
+		var next: BoomJelly = _nearest_jelly_from(from, chain)
+		if next == null:
+			break
+		_apply_skill_hit(next, int(round(dmg)), hits)
+		chain.append(next)
+		from = next.position
+	return hits
+
+
+## 核爆：以玩家为中心 NUKE_RADIUS 半径内所有敌人受 BULLET_DMG*NUKE_DMG_MULT 伤害。
+## 返回被命中的敌人数组。命中触发一次击杀顿帧（大事件感）。
+func cast_aoe_nuke() -> Array:
+	var hits: Array = []
+	var targets: Array = []
+	for e in enemies:
+		var jelly := e as BoomJelly
+		if jelly == null or jelly.is_dead() or jelly.hp <= 0:
+			continue
+		if player.position.distance_to(jelly.position) <= NUKE_RADIUS:
+			targets.append(jelly)
+	for jelly in targets:
+		_apply_skill_hit(jelly, BULLET_DMG * NUKE_DMG_MULT, hits)
+	if not targets.is_empty():
+		# 核爆：一次大顿帧（0.14s，事件型一次性，压防晕铁律事件上限内）。
+		var dur := 0.14
+		_freeze_left = maxf(_freeze_left, dur)
+		_last_killstop = game_time
+	return hits
+
+
+## 距 from 平面距离最近且不在 exclude 内、未死的敌人（闪电链找下一跳用）。
+func _nearest_jelly_from(from: Vector3, exclude: Array) -> BoomJelly:
+	var best: BoomJelly = null
+	var best_d := INF
+	for e in enemies:
+		var jelly := e as BoomJelly
+		if jelly == null or jelly.is_dead() or jelly.hp <= 0:
+			continue
+		if exclude.has(jelly):
+			continue
+		var d := jelly.position.distance_to(from)
+		if d <= CHAIN_JUMP_RANGE and d < best_d:
+			best_d = d
+			best = jelly
+	return best
+
+
+## 对单个敌人结算一次技能伤害：扣血 + 发 damaged 信号；致死则最终结算击杀。
+func _apply_skill_hit(jelly: BoomJelly, dmg: int, out_hits: Array) -> void:
+	if jelly.is_dead() or jelly.hp <= 0:
+		return
+	var hit_dir := (jelly.position - player.position).normalized()
+	enemy_damaged.emit(jelly.position, hit_dir)
+	if jelly.take_damage(dmg, hit_dir):
+		_finalize_kill(jelly)
+		out_hits.append(jelly)
 
 
 # ------------------------------------------------------------------ 子弹
