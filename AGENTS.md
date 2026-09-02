@@ -1,11 +1,15 @@
 # Godot Web Game 项目 — Agent 开发流程（每次游戏开发必读）
 
+> ⚠️ **多 Agent worktree 协作**：本仓库多个 Agent 并行开发不同游戏（Sonar / Boom / 后续 Codex）。
+> **动手前必读 `CONTRIBUTING.md`**——那里定义了 worktree 隔离、目录 ownership、shared/ 协调规则、
+> 以及"如何安全合入 main 不误删他人文件"。本章第 2 节的"推 main"须遵守 CONTRIBUTING §4/§5。
+
 ## 1. 环境速览
 
 - Godot 4.5：`E:\Program\Godot\Godot_v4.5-stable_win64.exe`（bash 用全路径；CLI 无 `godot` 命令）
 - 仓库：`https://github.com/TeenTu/godot_ai_game` → Pages：`https://teentu.github.io/godot_ai_game/<game>/`，git push 免密（Git Credential Manager），账号 TeenTu
 - 隔离 Python（Pillow/gdtoolkit 已装）：`C:/Users/10532/.workbuddy/binaries/python/envs/default/Scripts/{python,gdlint,gdformat}.exe`，pip 装包走清华源
-- ⚠️ 项目在 OneDrive 同步目录（`E:\OneDrive\Task\godot-web-game`）：删除/rm 会触发异常同步曾致整个 games/ 消失；**删后立即 ls 检查，优先用可回滚的 git 操作**，恢复用 `git checkout HEAD -- games/*`
+- ⚠️ 仓库已从 OneDrive 迁至 **`E:\Github\godot_ai_game`（main）+ `E:\Github\worktrees\boom`（boom-dev）**，旧 OneDrive 地址已废弃清理。worktree 布局见 CONTRIBUTING.md §1。删除/rm 前先确认不在 worktree 检出冲突；优先用可回滚的 git 操作，恢复用 `git checkout HEAD -- games/*`
 
 ## 2. 新游戏标准流程（SOP）
 
