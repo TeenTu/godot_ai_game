@@ -5,6 +5,9 @@ import { test, expect } from "@playwright/test";
 //  1) 玩家仍能通过摇杆移动(x 增加)；
 //  2) DYNAMIC 摇杆底座不再飞出屏幕(joy_bx/joy_by 应落在 0..1 且留有合理边距)；
 //  3) 摇杆帽中心也在屏内。
+// 屏幕分区(design_m2_danmaku)：SKILL_ZONE_X=0.65 —— 归一 x>0.65 的右区触摸
+// 全部路由给技能手势，摇杆 exclude_right_x=0.65 本就不响应右区触摸。
+// 因此摇杆拖动起手必须在左侧摇杆区(x<0.65)。
 // __gameState 由 main.gd _test_hook_get_state 发布(每 0.1s)。
 
 async function getState(page: import("@playwright/test").Page): Promise<Record<string, unknown>> {
@@ -54,9 +57,10 @@ test("boom touch: player moves & joystick base stays on screen", async ({ browse
   };
 
   const toPx = (p: { x: number; y: number }) => ({ x: (p.x / 100) * 720, y: (p.y / 100) * 1280 });
-  // 从屏幕右上(远离摇杆休息位)按下并往左上拖，最能暴露"底座飞出/跟手错位"。
-  const d = toPx({ x: 80, y: 18 });
-  const t = toPx({ x: 30, y: 12 });
+  // 起手点必须在左区(x<0.65)；从左中(远离摇杆休息位)按下并往右上拖，
+  // 仍能暴露"底座飞出/跟手错位"。终点也保持在左区。
+  const d = toPx({ x: 25, y: 65 });
+  const t = toPx({ x: 52, y: 40 });
   console.log("DOWN at px", d, " MOVE to px", t);
 
   await dispatch("touchstart", d.x, d.y, 1);
