@@ -124,7 +124,11 @@ func _array_def() -> Dictionary:
 ## 当前阵列的物理航向(deg)：BOW/FLANK = own.course；TOWED 用拖曳阵自身航向
 ## （批次2 拖曳阵状态机将注入带转向滞后的 array_heading，此处先回退 own.course）。
 func _array_heading_deg() -> float:
-	if active_array_id == "TOWED" and _own_ref != null and _own_ref.get("array_heading_deg") != null:
+	if (
+		active_array_id == "TOWED"
+		and _own_ref != null
+		and _own_ref.get("array_heading_deg") != null
+	):
 		return float(_own_ref.array_heading_deg)
 	if _own_ref == null:
 		return 0.0
@@ -254,7 +258,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				demon[di] = maxf(demon[di], NOISE_FLOOR_DB + d_amp * pow(0.7, k - 1))
 		_update_demon_estimate(speed_kn * 0.0 + rpm_hz, float(ac.blade_count), se_db)
 
-	bb_rows.append({"t": sim_time, "values": bb, "peaks": bb_peaks})
+	bb_rows.append({"t": sim_time, "values": bb, "peaks": bb_peaks, "course": own_course})
 	nb_rows.append({"t": sim_time, "values": nb, "tonals": nb_tonals})
 	demon_rows.append({"t": sim_time, "values": demon})
 	if bb_rows.size() > 600:
@@ -352,10 +356,15 @@ func latest_peaks() -> Array:
 
 
 ## 玩家 Mark：在 BB 峰（或任意游标方位）处产生一条 Measurement。
-## bearing_deg 为操作员在艇艏相对瀑布上点选的相对方位(display)；内部反算成真方位
-## (βtrue=wrap360(ψown+βdisplay)，问题2) 才写入 Measurement——绝不让相对方位直入 TMA。
+## bearing_deg 语义由 as_true 决定：
+##   as_true=false（默认，RELATIVE 瀑布）：输入为艇艏相对方位(display)，
+##     内部反算成真方位(βtrue=wrap360(ψown+βdisplay)，问题2)才写入 Measurement——
+##     绝不让相对方位直入 TMA。
+##   as_true=true（TRUE STABILIZED 瀑布）：输入已是真北方位，直接加噪声写入。
 ## 这是 Measurement 的合法来源之一（玩家手动）。
-func create_mark(bearing_deg: float, sim_time: float, target_id: String = "") -> Measurement:
+func create_mark(
+	bearing_deg: float, sim_time: float, target_id: String = "", as_true: bool = false
+) -> Measurement:
 	var def := _array_def()
 	var se_db: float = -1.0
 	for pk in latest_peaks():
@@ -371,7 +380,10 @@ func create_mark(bearing_deg: float, sim_time: float, target_id: String = "") ->
 	m.observer_east_m = float(_own_ref.position_east_m)
 	m.observer_north_m = float(_own_ref.position_north_m)
 	var own_course: float = float(_own_ref.course_deg)
-	m.measured_bearing_deg = NavUtils.rel_to_true(own_course, bearing_deg + _randn() * sigma)
+	if as_true:
+		m.measured_bearing_deg = NavUtils.wrap360(bearing_deg + _randn() * sigma)
+	else:
+		m.measured_bearing_deg = NavUtils.rel_to_true(own_course, bearing_deg + _randn() * sigma)
 	m.bearing_sigma_deg = sigma
 	m.signal_excess_db = se_db
 	m.snr_db = se_db

@@ -23,7 +23,7 @@
 | `E:\Github\worktrees\sonar` | `sonar-dev` | Sonar | Sonar 独立开发现场（Sonar Agent 使用） |
 | `E:\Github\worktrees\boom` | `boom-dev` | Boom | Boom 独立开发现场（Boom Agent 使用） |
 
-> main 的集成者是 **Codex CLI**。各游戏 Agent 在自己的 dev worktree 写完一批 → push 到远端 dev 分支 → 交给 Codex CLI 解决冲突并起 PR / 合并回 main（详见 §4）。Agent 不直接 push main。
+> main 的集成者是 **Codex CLI**。各游戏 Agent 在自己的 dev worktree 写完一批 → push 到远端 dev 分支 → **automation 自动触发** Codex CLI 解决冲突并起 PR / 合并回 main（详见 §4，触发不依赖人工选择）。Agent 不直接 push main。
 
 新增 worktree 的命令（在主仓库执行）：
 
@@ -80,11 +80,33 @@ main 是"集成发布口"，**不是开发场**。分工如下：
 ### 4.1 各游戏 Agent（Sonar / Boom 等）
 
 - 只在**自己的 dev worktree / 分支**（`sonar-dev` / `boom-dev`）上开发：随便 commit、本地跑测试、push 到远端同名 dev 分支。
-- 一批做完了，**不要自己动 main**。通知集成者（Codex CLI）"`sonar-dev` 有一批可合"。
+- **不要自己动 main，也不要停下来问"要不要合"。** 合入 main 是自动触发的既定流程，不是人工决策点。
+- 一个 dev 批次开发完成并 `git push origin <dev分支>` 成功后，即视为**已进入自动集成队列**。无需人工选择或确认。
+
+### 4.1.1 自动触发（Codex CLI 主执行，automation 兜底）
+
+> 铁律：**"开发完成 → Codex 评审 → 起 PR → 合并 main"是一旦 push dev 即自动衔接的流水线**，
+> 任何 Agent / 协作者都无需在中间做"要不要合"的选择。
+
+**主执行者 = Codex CLI，经 `codex exec` 非交互驱动**，真正负责 §4.2 的评审 / 起 PR / 合并 main：
+
+- 集成任务由 **`codex exec` 触发 Codex CLI 执行**（非交互、放行 git 与网络）：
+  ```bash
+  codex exec --dangerously-bypass-approvals-and-sandbox -C "E:/Github/godot_ai_game" "<集成指令：把 <dev分支> 集成进 main，见 §4.2>"
+  ```
+- 触发入口可以是游戏 Agent 开发完成 push dev 后、也可以是 CI/webhook/人工脚本，凡是能唤起 `codex exec` 的都算主路径。Codex CLI 是 main 的唯一 push 者。
+
+**兜底 = WorkBuddy automation**（非主执行者，只补漏）：
+
+- 系统维护一个**集成 automation**，职责是**定时监控各 dev 分支是否有已 push 但尚未合入 main 的新 commit**；它**不亲自做集成**，而是检测到待合批次后补一次 `codex exec` 把活交给 Codex，并校验 Codex 是否真合入了 main。
+- 触发条件：`sonar-dev` / `boom-dev` 任一分支在最近一次检查中较 `origin/main` 有新增 commit。默认对每个 dev 分支串行处理，一次只集成一个，避免多个 dev 抢 main。
+- 若 Codex 集成某批次时 CI 红或冒烟失败，**Codex 负责修复或回退**并记录原因——不回退到人工询问这一步。automation 重试一次仍失败则上报需人工介入点。
+- 因此各游戏 Agent 的最终交付动作只有一个：**开发完成 → push 自己的 dev 分支**。之后的评审 / PR / 合并 / CI 由 Codex CLI（主）与 automation（兜底）全自动衔接。
 
 ### 4.2 集成者（Codex CLI，唯一允许 push main 的角色）
 
 Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责：
+（**通常经 `codex exec` 非交互驱动**（§4.1.1 主路径）；若主路径未及时触发，由 WorkBuddy automation 兜底补一次 `codex exec`）
 
 1. 拉取目标 dev 分支 + 最新 main。
 2. **rebase dev 分支到 origin/main**，解决冲突（冲突只可能来自 `shared/` 或公共文件——按 §3 处理；各游戏目录物理隔离不会撞）。

@@ -6,11 +6,12 @@ extends Control
 ##   ┌────────┬────────────────────────────┬──────────────┐
 ##   │ 方位盘  │      海图（相机可缩放平移）     │  控制面板     │
 ##   ├────────┴────────────────────────────┴──────────────┤
-##   │            Bearing-Time 图（240px）                 │
-##   ├────────────────────────────────────────────────────┤
-##   │            Residual 残差图（150px）                 │
+##   │            底部诊断区（BT/残差，可切换/关闭）          │
 ##   └────────────────────────────────────────────────────┘
 ##
+## 诊断区显示模式（需求§一.1）：CLOSED / BT(默认) / RESIDUAL / SPLIT。
+## 关闭整个诊断区时 _diag_box.visible=false 释放空间，主海图自动扩展；
+## 重新打开保留数据（数据在 _rebuild_display_data 维护，不随可见性丢失）。
 ## 要点：
 ##   - selected_track_id：Auto Fit 只拟合选中接触，禁止自动取第一个
 ##   - 数据只在「新测量 / 新拟合 / 选择或图层变化」时重建（脏标记）
@@ -22,6 +23,12 @@ const SCENARIO_NAME: String = "stage1_basic_passive"
 const PANEL_W: float = 280.0
 const BT_H: float = 240.0
 const RES_H: float = 150.0
+
+# 底部诊断区显示模式（需求§一.1）：CLOSED / BT / RESIDUAL / SPLIT
+const DIAG_CLOSED: int = 0
+const DIAG_BT: int = 1
+const DIAG_RESIDUAL: int = 2
+const DIAG_SPLIT: int = 3
 
 var world: World = null
 var tracker: Tracker = null
@@ -37,6 +44,8 @@ var _chart: ChartView = null
 var _bearing: BearingDisplay = null
 var _bt_plot: BearingTimePlot = null
 var _res_plot: ResidualPlot = null
+var _diag_box: VBoxContainer = null  # 包裹两个诊断图的底部容器
+var _diag_mode: int = DIAG_BT  # 默认只显示 BT（需求§一.1）
 var _panel: VBoxContainer = null
 
 # 控制面板控件
@@ -341,19 +350,71 @@ func _build_layer_toggles() -> void:
 	)
 	_panel.add_child(ob)
 
+	# 诊断区显示模式（需求§一.1）：CLOSED / BT(默认) / RESIDUAL / SPLIT
+	var diag_lbl := Label.new()
+	diag_lbl.text = "Diagnostics:"
+	diag_lbl.add_theme_font_size_override("font_size", 15)
+	_panel.add_child(diag_lbl)
+	var diag_ob := OptionButton.new()
+	diag_ob.add_item("CLOSED")
+	diag_ob.add_item("BT")
+	diag_ob.add_item("RESIDUAL")
+	diag_ob.add_item("SPLIT")
+	diag_ob.select(DIAG_BT)
+	diag_ob.item_selected.connect(_set_diag_mode)
+	_panel.add_child(diag_ob)
+
 
 func _build_bottom(root: VBoxContainer) -> void:
+	_diag_box = VBoxContainer.new()
+	_diag_box.add_theme_constant_override("separation", 0)
+	root.add_child(_diag_box)
+
 	_bt_plot = BearingTimePlot.new()
 	_bt_plot.custom_minimum_size = Vector2(0, BT_H)
 	_bt_plot.hover_changed.connect(_on_hover_changed)
 	_bt_plot.mouse_exited.connect(_bt_plot.mouse_exited_notify)
-	root.add_child(_bt_plot)
+	_diag_box.add_child(_bt_plot)
 
 	_res_plot = ResidualPlot.new()
 	_res_plot.custom_minimum_size = Vector2(0, RES_H)
 	_res_plot.hover_changed.connect(_on_hover_changed)
 	_res_plot.mouse_exited.connect(_res_plot.mouse_exited_notify)
-	root.add_child(_res_plot)
+	_diag_box.add_child(_res_plot)
+
+	# 应用默认显示模式（BT）：BT 显示、残差隐藏
+	_apply_diag_mode()
+
+
+## 按 _diag_mode 应用底部诊断区的可见性。
+## - 数据/缩放/悬停状态保存在两个 plot 内，不随可见性改变而丢失（需求§一.1：
+##   重新打开后保留数据、缩放和悬停状态）。
+## - CLOSED：整个诊断容器隐藏，空出的垂直空间被主海图(main_row expand)自动吸收。
+func _apply_diag_mode() -> void:
+	if _diag_box == null or _bt_plot == null or _res_plot == null:
+		return
+	match _diag_mode:
+		DIAG_CLOSED:
+			_diag_box.visible = false
+		DIAG_BT:
+			_diag_box.visible = true
+			_bt_plot.visible = true
+			_res_plot.visible = false
+		DIAG_RESIDUAL:
+			_diag_box.visible = true
+			_bt_plot.visible = false
+			_res_plot.visible = true
+		DIAG_SPLIT:
+			_diag_box.visible = true
+			_bt_plot.visible = true
+			_res_plot.visible = true
+	queue_redraw()
+
+
+## 供面板控件调用：设置诊断区显示模式。
+func _set_diag_mode(mode: int) -> void:
+	_diag_mode = mode
+	_apply_diag_mode()
 
 
 ## 渲染入口
@@ -975,10 +1036,13 @@ func _op_step() -> void:
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
-## x_value 为艇艏相对方位(-180..180，艇艏=0)；create_mark 内部反算真方位。
-func _on_op_mark(x_value: float) -> void:
+## x_value 为当前瀑布显示基准下的方位；create_mark 内部处理。
+##   as_true=false（RELATIVE 瀑布）：x 为艇艏相对方位(-180..180，艇艏=0)，
+##     create_mark 内部反算真方位。
+##   as_true=true（TRUE STABILIZED 瀑布）：x 为真北方位(0..360)，直接加噪声。
+func _on_op_mark(x_value: float, as_true: bool = false) -> void:
 	var brg: float = x_value
-	var m: Measurement = op.create_mark(brg, world.sim_time)
+	var m: Measurement = op.create_mark(brg, world.sim_time, "", as_true)
 	world.measurements.append(m)
 	var t: Track = null
 	if selected_track_id != "":

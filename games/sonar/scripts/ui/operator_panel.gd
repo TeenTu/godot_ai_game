@@ -9,7 +9,7 @@ extends VBoxContainer
 ## 数据流：main_ui 调 set_operator(op) 并在 op 有新行时调 refresh()；
 ## 玩家点击 BB 瀑布 → mark_requested(bearing_deg) 信号 → main_ui 建 Mark。
 
-signal mark_requested(bearing_deg: float)
+signal mark_requested(bearing_deg: float, as_true: bool)
 signal array_changed(array_id: String)
 signal autocrew_toggled(on: bool)
 
@@ -18,6 +18,7 @@ const MAX_ROWS_SHOWN: int = 80
 var wf_bb: WaterfallView = null
 var wf_nb: WaterfallView = null
 var wf_demon: WaterfallView = null
+var _lbl_bb_mode: Label = null  # 标注当前 BB 瀑布显示基准（RELATIVE / TRUE STABILIZED）
 
 var _autocrew: CheckBox = null
 var _lbl_class: Label = null
@@ -48,13 +49,34 @@ func _init() -> void:
 	row.add_child(_autocrew)
 	add_child(row)
 
-	add_child(_mk_label("Broadband (bearing-time) — click to Mark"))
+	# BB 瀑布显示基准切换：RELATIVE(默认,艇艏=0°) / TRUE STABILIZED(真北稳定)
+	var bb_mode_row := HBoxContainer.new()
+	bb_mode_row.add_theme_constant_override("separation", 4)
+	add_child(bb_mode_row)
+	_lbl_bb_mode = Label.new()
+	_lbl_bb_mode.text = "RELATIVE (bow=0°)"
+	_lbl_bb_mode.add_theme_font_size_override("font_size", 12)
+	bb_mode_row.add_child(_lbl_bb_mode)
+	var bb_mode_opt := OptionButton.new()
+	bb_mode_opt.add_item("RELATIVE")
+	bb_mode_opt.add_item("TRUE STABILIZED")
+	bb_mode_opt.select(0)
+	bb_mode_opt.item_selected.connect(
+		func(i: int):
+			var mode: String = "rel" if i == 0 else "true"
+			wf_bb.set_bearing_mode(mode)
+			_lbl_bb_mode.text = "RELATIVE (bow=0°)" if i == 0 else "TRUE STABILIZED (north-up)"
+	)
+	bb_mode_row.add_child(bb_mode_opt)
+
 	wf_bb = WaterfallView.new()
 	wf_bb.axis_mode = "bearing"
 	wf_bb.x_min = -180.0
 	wf_bb.x_max = 180.0
 	wf_bb.custom_minimum_size = Vector2(0, 100)
-	wf_bb.mark_requested.connect(func(x: float, _t: float): mark_requested.emit(x))
+	wf_bb.mark_requested.connect(
+		func(x: float, _t: float): mark_requested.emit(x, wf_bb.bearing_mode == "true")
+	)
 	add_child(wf_bb)
 
 	add_child(_mk_label("Narrowband / LOFAR (freq-time)"))
