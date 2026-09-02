@@ -123,12 +123,16 @@ Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责�
 
 ### 5.1 冒烟范围分级（2026-09-03 新增：尽量减少 Codex CLI 工作量）
 
-判定依据 = 本次 dev 批次相对 `origin/main` 的 diff **是否触碰 `shared/`**（共享套件 / addons / 共享样式 / 素材）：
+判定依据 = 本次 dev 批次相对 `origin/main` 的 diff **触碰 `shared/` 的性质**（共享套件 / addons / 共享样式 / 素材）：
 
-- **未触碰 `shared/`**（只改了本分支自己的 `games/<你的游戏>/`，或纯文档如 CONTRIBUTING.md / 本游戏 README）：
+- **完全不触碰 `shared/` / `.github/` / 仓库级 `tools/`**（只改了本分支自己的 `games/<你的游戏>/`，或纯文档如 CONTRIBUTING.md / 本游戏 README）：
   → Codex CLI 与开发 Agent **只需冒烟当前游戏**，lint/format 只跑当前游戏目录。
-- **触碰了 `shared/`**，或 `.github/`（CI/deploy）、仓库级 `tools/` 等会影响多游戏构建的公共文件：
+- **触碰 `shared/` 但仅新增（纯 additive，低影响）**：diff 中 `shared/` 下只有新增文件，**没有任何对既有文件的修改或删除**（新增素材 / 贴图 / 音效 / 新脚本均视为低影响，不影响既有游戏行为）：
+  → 同样**只需冒烟当前游戏**，lint/format 只跑当前游戏目录。
+- **触碰 `shared/` 且含对既有文件的修改或删除**（改动 / 删除共享 addons、脚本、样式、素材引用等，可能影响其它游戏）：
   → **全量冒烟**（suika / dodge / sonar / boom 四游戏）+ 全目录 gdlint/gdformat。
+- **触碰 `.github/`（CI/deploy）或仓库级 `tools/`**（影响多游戏构建 / 门禁的公共文件）：
+  → 保守按**全量冒烟**处理。
 - **无论哪种范围，§4.2 步骤 3 的越界检查始终执行**：`git diff origin/main --stat` 不得删除其它 `games/<游戏>/` 文件——这是防"把别人游戏弄坏"的根本，与冒烟范围无关。
 - 冒烟范围是**下限不是上限**：Codex CLI 若对共享/公共改动的影响面不确定，可自行升级为全量冒烟。
 
