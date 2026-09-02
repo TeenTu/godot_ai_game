@@ -975,8 +975,9 @@ func _op_step() -> void:
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
+## x_value 为艇艏相对方位(-180..180，艇艏=0)；create_mark 内部反算真方位。
 func _on_op_mark(x_value: float) -> void:
-	var brg: float = fposmod(x_value, 360.0)
+	var brg: float = x_value
 	var m: Measurement = op.create_mark(brg, world.sim_time)
 	world.measurements.append(m)
 	var t: Track = null

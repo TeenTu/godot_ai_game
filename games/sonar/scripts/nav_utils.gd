@@ -73,3 +73,50 @@ static func advance_pos(
 		"x": x + speed_ms * sin(rad) * dt,
 		"y": y + speed_ms * cos(rad) * dt,
 	}
+
+
+# ------------------------------------------------------------------
+# 统一方位系（声呐综合修复 问题2）：
+#   真方位 true_bearing     = wrap360(atan2(ΔE,ΔN))             —— Measurement/Track/TMA 内部使用
+#   显示方位 display_bearing = wrap180(true - own_course)          —— 艇艏相对瀑布图（艇艏=0°）
+#   阵列方位 array_bearing   = wrap180(true - array_heading)       —— 阵列覆盖与方向增益
+# BOW/FLANK 的 array_heading = own.course；TOWED 用独立滞后航向。
+# ------------------------------------------------------------------
+
+
+## 相对方位 → 真方位：βtrue = wrap360(ψown + βrel)。
+static func rel_to_true(own_course_deg: float, rel_deg: float) -> float:
+	return wrap360(own_course_deg + rel_deg)
+
+
+## 真方位 → 艇艏相对显示方位：βdisp = wrap180(βtrue − ψown)。
+static func true_to_display(own_course_deg: float, true_deg: float) -> float:
+	return wrap180(true_deg - own_course_deg)
+
+
+## 真方位 → 阵列相对方位：βarray = wrap180(βtrue − ψarray)。
+static func true_to_array(array_heading_deg: float, true_deg: float) -> float:
+	return wrap180(true_deg - array_heading_deg)
+
+
+## 判断某阵列方位是否落在若干扇区内（扇区边界取相对该阵列 0..360）。
+## sectors: Array[Vector2]，每个 (start,end) 逆时针跨弧。
+static func in_sectors(array_rel_deg: float, sectors: Array) -> bool:
+	var a: float = fposmod(array_rel_deg, 360.0)
+	for s in sectors:
+		var a0: float = fposmod(float(s.x), 360.0)
+		if fposmod(a - a0, 360.0) <= fposmod(float(s.y) - a0, 360.0):
+			return true
+	return false
+
+
+## 单个覆盖扇区的方向性增益（dB）：离开扇区中心角度差 Δ（度），
+## 增益按余弦状衰减。beam_halfwidth_deg 为半宽。
+static func sector_gain_db(
+	array_rel_deg: float, center_rel_deg: float, beam_halfwidth_deg: float
+) -> float:
+	var d: float = absf(wrap180(array_rel_deg - center_rel_deg))
+	if d <= beam_halfwidth_deg:
+		return 0.0
+	# 超出扇区边缘：每超过 1° 衰减 0.5 dB，平滑而非硬切
+	return -0.5 * (d - beam_halfwidth_deg)
