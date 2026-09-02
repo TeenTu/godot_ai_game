@@ -64,6 +64,12 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   Measurement 只由 玩家 Mark / 已分配 Tracker / Autocrew 产生。
 - **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（±55..125°，高增益高精度）/
   TOWED（120..240°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
+- **TOWED 拖曳阵状态机（批次2+）**：切到 TOWED 且本艇配置 `own_ship.tow` 时，
+  阵具备真实物理生命周期：Deploy 布放（进度随时间到 100%）→ 阵航向对本艇转向
+  做一阶滞后收敛（不再恒等 own.course）；未部署/刚转向未沉降时 `usable` 受限，
+  有效增益被压低，全展并沉降后才给满增益。面板显示状态/部署%/阵航向/可用度，
+  可 Retract 回收。物理由 `scripts/towed_array.gd`（纯逻辑，可无头测）驱动，
+  经 `TruthEntity.advance` 每步推进；TOWED 覆盖用 `own.towed.array_heading_deg`。
 - **瀑布图**：Broadband（方位-时间，点击游标 Mark）、Narrowband/LOFAR
   （频率-时间 + DEMON 谐波标记联动）、DEMON 包络谱。
 - **概率分类**：观测（桨叶率/音线数/响度）与情报库模板 softmax → MERCHANT /
@@ -75,6 +81,10 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   宽带 41 次 Mark → 窄带识别 MERCHANT → DEMON 测速 12.0±3.6kn(真值12) →
   本艇 +70° 机动两腿 TMA CONVERGED → 提交 System Solution → 全部断言 PASS。
   运行：`godot --headless --path games/sonar --script res://tools/operator_test.gd`
+- TOWED 拖曳阵状态机无头验收：`tools/towed_test.gd` —— 部署生命周期 / 转向航向
+  一阶滞后收敛 / 可用度门限 / own.advance 集成 / OperatorSonar TOWED 用滞后阵航向，
+  全部确定性 PASS。运行：
+  `godot --headless --path games/sonar --script res://tools/towed_test.gd`
 - 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
   （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 

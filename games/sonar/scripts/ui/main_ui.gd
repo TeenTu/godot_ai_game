@@ -203,10 +203,15 @@ func _build_panel() -> void:
 		func(aid: String):
 			op.set_array(aid)
 			_update_status("Array -> " + aid)
+			# 切到 TOWED 且本艇配有拖曳阵且未部署时，自动开始布放（顺畅上手）
+			if aid == "TOWED":
+				_auto_deploy_towed_if_needed()
 	)
 	_op_panel.autocrew_toggled.connect(
 		func(on: bool): _update_status("Autocrew " + ("ON" if on else "OFF"))
 	)
+	_op_panel.towed_deploy_requested.connect(_on_towed_deploy)
+	_op_panel.towed_retract_requested.connect(_on_towed_retract)
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
 
@@ -1024,6 +1029,7 @@ func _op_step() -> void:
 	if op == null or _op_panel == null:
 		return
 	op.update(world.sim_time, world.world["targets"], world.world["target_acs"])
+	_refresh_towed_status()
 	if _op_panel.autocrew_on():
 		for m in op.autocrew_step(world.sim_time):
 			world.measurements.append(m)
@@ -1033,6 +1039,65 @@ func _op_step() -> void:
 			_dirty = true
 			_update_status("Autocrew marked a new detection")
 	_op_panel.refresh(op)
+
+
+# ------------------------------------------------------------------
+#  TOWED 拖曳阵（批次2+）：部署/回收 + 状态显示
+# ------------------------------------------------------------------
+
+
+## 取本艇拖曳阵（可能为 null）。TOWED 相关控制都只作用于它。
+func _towed_ref() -> TowedArray:
+	if world == null:
+		return null
+	return world.world.get("own", null).get("towed")
+
+
+## 切到 TOWED 时若本艇配有拖曳阵且处于 RETRACTED，自动开始布放。
+func _auto_deploy_towed_if_needed() -> void:
+	var t: TowedArray = _towed_ref()
+	if t != null and t.state == TowedArray.State.RETRACTED:
+		t.deploy()
+		_update_status("Towed array deploying...")
+
+
+func _on_towed_deploy() -> void:
+	var t: TowedArray = _towed_ref()
+	if t == null:
+		return
+	if t.deploy():
+		_update_status("Towed array deploying...")
+	else:
+		_update_status("Towed array cannot deploy from %s" % t.state_name())
+
+
+func _on_towed_retract() -> void:
+	var t: TowedArray = _towed_ref()
+	if t == null:
+		return
+	if t.retract():
+		_update_status("Retracting towed array...")
+	else:
+		_update_status("Towed array cannot retract from %s" % t.state_name())
+
+
+## 刷新操作员面板的 TOWED 状态行。仅在选中 TOWED 且本艇有拖曳阵时显示控件。
+func _refresh_towed_status() -> void:
+	if _op_panel == null:
+		return
+	var t: TowedArray = _towed_ref()
+	var on_towed: bool = op != null and op.active_array_id == "TOWED"
+	if t == null or not on_towed:
+		_op_panel.set_towed_status("Towed: n/a", false)
+		return
+	var pct: int = int(t.deployment_progress * 100.0)
+	var use: int = int(t.usable_fraction() * 100.0)
+	var state_txt: String = t.state_name()
+	# 部署/回收过程显示进度
+	if state_txt in ["DEPLOYING", "RETRIEVING"]:
+		state_txt = "%s %d%%" % [state_txt, pct]
+	var line: String = "Towed: %s | arr %.0f° | usable %d%%" % [state_txt, t.array_heading_deg, use]
+	_op_panel.set_towed_status(line, true)
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
