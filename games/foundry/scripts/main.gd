@@ -98,6 +98,13 @@ func _get_building_icon(id: String) -> Texture2D:
 	return _icon_textures[key]
 
 
+func _get_action_icon(id: String) -> Texture2D:
+	var key := "action_" + id
+	if not _icon_textures.has(key):
+		_icon_textures[key] = _try_load_tex("res://assets/icons/action_%s.png" % id)
+	return _icon_textures[key]
+
+
 func _family_color(family: String) -> Color:
 	var hex: String = CardDB.FAMILY_COLORS.get(family, "#888780")
 	return Color(hex)
@@ -434,16 +441,27 @@ func _refresh_hand() -> void:
 		var aid: String = _state["hand"][i]
 		var card: Dictionary = CardDB.get_action(aid)
 		btn.add_theme_stylebox_override("normal", _style_box(Color("#FFF3D6"), 12, 2))
+		# 动作卡图标：右上角小图（加载不到就跳过，不影响布局）
+		var atex := _get_action_icon(aid)
+		if atex != null:
+			var tr := TextureRect.new()
+			tr.texture = atex
+			tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			tr.position = Vector2(76, 6)
+			tr.size = Vector2(44, 44)
+			btn.add_child(tr)
 		var name_lbl := _make_label(
 			btn,
 			card["name"],
-			18,
-			Vector2(6, 6),
-			Vector2(116, 28),
+			16,
+			Vector2(4, 6),
+			Vector2(72, 44),
 			COLOR_TEXT,
 			HORIZONTAL_ALIGNMENT_CENTER
 		)
 		name_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD
 		var effect := ""
 		var fx_color := COLOR_POWER
 		if card["flat_power"] > 0:
@@ -454,7 +472,7 @@ func _refresh_hand() -> void:
 			effect = "+%d G" % card["flat_gold"]
 			fx_color = COLOR_GOLD
 		_make_label(
-			btn, effect, 24, Vector2(6, 48), Vector2(116, 40), fx_color, HORIZONTAL_ALIGNMENT_CENTER
+			btn, effect, 22, Vector2(4, 52), Vector2(116, 38), fx_color, HORIZONTAL_ALIGNMENT_CENTER
 		)
 		_make_label(
 			btn,
@@ -776,11 +794,21 @@ func _build_vs_overlay() -> void:
 	_nodes["vs_ghost_num"] = ghost_num_lbl
 
 	_nodes["vs_score"] = _make_label(
-		panel, "", 22, Vector2(20, 256), Vector2(520, 36), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
+		panel, "", 22, Vector2(20, 248), Vector2(520, 36), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
+	)
+	# 幽灵人格台词：让对手"像个人"，输给谁记得住
+	_nodes["vs_quote"] = _make_label(
+		panel,
+		"",
+		19,
+		Vector2(30, 290),
+		Vector2(500, 52),
+		COLOR_TEXT.darkened(0.25),
+		HORIZONTAL_ALIGNMENT_CENTER
 	)
 
 	var btn := _make_btn(
-		panel, "Next Round", Vector2(180, 310), Vector2(200, 68), COLOR_BTN_ALT, 30
+		panel, "Next Round", Vector2(180, 352), Vector2(200, 68), COLOR_BTN_ALT, 30
 	)
 	btn.pressed.connect(_on_vs_btn)
 	_nodes["vs_btn"] = btn
@@ -812,6 +840,7 @@ func _refresh_vs_overlay() -> void:
 		else:
 			_set_text_color("vs_title", "DRAW", COLOR_TEXT)
 		_set_text("vs_score", "Final  %d : %d" % [ms, gs])
+		_set_text("vs_quote", '"%s"  - %s' % [_state.get("ghost_quote", ""), _state["ghost_name"]])
 		(_nodes["vs_btn"] as Button).text = "Play Again"
 		# GAME_OVER 直接静态显示最终值
 		_set_vs_bars(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
@@ -828,6 +857,7 @@ func _refresh_vs_overlay() -> void:
 				% [_state["round_power"], _state["ghost_round_power"]]
 			)
 		)
+		_set_text("vs_quote", '"%s"  - %s' % [_state.get("ghost_quote", ""), _state["ghost_name"]])
 		(_nodes["vs_btn"] as Button).text = "Next Round"
 		if _vs_played_round != game.round:
 			_vs_played_round = game.round

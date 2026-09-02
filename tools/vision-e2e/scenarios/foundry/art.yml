@@ -37,3 +37,22 @@ scenarios:
           question: Shop 区域的三张卡片内部是否各有一个卡通建筑图案（齿轮/房屋/机器造型），而不是纯色空白块？
           expect:
             shop_icons: true
+
+  - name: VS 结算显示幽灵台词与战力条（幽灵人格）
+    given:
+      - open_game: { params: { test: 1 } }
+      - wait_for_stable: 2500
+    when:
+      - click_at: { x: 30, y: 73 } # 商店第一张卡
+      - wait: 700
+      - click_at: { x: 42, y: 37 } # 放置
+      - wait: 700
+      - click_at: { x: 50, y: 97 } # Go! 进入 PLAY（打牌阶段）
+      - wait: 900
+      - click_at: { x: 50, y: 97 } # End Turn（同一按钮位）触发 VS 结算
+      - wait_for_stable: 1800
+    then:
+      - vision_assert:
+          question: 画面是否弹出了结算面板，包含两条横向战力条，以及一句带引号的英文台词（幽灵对手说的话）？
+          expect:
+            vs_overlay: true

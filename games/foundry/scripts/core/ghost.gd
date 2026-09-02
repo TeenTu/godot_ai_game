@@ -18,13 +18,44 @@ const NAMES: Array[String] = [
 
 const BUILD_TYPES: Array[String] = ["Fire", "Industry", "Commerce", "Tech"]
 
+## 幽灵人格台词：按流派分组，VS 结算时显示，让对手"像个人"。
+const QUOTES: Dictionary = {
+	"Fire":
+	[
+		"My forge never sleeps!",
+		"Burn brighter or burn out!",
+		"Feel the heat of real craft!",
+	],
+	"Industry":
+	[
+		"Discipline beats talent.",
+		"My conveyor has no brakes!",
+		"Built to last, built to win.",
+	],
+	"Commerce":
+	[
+		"Everything has a price, friend.",
+		"I already bought your victory.",
+		"Money talks, factories walk.",
+	],
+	"Tech":
+	[
+		"Calculated. Executed. Won.",
+		"Efficiency is my middle name.",
+		"Your moves are 3 steps behind.",
+	],
+}
+
 
 static func make_ghost(rng: RandomNumberGenerator, difficulty: int) -> Dictionary:
 	difficulty = clampi(difficulty, 1, 5)
+	var build: String = BUILD_TYPES[rng.randi_range(0, BUILD_TYPES.size() - 1)]
+	var pool: Array = QUOTES.get(build, ["Let's build!"])
 	return {
 		"name": NAMES[rng.randi_range(0, NAMES.size() - 1)],
 		"difficulty": difficulty,
-		"build_type": BUILD_TYPES[rng.randi_range(0, BUILD_TYPES.size() - 1)],
+		"build_type": build,
+		"quote": pool[rng.randi_range(0, pool.size() - 1)],
 	}
 
 

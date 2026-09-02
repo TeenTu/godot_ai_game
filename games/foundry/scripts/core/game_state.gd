@@ -275,6 +275,7 @@ func to_dict() -> Dictionary:
 		"ghost_name": ghost.get("name", ""),
 		"ghost_diff": ghost.get("difficulty", 0),
 		"ghost_build": ghost.get("build_type", ""),
+		"ghost_quote": ghost.get("quote", ""),
 		"ghost_round_power": ghost_round_power,
 		"round_power": round_power,
 		"hand": hand.duplicate(),
