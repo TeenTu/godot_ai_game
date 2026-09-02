@@ -28,6 +28,7 @@ const GRID_Y := 168
 const PREVIEW_OFFSET := Vector2(-54, -96)
 
 var game: FoundryGame
+var audio: FoundryAudio
 var _state: Dictionary = {}
 var _nodes: Dictionary = {}
 var _dragged_preview: Control
@@ -43,6 +44,9 @@ func _ready() -> void:
 	_state = game.to_dict()
 	_bg_texture = _try_load_tex("res://assets/bg/bg_workshop.png")
 	_load_sfx()
+	audio = FoundryAudio.new()
+	add_child(audio)
+	audio.setup(self, _on_mute_pressed)
 	print("[Backpack Foundry v2.0] buy-game art + VS overlay (build=%s)" % _check_art_status())
 	_build_ui()
 	_rebuild()
@@ -73,6 +77,13 @@ func _play_sfx(sfx_name: String) -> void:
 	add_child(p)
 	p.finished.connect(p.queue_free)
 	p.play()
+	if audio != null:
+		audio.resume_bgm()
+
+
+func _on_mute_pressed() -> void:
+	_play_sfx("click")
+	audio.toggle()
 
 
 ## 启动时检查关键素材是否加载成功，输出到 console（F12 可看）方便用户/我们确认。
