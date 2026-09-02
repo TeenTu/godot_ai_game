@@ -168,6 +168,25 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
+## 3.5 阶段四：武器与攻击
+
+提交 System Solution 后 🚀 Fire 按钮亮起。鱼雷自决策（不读玩家位置/Truth）：
+
+```
+Fire（仅读 SystemSolution）→ 直航 → 安全距离后 seeker ENABLED
+→ 蛇形 SEARCH → 主动声自导 ACQUIRE（变橙色）
+→ PURSUIT 追踪 → 命中（damage_state=sunk，紫色环消失）
+```
+
+无头验收：
+```bash
+godot --headless --path games/sonar --script res://tools/weapon_test.gd
+# 看到 WEAPON_TEST result=PASS
+```
+
+UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Tubes 标签 / 鱼雷日志（5 行），main_ui
+收到 `fire_requested` 后用自身 own 位置执行发射，武器面板不持有 Truth own。
+
 ---
 
 ## 4. 常见问题

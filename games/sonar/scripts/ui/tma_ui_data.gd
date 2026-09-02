@@ -265,3 +265,47 @@ static func leg_boundary_times(meas: Array) -> Array:
 
 static func own_turn_times(ms: Array) -> Array:
 	return leg_boundary_times(ms)
+
+
+## 玩家/Truth 位置点去重轨迹（本艇路径，供海图）。cap 控制点数。
+static func sample_own_track(world: World, cap: int = 400) -> Array:
+	var pts: Array = []
+	pts.append(Vector2(world.world["own"].position_east_m, world.world["own"].position_north_m))
+	for m in world.measurements:
+		pts.append(Vector2(m.observer_east_m, m.observer_north_m))
+	var out: Array = []
+	var seen := {}
+	for p in pts:
+		var key: String = "%d_%d" % [int(p.x), int(p.y)]
+		if seen.has(key):
+			continue
+		seen[key] = true
+		out.append(p)
+		if out.size() > cap:
+			break
+	return out
+
+
+## 每个 track 最新一条 LOB（方位盘用）。
+static func latest_lobs_for_dial(lobs: Array) -> Array:
+	var newest: Dictionary = {}
+	for lob in lobs:
+		var tid: String = str(lob["track_id"])
+		if not newest.has(tid) or float(lob["time"]) > float(newest[tid]["time"]):
+			newest[tid] = lob
+	return newest.values()
+
+
+## Truth 目标位置（仅供 Show Truth 开关显示，非操作依据）。
+static func collect_truth(world: World) -> Array:
+	var out: Array = []
+	for t in world.world["targets"]:
+		out.append({"pos": Vector2(t.position_east_m, t.position_north_m), "id": t.id})
+	return out
+
+
+## 最近一次测量。
+static func latest_measurement(world: World) -> Measurement:
+	if world.measurements.is_empty():
+		return null
+	return world.measurements[world.measurements.size() - 1]

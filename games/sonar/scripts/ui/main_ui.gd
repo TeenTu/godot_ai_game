@@ -46,6 +46,7 @@ var _btn_show_truth: Button = null
 var _btn_mark: Button = null
 var _btn_fit: Button = null
 var _btn_enter: Button = null
+var _weapon_panel: WeaponPanelUI = null
 var _lbl_selected: Label = null
 var _lbl_tma: Label = null
 var _sec_fit: VBoxContainer = null
@@ -96,6 +97,11 @@ func _ready() -> void:
 	trial = TrialSolution.new()
 	system_sol = null
 	dot_stack = DotStack.new()
+
+	# 武器面板依赖 world.weapons（此时已就绪），补绑定并默认无解禁火
+	if _weapon_panel != null and world.weapons != null:
+		_weapon_panel.bind(world.weapons, _chart, func(): _dirty = true)
+		_weapon_panel.set_solution_available(false)
 
 	if _spin_own_course != null:
 		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
@@ -226,6 +232,11 @@ func _build_panel() -> void:
 	_btn_enter.text = "✅ Accept as System"
 	_btn_enter.pressed.connect(_on_enter_solution)
 	_panel.add_child(_btn_enter)
+
+	# ---- 武器面板（阶段四：只读 SystemSolution）----
+	_weapon_panel = WeaponPanelUI.new()
+	_panel.add_child(_weapon_panel)
+	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
 
 	_panel.add_child(HSeparator.new())
 	_build_contact_list()
@@ -391,6 +402,8 @@ func _process(delta: float) -> void:
 		_dirty = true
 	if _dirty:
 		_rebuild_display_data()
+	if _weapon_panel != null:
+		_weapon_panel.refresh()
 	_update_displays_light()
 	_update_panel()
 
@@ -583,13 +596,15 @@ func _update_displays_light() -> void:
 	else:
 		_chart.system_active = false
 	_chart.truth_positions = (
-		_collect_truth() if _chart.show_truth or bool(_chart.layers.get("truth", false)) else []
+		TmaUiData.collect_truth(world)
+		if _chart.show_truth or bool(_chart.layers.get("truth", false))
+		else []
 	)
 	_chart.queue_redraw()
 
 	_bearing.own_course_deg = own.course_deg
-	_bearing.lobs = _latest_lobs_for_dial()
-	var latest: Measurement = _latest_measurement()
+	_bearing.lobs = TmaUiData.latest_lobs_for_dial(_chart.lobs)
+	var latest: Measurement = TmaUiData.latest_measurement(world)
 	if latest != null:
 		_bearing.latest_bearing_deg = latest.measured_bearing_deg
 		_bearing.latest_color = _color_for_track("LATEST")
@@ -603,48 +618,8 @@ func _update_displays_light() -> void:
 func _own_track_cache() -> Array:
 	# 本艇轨迹点只随新测量增长，复用缓存
 	if _own_track_pts.is_empty() or _last_meas_count > _own_track_pts.size() - 1:
-		_own_track_pts = _sample_own_track()
+		_own_track_pts = TmaUiData.sample_own_track(world)
 	return _own_track_pts
-
-
-func _sample_own_track() -> Array:
-	var pts: Array = []
-	pts.append(Vector2(world.world["own"].position_east_m, world.world["own"].position_north_m))
-	for m in world.measurements:
-		pts.append(Vector2(m.observer_east_m, m.observer_north_m))
-	var out: Array = []
-	var seen := {}
-	for p in pts:
-		var key: String = "%d_%d" % [int(p.x), int(p.y)]
-		if seen.has(key):
-			continue
-		seen[key] = true
-		out.append(p)
-		if out.size() > 400:
-			break
-	return out
-
-
-func _latest_lobs_for_dial() -> Array:
-	var newest: Dictionary = {}
-	for lob in _chart.lobs:
-		var tid: String = str(lob["track_id"])
-		if not newest.has(tid) or float(lob["time"]) > float(newest[tid]["time"]):
-			newest[tid] = lob
-	return newest.values()
-
-
-func _collect_truth() -> Array:
-	var out: Array = []
-	for t in world.world["targets"]:
-		out.append({"pos": Vector2(t.position_east_m, t.position_north_m), "id": t.id})
-	return out
-
-
-func _latest_measurement() -> Measurement:
-	if world.measurements.is_empty():
-		return null
-	return world.measurements[world.measurements.size() - 1]
 
 
 func _color_for_track(id: String) -> Color:
@@ -839,7 +814,7 @@ func _on_show_truth(on: bool) -> void:
 
 
 func _on_mark() -> void:
-	var m: Measurement = _latest_measurement()
+	var m: Measurement = TmaUiData.latest_measurement(world)
 	if m == null:
 		return
 	tracker.mark(m, "S")
@@ -948,10 +923,30 @@ func _on_enter_solution() -> void:
 		return
 	var st: String = str(last_fit.get("status", "CONVERGED")) if not last_fit.is_empty() else "NONE"
 	system_sol = trial.commit(world.sim_time)
+	if _weapon_panel != null:
+		_weapon_panel.set_solution_available(true)
 	if st in ["INSUFFICIENT_GEOMETRY", "MULTIMODAL", "STALE"]:
 		_update_status("Submitted (%s - LOW confidence, maneuver and refit!)" % st)
 	else:
 		_update_status("System Solution submitted (%s)" % st)
+
+
+## 武器面板 Fire 请求：用已提交的 SystemSolution（绝不读 Truth）真实发射。
+func _on_fire_torpedo() -> void:
+	if world == null or world.weapons == null:
+		return
+	if system_sol == null:
+		_update_status("No System Solution — Auto Fit then Accept first")
+		return
+	var own: RefCounted = world.world["own"]
+	var tp: Torpedo = world.weapons.fire(
+		system_sol, float(own.position_east_m), float(own.position_north_m), world.sim_time
+	)
+	if tp != null:
+		_update_status("Torpedo away (%s)" % tp.torpedo_id)
+		_dirty = true
+		if _weapon_panel != null:
+			_weapon_panel.refresh()
 
 
 func _update_status(msg: String) -> void:

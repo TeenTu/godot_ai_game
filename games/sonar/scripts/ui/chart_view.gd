@@ -75,6 +75,8 @@ var fit_now_time: float = 0.0
 # 位置协方差子矩阵（外推到 now 的 2x2）：[[PEE, PEN], [PEN, PNN]]
 var fit_cov_pos: Array = []
 var fit_status: String = ""
+# 在水鱼雷：[{trail: [{e, n, t}], state: String}]（自身传感器/状态，非 Truth）
+var torpedoes: Array = []
 
 var _font: Font = null
 var _dragging: bool = false
@@ -210,6 +212,7 @@ func _draw() -> void:
 		_draw_system()
 	if bool(layers.get("truth", false)):
 		_draw_truth()
+	_draw_torpedoes()
 	_draw_hover_link()
 	_draw_camera_overlays()
 
@@ -638,6 +641,28 @@ func _ellipse_extent() -> Array:
 
 
 ## 带半透明底板的标签（4px padding），自动错位避免相互覆盖。
+func _draw_torpedoes() -> void:
+	for i in range(torpedoes.size()):
+		var tp: Dictionary = torpedoes[i]
+		var col := Color(1.0, 0.3, 0.2)
+		if str(tp.get("state", "")) == "PURSUIT":
+			col = Color(1.0, 0.6, 0.1)
+		var pts: Array = tp.get("trail", [])
+		var prev: Vector2 = Vector2.ZERO
+		for j in range(pts.size()):
+			var p := Vector2(float(pts[j]["e"]), float(pts[j]["n"]))
+			var s := world_to_screen(p)
+			if j > 0:
+				draw_line(prev, s, Color(col.r, col.g, col.b, 0.55), 1.5)
+			prev = s
+		if not pts.is_empty():
+			var head := world_to_screen(Vector2(float(pts[-1]["e"]), float(pts[-1]["n"])))
+			draw_circle(head, 3.5, col)
+			_draw_label(
+				head + Vector2(6.0, -6.0), "TK%d %s" % [i + 1, str(tp.get("state", ""))], col, 12
+			)
+
+
 func _draw_label(pos: Vector2, text: String, col: Color, font_px: int = 14) -> void:
 	var fs: int = maxi(font_px, 14)
 	var w: float = _font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
