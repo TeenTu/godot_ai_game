@@ -120,7 +120,7 @@ func scorch(pos: Vector3, radius: float) -> void:
 	m.visible = true
 	mat.albedo_color = Color(0.10, 0.07, 0.06, 0.55)
 	var tw := create_tween()
-	tw.tween_method(_fade_scorch.bind(mat), 0.55, 0.0, 3.4)
+	tw.tween_method(func(alpha: float) -> void: _fade_scorch(mat, alpha), 0.55, 0.0, 3.4)
 	tw.tween_callback(func() -> void: m.visible = false)
 	_scorch_tweens[idx] = tw
 

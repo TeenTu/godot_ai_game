@@ -15,5 +15,8 @@ export default defineConfig({
   use: {
     viewport: { width: 1280, height: 720 },
     screenshot: "only-on-failure",
+    // 本机存在系统代理(http://127.0.0.1:3073)，Chromium 不读 NO_PROXY，
+    // 直接禁用代理，避免访问 localhost 本地服务被代理转丢(ERR_CONNECTION_REFUSED)。
+    launchOptions: { args: ["--no-proxy-server"] },
   },
 });
