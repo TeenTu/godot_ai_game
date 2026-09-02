@@ -151,10 +151,16 @@ async function execVisionAssert(
 
 async function execHookAssert(page: Page, expect: ExpectSchema): Promise<StepResult> {
   const res: StepResult = { name: "数值断言（__gameState）", ok: false };
-  const state = await getGameState(page);
+  // 轮询等待钩子挂载：线上地址 wasm 下载慢，一次性读取会在游戏未就绪时误报。
+  let state: Record<string, unknown> | null = null;
+  for (let waited = 0; waited <= 10000; waited += 500) {
+    state = await getGameState(page);
+    if (state) break;
+    await page.waitForTimeout(500);
+  }
   if (!state) {
     res.detail =
-      "游戏未暴露 window.__gameState —— 需要游戏加测试钩子（URL 带 ?test=1）。当前只能跑纯视觉断言。";
+      "游戏未暴露 window.__gameState —— 需要游戏加测试钩子（URL 带 ?test=1）。当前只能跑纯视觉断言。（已轮询等待 10s）";
     return res;
   }
   res.state = state;
