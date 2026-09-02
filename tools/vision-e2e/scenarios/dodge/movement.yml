@@ -1,0 +1,19 @@
+# 太空闪避（dodge）场景
+# base_url 见 suika/smoke.yml 顶部注释（单游戏产物用 /，多游戏 dist 结构用 /dodge/）
+game: dodge
+base_url: /
+viewport: { width: 1280, height: 720 }
+
+scenarios:
+  - name: 方向键能控制飞船移动
+    given:
+      - open_game
+      - wait_for_stable: 1500
+    when:
+      - press: { key: "ArrowRight" }
+      - wait: 900
+    then:
+      - vision_assert:
+          question: 画面中的飞船是否向右移动了一段距离（位置与按方向键前不同）？
+          expect:
+            ship_moved_right: true

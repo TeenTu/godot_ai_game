@@ -41,7 +41,10 @@ var pending: Array = []
 
 
 func _ready() -> void:
-	randomize()
+	# vision-e2e 测试模式：test_hook autoload 已在 _ready 之前 seed(n) 固定随机数，
+	# 这里跳过 randomize()，否则 randomize 会用系统熵覆盖钩子设的 seed。
+	if not _is_test_mode():
+		randomize()
 	_ensure_actions()
 	best = _load_best()
 	_build_container()
@@ -50,6 +53,23 @@ func _ready() -> void:
 	_update_hud()
 	_spawn_held()
 	queue_redraw()
+
+
+## 测试模式判定：URL ?test=1 时返回 true。供 _ready 决定是否跳过 randomize。
+## 注意：逻辑与 test_hook.gd::_detect_test_mode 一致——二者必须同时为 true，
+## 否则 seed 固定会失效（test_hook 设了 seed 但 main 仍 randomize 覆盖）。
+func _is_test_mode() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	if not Engine.has_singleton("JavaScriptBridge"):
+		return false
+	var v: Variant = Engine.get_singleton("JavaScriptBridge").call(
+		"eval",
+		"new URLSearchParams(location.search).get('test')"
+	)
+	if typeof(v) != TYPE_STRING:
+		return false
+	return (v as String) == "1"
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -318,3 +338,16 @@ func _save_best(value: int) -> void:
 		return
 	f.store_32(value)
 	f.close()
+
+
+# —— vision-e2e 测试钩子用：返回当前游戏状态字典 ——
+# 仅在 URL 含 ?test=1 时由 test_hook autoload 调用。无副作用、纯 getter。
+func _test_hook_get_state() -> Dictionary:
+	return {
+		"score": score,
+		"best": best,
+		"is_over": is_over,
+		"fruit_count": fruits_root.get_child_count(),
+		"held_level": held.level if held != null else -1,
+		"next_level": next_level,
+	}

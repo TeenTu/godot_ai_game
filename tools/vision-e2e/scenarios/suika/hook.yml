@@ -1,0 +1,26 @@
+# 合成大西瓜（suika）测试钩子验证场景
+#
+# 这个场景用来真实验证 Godot 侧的 test_hook autoload 是否工作：
+#   1. URL 带 ?test=1 → 钩子检测到测试模式
+#   2. 钩子每 0.1s 写一次 window.__gameState = {score, best, is_over, ...}
+#   3. vision-e2e 的 hook_assert 通过 page.evaluate 读这个 window 对象
+#
+# 这个场景不依赖视觉 API（mock 模式也能跑），是验证钩子真正生效的端到端测试。
+# 负面路径（无 ?test=1 时钩子不发布）由 runner 的 getGameState 返回 null 分支覆盖。
+game: suika
+base_url: /
+viewport: { width: 1280, height: 720 }
+
+scenarios:
+  - name: 钩子能发布 window.__gameState（score/is_over/fruit_count/held_level 可读）
+    given:
+      - open_game:
+          params: { test: 1 }
+      - wait_for_stable: 1200   # 等钩子至少跑一次 _publish_state
+    then:
+      - hook_assert:
+          expect:
+            score: { gte: 0 }     # 初始分数 0，应可读
+            is_over: false
+            fruit_count: { gte: 0 }
+            held_level: { gte: 0 } # 初始拿着某个水果（葡萄=0）

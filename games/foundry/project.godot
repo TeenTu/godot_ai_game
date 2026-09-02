@@ -6,11 +6,10 @@ config_version=5
 
 [application]
 
-config/name="合成大西瓜"
-config/description="Godot 4.5 版合成大西瓜（Suika Game），Web 端由 GitHub Actions 自动导出并部署到 GitHub Pages。"
+config/name="背包工厂"
+config/description="DBG 构筑 + 工人放置 + 背包管理 + 异步对战的工厂小游戏，Web 端由 GitHub Actions 自动导出并部署到 GitHub Pages。"
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
-config/icon="res://icon.svg"
 
 [autoload]
 
@@ -18,8 +17,8 @@ TestHook="*res://scripts/test_hook.gd"
 
 [display]
 
-window/size/viewport_width=720
-window/size/viewport_height=1080
+window/size/viewport_width=1280
+window/size/viewport_height=720
 window/stretch/mode="canvas_items"
 window/stretch/aspect="keep"
 
@@ -31,15 +30,6 @@ theme/custom_font="res://assets/fonts/ui_subset.ttf"
 
 pointing/emulate_mouse_from_touch=true
 pointing/emulate_touch_from_mouse=true
-
-[game_kit]
-
-asset_style="flat-cartoon"
-
-[physics]
-
-common/physics_ticks_per_second=60
-2d/default_gravity=2000.0
 
 [rendering]
 

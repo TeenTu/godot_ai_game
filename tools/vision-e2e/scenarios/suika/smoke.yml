@@ -1,0 +1,19 @@
+# 合成大西瓜（suika）冒烟场景
+# base_url 说明：
+#   "/"        当前本地构建产物是单游戏（build/web，index.html 在根）时用这个
+#   "/suika/"  如果本地产物是多游戏 dist 结构（dist/suika/）则改成这个
+# 也可直接用 BASE_URL 环境变量覆盖（支持完整地址或 origin）。
+game: suika
+base_url: /
+viewport: { width: 1280, height: 720 }
+
+scenarios:
+  - name: 游戏能加载并渲染出画面
+    given:
+      - open_game
+      - wait_for_stable: 1500
+    then:
+      - vision_assert:
+          question: 画面上是否出现了合成大西瓜游戏场景（顶部有得分与虚线、中间是水果掉落区域）？
+          expect:
+            game_scene_visible: true

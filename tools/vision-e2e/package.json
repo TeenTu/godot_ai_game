@@ -1,0 +1,23 @@
+{
+  "name": "vision-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Vision-driven E2E testing for Godot Web games (Playwright + DeepSeek V4 Flash Vision)",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:mock": "cross-env VISION_MOCK=1 playwright test",
+    "report": "tsx src/report.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "yaml": "^2.6.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.19.0"
+  }
+}

@@ -1,0 +1,42 @@
+# 合成大西瓜（suika）玩法场景 —— 需要真实视觉模型（DEEPSEEK_API_KEY）
+# base_url 见 smoke.yml 顶部注释（单游戏产物用 /，多游戏 dist 结构用 /suika/）
+game: suika
+base_url: /
+viewport: { width: 1280, height: 720 }
+
+scenarios:
+  - name: 连续放下两次水果都产生画面响应
+    given:
+      # ?test=1 启用钩子、?seed=42 固定开局（否则 first_spawn 随机，行为不可复现）
+      - open_game:
+          params: { test: 1, seed: 42 }
+      - wait_for_stable: 1000
+    when:
+      - drop_fruit: { x: 50, y: 15 }
+      - wait: 1200
+      - drop_fruit: { x: 50, y: 15 }
+      - wait_for_stable: 2000
+    then:
+      # 视觉断言：两次操作后画面上应至少出现一个水果
+      - vision_assert:
+          question: 画面上的果篮区域里是否出现了至少一个水果（无论具体类型）？
+          expect:
+            fruit_present: true
+      # 钩子精确断言：果篮里的水果数量 ≥ 1
+      - hook_assert:
+          expect:
+            fruit_count: { gte: 1 }
+
+  - name: 放下水果后画面会出现新水果
+    given:
+      - open_game:
+          params: { test: 1, seed: 42 }
+      - wait_for_stable: 1000
+    when:
+      - drop_fruit: { x: 50, y: 15 }
+      - wait_for_stable: 1500
+    then:
+      - vision_assert:
+          question: 画面中是否有一个水果正在下落或已落入果篮区域？
+          expect:
+            fruit_falling: true
