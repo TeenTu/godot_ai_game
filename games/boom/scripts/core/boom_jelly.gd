@@ -38,6 +38,8 @@ var pause_t: float = 0.0
 var anim_t: float = 0.0
 var body_mat: StandardMaterial3D
 var _body: MeshInstance3D
+var _art: Sprite3D
+var _telegraph: MeshInstance3D
 var _dead: bool = false
 
 
@@ -64,6 +66,7 @@ func _build_visuals(palette: Color) -> void:
 	_body.material_override = body_mat
 	_body.position.y = 0.55
 	add_child(_body)
+	_add_character_art()
 
 	# 呆萌大眼睛（眼睛朝 +Z，追人时会自动面向玩家）。
 	var white_mat := StandardMaterial3D.new()
@@ -75,6 +78,50 @@ func _build_visuals(palette: Color) -> void:
 	pupil_mat.albedo_color = Color(0.06, 0.09, 0.1)
 	_add_eye(Vector3(-0.2, 0.76, 0.54), 0.06, pupil_mat)
 	_add_eye(Vector3(0.2, 0.76, 0.54), 0.06, pupil_mat)
+	if _art != null:
+		for child in get_children():
+			if child is MeshInstance3D:
+				(child as MeshInstance3D).visible = false
+	_build_telegraph()
+
+
+func _add_character_art() -> void:
+	var use_water_gunner := randi() % 4 == 0
+	var path := (
+		"res://assets/images/characters/water_gunner.png"
+		if use_water_gunner
+		else "res://assets/images/characters/jelly_scout.png"
+	)
+	if not ResourceLoader.exists(path):
+		return
+	_art = Sprite3D.new()
+	_art.texture = load(path) as Texture2D
+	_art.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_art.pixel_size = 0.0031 if use_water_gunner else 0.00325
+	_art.position = Vector3(0.0, 0.72, 0.0)
+	_art.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	_art.render_priority = 1
+	add_child(_art)
+
+
+func _build_telegraph() -> void:
+	_telegraph = MeshInstance3D.new()
+	var ring := TorusMesh.new()
+	ring.inner_radius = 0.78
+	ring.outer_radius = 0.92
+	ring.rings = 24
+	ring.ring_segments = 8
+	_telegraph.mesh = ring
+	_telegraph.position.y = 0.035
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(1.0, 0.1, 0.18, 0.88)
+	mat.emission_enabled = true
+	mat.emission = Color("ff3b4e")
+	mat.emission_energy_multiplier = 1.4
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_telegraph.material_override = mat
+	_telegraph.visible = false
+	add_child(_telegraph)
 
 
 func _add_eye(local_pos: Vector3, r: float, mat: StandardMaterial3D) -> void:
@@ -193,6 +240,11 @@ func physics_update(
 				else:
 					pause_t -= delta
 				_apply_scale(Vector3(1.0, 1.0, 1.0))
+	if _telegraph != null:
+		_telegraph.visible = phase == Phase.WINDUP
+		if _telegraph.visible:
+			var ring_scale := 1.0 + sin(anim_t * 14.0) * 0.12
+			_telegraph.scale = Vector3(ring_scale, 1.0, ring_scale)
 
 	# 相遇分离：把挤压自己的邻居推开一点，别叠成一坨。
 	for other in others:

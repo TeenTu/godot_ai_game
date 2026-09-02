@@ -14,6 +14,7 @@ signal player_damaged(amount: int, from_pos: Vector3)
 signal wave_cleared(wave: int, bonus: int)
 signal wave_started(wave: int)
 signal game_over(final_score: int)
+signal prop_broken(pos: Vector3, coin_value: int)
 
 const PLAYER_BOUND_X: float = 3.6
 const PLAYER_BOUND_Z: float = 9.5
@@ -39,8 +40,10 @@ const NUKE_DMG_MULT: int = 4
 var player: BoomPlayer
 var enemies: Array = []
 var bullets: Array = []  # BoomBullet 池
+var props: Array = []
 var wave: int = 1
 var score: int = 0
+var coins: int = 0
 var kills: int = 0
 var combo: int = 0
 var combo_left: float = 0.0
@@ -91,6 +94,7 @@ func step(delta: float) -> void:
 	_tick_player(delta)
 	_tick_enemies(delta)
 	_tick_bullets(delta)
+	_tick_props(delta)
 	_tick_spawns(delta)
 	_tick_player_contact()
 
@@ -98,6 +102,7 @@ func step(delta: float) -> void:
 func restart() -> void:
 	wave = 1
 	score = 0
+	coins = 0
 	kills = 0
 	combo = 0
 	combo_left = 0.0
@@ -124,6 +129,12 @@ func restart() -> void:
 			remove_child(e)
 			e.queue_free()
 	enemies.clear()
+	for prop in props:
+		if is_instance_valid(prop):
+			remove_child(prop)
+			prop.queue_free()
+	props.clear()
+	_spawn_props()
 	_begin_wave()
 
 
@@ -338,6 +349,7 @@ func _apply_skill_hit(jelly: BoomJelly, dmg: int, out_hits: Array) -> void:
 
 func _tick_bullets(delta: float) -> void:
 	var dead_this_tick: Array = []
+	var broken_this_tick: Array = []
 	for b in bullets:
 		var bullet := b as BoomBullet
 		if not bullet.active:
@@ -363,10 +375,53 @@ func _tick_bullets(delta: float) -> void:
 				if jelly.take_damage(BULLET_DMG, hit_dir):
 					dead_this_tick.append(jelly)
 				break
+		if bullet.active:
+			for prop in props:
+				var target := prop as BoomProp
+				if target == null or target.broken:
+					continue
+				if bullet.position.distance_to(target.position) <= BoomProp.HIT_RADIUS:
+					bullet.recycle()
+					if target.take_damage():
+						broken_this_tick.append(target)
+					break
 	for e in dead_this_tick:
 		var jelly := e as BoomJelly
 		if jelly != null:
 			_finalize_kill(jelly)
+	for prop in broken_this_tick:
+		_finalize_prop(prop as BoomProp)
+
+
+func _tick_props(delta: float) -> void:
+	for prop in props:
+		var target := prop as BoomProp
+		if target != null:
+			target.tick(delta)
+
+
+func _spawn_props() -> void:
+	var placements: Array = [
+		["crate", Vector3(-2.8, 0.0, -3.5)],
+		["barrel", Vector3(3.0, 0.0, 1.8)],
+		["crate", Vector3(-3.1, 0.0, 6.0)],
+	]
+	for entry in placements:
+		var prop := BoomProp.new(entry[0])
+		prop.position = entry[1]
+		props.append(prop)
+		add_child(prop)
+
+
+func _finalize_prop(prop: BoomProp) -> void:
+	if prop == null or not props.has(prop):
+		return
+	coins += prop.coin_value
+	score += prop.coin_value
+	prop_broken.emit(prop.position, prop.coin_value)
+	props.erase(prop)
+	remove_child(prop)
+	prop.queue_free()
 
 
 func _finalize_kill(jelly: BoomJelly) -> void:

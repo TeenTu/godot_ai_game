@@ -12,10 +12,15 @@ const TAP_MAX_TIME: float = 0.20
 const TAP_MAX_DIST: float = 14.0
 const SWIPE_MIN_DIST: float = 110.0
 
-const COL_BUBBLE: Color = Color(0.45, 0.85, 1.0)
-const COL_ENEMY: Color = Color(0.55, 0.9, 0.5)
-const COL_ACCENT: Color = Color(1.0, 0.9, 0.5)
-const COL_DANGER: Color = Color(0.95, 0.35, 0.35)
+const COL_ORANGE: Color = Color("ff8a3d")
+const COL_CYAN: Color = Color("2bd9ff")
+const COL_CREAM: Color = Color("fff6e8")
+const COL_GOLD: Color = Color("ffc93c")
+const COL_CORAL: Color = Color("ff7a5c")
+const COL_BUBBLE: Color = COL_CYAN
+const COL_ENEMY: Color = Color("57c84d")
+const COL_ACCENT: Color = COL_GOLD
+const COL_DANGER: Color = Color("ff3b4e")
 
 var sim: BoomGame
 var world: Node3D
@@ -33,6 +38,7 @@ var _gestures: Dictionary = {}
 var _score_label: Label
 var _wave_label: Label
 var _kills_label: Label
+var _coin_label: Label
 var _hp_blocks: Array = []
 var _hp_box: HBoxContainer
 var _vignette: ColorRect
@@ -45,6 +51,7 @@ var _over_stats: Label
 var _hint_label: Label
 var _started := false
 var _dmg_flash := 0.0
+var _skill_buttons: Dictionary = {}
 
 
 func _ready() -> void:
@@ -163,6 +170,7 @@ func _test_hook_get_state() -> Dictionary:
 		"score": sim.score,
 		"wave": sim.wave,
 		"kills": sim.kills,
+		"coins": sim.coins,
 		"combo": sim.combo,
 		"hp": sim.player.hp,
 		"max_hp": sim.player.max_hp,
@@ -206,6 +214,7 @@ func _connect_signals() -> void:
 	sim.wave_started.connect(_on_wave_started)
 	sim.wave_cleared.connect(_on_wave_cleared)
 	sim.game_over.connect(_on_game_over)
+	sim.prop_broken.connect(_on_prop_broken)
 	skill_sys.skill_fired.connect(_on_skill_fired)
 
 
@@ -266,6 +275,13 @@ func _on_enemy_died(pos: Vector3) -> void:
 		_hint_label = null
 
 
+func _on_prop_broken(pos: Vector3, coin_value: int) -> void:
+	fx.goo_burst(pos, COL_GOLD)
+	audio.play("pickup", -7.0)
+	if hitnum != null:
+		hitnum.spawn(pos + Vector3(0.0, 0.4, 0.0), "+%d" % coin_value, COL_GOLD, 1.15)
+
+
 func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:
 	_dmg_flash = 0.4
 	cam.add_trauma(0.65)
@@ -302,7 +318,11 @@ func _build_world() -> Node3D:
 	var floor_mesh := PlaneMesh.new()
 	floor_mesh.size = Vector2(26.0, 38.0)
 	var floor_mat := StandardMaterial3D.new()
-	floor_mat.albedo_color = Color(0.14, 0.20, 0.19)
+	floor_mat.albedo_color = Color("ffe9b8")
+	var floor_path := "res://assets/images/floors/carnival_tiles.png"
+	if ResourceLoader.exists(floor_path):
+		floor_mat.albedo_texture = load(floor_path) as Texture2D
+		floor_mat.uv1_scale = Vector3(3.0, 5.0, 1.0)
 	floor_mat.roughness = 0.95
 	var floor := MeshInstance3D.new()
 	floor.mesh = floor_mesh
@@ -310,40 +330,84 @@ func _build_world() -> Node3D:
 	floor.rotation_degrees.x = -90.0
 	w.add_child(floor)
 
-	_add_grid_lines(w)
+	_add_environment(w)
+	_add_grid_accents(w)
 	_add_court_rails(w)
+	_add_exit_gate(w)
+	_add_carnival_decor(w)
 	_add_lights(w)
 	return w
 
 
-func _add_grid_lines(w: Node3D) -> void:
+func _add_environment(w: Node3D) -> void:
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = Color("ffd9a3")
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color("fff0d2")
+	env.ambient_light_energy = 0.72
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
+	var world_env := WorldEnvironment.new()
+	world_env.environment = env
+	w.add_child(world_env)
+
+
+func _add_grid_accents(w: Node3D) -> void:
 	var line_mat := StandardMaterial3D.new()
-	line_mat.albedo_color = Color(0.30, 0.40, 0.36, 0.8)
+	line_mat.albedo_color = Color("ffb26b")
 	line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var thick := 0.06
-	for x in range(-13, 14, 2):
+	var thick := 0.035
+	for x in range(-12, 13, 4):
 		_add_box(w, Vector3(float(x), 0.012, 0.0), Vector3(thick, 0.01, 38.0), line_mat)
-	for z in range(-19, 20, 2):
+	for z in range(-18, 19, 4):
 		_add_box(w, Vector3(0.0, 0.012, float(z)), Vector3(26.0, 0.01, thick), line_mat)
 
 
 func _add_court_rails(w: Node3D) -> void:
-	var rail_mat := StandardMaterial3D.new()
-	rail_mat.albedo_color = Color(0.3, 0.85, 1.0)
-	rail_mat.emission_enabled = true
-	rail_mat.emission = Color(0.3, 0.85, 1.0)
-	rail_mat.emission_energy_multiplier = 1.6
-	var hx := 4.8
+	var rail_mat := _make_mat(COL_CORAL, 0.72)
+	var cap_mat := _make_mat(COL_CREAM, 0.55)
+	var hx := 5.0
 	var hz := 13.5
-	_add_box(w, Vector3(0.0, 0.05, -hz), Vector3(hx * 2.0 + 0.1, 0.06, 0.08), rail_mat)
-	_add_box(w, Vector3(0.0, 0.05, hz), Vector3(hx * 2.0 + 0.1, 0.06, 0.08), rail_mat)
-	_add_box(w, Vector3(-hx, 0.05, 0.0), Vector3(0.08, 0.06, hz * 2.0 + 0.1), rail_mat)
-	_add_box(w, Vector3(hx, 0.05, 0.0), Vector3(0.08, 0.06, hz * 2.0 + 0.1), rail_mat)
+	_add_box(w, Vector3(0.0, 0.32, -hz), Vector3(hx * 2.0 + 0.4, 0.64, 0.35), rail_mat)
+	_add_box(w, Vector3(0.0, 0.32, hz), Vector3(hx * 2.0 + 0.4, 0.64, 0.35), rail_mat)
+	_add_box(w, Vector3(-hx, 0.32, 0.0), Vector3(0.35, 0.64, hz * 2.0 + 0.4), rail_mat)
+	_add_box(w, Vector3(hx, 0.32, 0.0), Vector3(0.35, 0.64, hz * 2.0 + 0.4), rail_mat)
+	_add_box(w, Vector3(0.0, 0.67, -hz), Vector3(hx * 2.0 + 0.5, 0.10, 0.42), cap_mat)
+	_add_box(w, Vector3(0.0, 0.67, hz), Vector3(hx * 2.0 + 0.5, 0.10, 0.42), cap_mat)
+	_add_box(w, Vector3(-hx, 0.67, 0.0), Vector3(0.42, 0.10, hz * 2.0 + 0.5), cap_mat)
+	_add_box(w, Vector3(hx, 0.67, 0.0), Vector3(0.42, 0.10, hz * 2.0 + 0.5), cap_mat)
+
+
+func _add_exit_gate(w: Node3D) -> void:
+	var gold := _make_mat(COL_GOLD, 0.32, COL_GOLD)
+	var cream := _make_mat(COL_CREAM, 0.42)
+	_add_box(w, Vector3(-1.25, 1.15, -13.15), Vector3(0.38, 2.3, 0.55), gold)
+	_add_box(w, Vector3(1.25, 1.15, -13.15), Vector3(0.38, 2.3, 0.55), gold)
+	_add_box(w, Vector3(0.0, 2.2, -13.15), Vector3(2.9, 0.38, 0.55), cream)
+	_add_box(w, Vector3(0.0, 0.035, -12.75), Vector3(2.2, 0.04, 1.0), gold)
+
+
+func _add_carnival_decor(w: Node3D) -> void:
+	var colors: Array[Color] = [COL_ORANGE, COL_CYAN, COL_GOLD, COL_CORAL]
+	var spots: Array[Vector3] = [
+		Vector3(-5.45, 1.2, -9.0),
+		Vector3(5.45, 1.2, -5.0),
+		Vector3(-5.45, 1.2, 4.0),
+		Vector3(5.45, 1.2, 9.0),
+	]
+	for i in spots.size():
+		var p: Vector3 = spots[i]
+		_add_cylinder(w, p - Vector3(0.0, 0.72, 0.0), 0.05, 1.45, _make_mat(COL_CREAM, 0.7))
+		_add_sphere(w, p, 0.42, _make_mat(colors[i], 0.2, colors[i]))
+		_add_sphere(
+			w, p + Vector3(0.32, 0.18, 0.0), 0.28, _make_mat(colors[(i + 1) % colors.size()], 0.2)
+		)
 
 
 func _add_lights(w: Node3D) -> void:
 	var key := DirectionalLight3D.new()
-	key.light_energy = 1.15
+	key.light_color = Color("fff0d2")
+	key.light_energy = 1.0
 	key.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
 	key.shadow_enabled = true
 	key.directional_shadow_max_distance = 30.0
@@ -353,6 +417,47 @@ func _add_lights(w: Node3D) -> void:
 	fill.rotation_degrees = Vector3(-60.0, 130.0, 0.0)
 	fill.shadow_enabled = false
 	w.add_child(fill)
+
+
+func _make_mat(
+	color: Color, roughness: float, emission: Color = Color.TRANSPARENT
+) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = roughness
+	if emission.a > 0.0:
+		mat.emission_enabled = true
+		mat.emission = emission
+		mat.emission_energy_multiplier = 0.45
+	return mat
+
+
+func _add_sphere(w: Node3D, pos: Vector3, radius: float, mat: StandardMaterial3D) -> void:
+	var m := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = radius
+	sphere.height = radius * 2.0
+	sphere.radial_segments = 12
+	sphere.rings = 6
+	m.mesh = sphere
+	m.material_override = mat
+	m.position = pos
+	w.add_child(m)
+
+
+func _add_cylinder(
+	w: Node3D, pos: Vector3, radius: float, height: float, mat: StandardMaterial3D
+) -> void:
+	var m := MeshInstance3D.new()
+	var cylinder := CylinderMesh.new()
+	cylinder.top_radius = radius
+	cylinder.bottom_radius = radius
+	cylinder.height = height
+	cylinder.radial_segments = 10
+	m.mesh = cylinder
+	m.material_override = mat
+	m.position = pos
+	w.add_child(m)
 
 
 func _add_box(w: Node3D, pos: Vector3, size: Vector3, mat: StandardMaterial3D) -> void:
@@ -374,6 +479,7 @@ func _build_hud() -> void:
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
+	_build_battle_frame(hud)
 
 	_vignette = ColorRect.new()
 	_vignette.color = Color(0.9, 0.1, 0.1, 0.0)
@@ -389,18 +495,22 @@ func _build_hud() -> void:
 	hud.add_child(_kill_white)
 	_kill_white_a = 0.0
 
-	_score_label = _make_label(hud, "0", 30, COL_ACCENT, Vector2(24, 34))
-	_kills_label = _make_label(hud, "", 17, Color(1, 1, 1, 0.55), Vector2(24, 80))
-	_wave_label = _make_label(hud, "WAVE 1", 36, COL_BUBBLE, Vector2(200, 26))
+	_add_hud_card(hud, Vector2(14, 20), Vector2(190, 86), Color(1.0, 0.45, 0.18, 0.88))
+	_add_hud_card(hud, Vector2(208, 20), Vector2(304, 70), Color(0.10, 0.68, 0.86, 0.90))
+	_add_hud_card(hud, Vector2(522, 20), Vector2(184, 86), Color(1.0, 0.69, 0.16, 0.90))
+	_score_label = _make_label(hud, "0", 30, COL_CREAM, Vector2(28, 28))
+	_kills_label = _make_label(hud, "", 15, Color(1, 1, 1, 0.82), Vector2(28, 68))
+	_wave_label = _make_label(hud, "WAVE 1", 32, COL_CREAM, Vector2(210, 29))
 	_wave_label.size = Vector2(320, 46)
 	_wave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_build_coin_hud(hud)
 
 	_hint_label = _make_label(
 		hud,
 		"LEFT: MOVE   \u00b7  RIGHT TAP: FAN   \u00b7  \u2190 CHAIN   \u2192 NUKE",
-		16,
-		Color(1, 1, 1, 0.35),
-		Vector2(0, 1058),
+		15,
+		Color(0.45, 0.20, 0.10, 0.65),
+		Vector2(0, 1168),
 	)
 	_hint_label.size = Vector2(720, 26)
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -412,20 +522,103 @@ func _build_hud() -> void:
 
 	_build_hp(hud)
 	_build_joystick(hud)
+	_build_skill_hud(hud)
 	_build_game_over(hud)
+
+
+func _build_battle_frame(hud: Control) -> void:
+	var path := "res://assets/images/backgrounds/carnival_arena.png"
+	if not ResourceLoader.exists(path):
+		return
+	var frame := TextureRect.new()
+	frame.texture = load(path) as Texture2D
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+	frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	frame.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	frame.modulate = Color(1.0, 1.0, 1.0, 0.16)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(frame)
+
+
+func _add_hud_card(hud: Control, pos: Vector2, card_size: Vector2, color: Color) -> void:
+	var panel := Panel.new()
+	panel.position = pos
+	panel.size = card_size
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = color
+	style.corner_radius_top_left = 20
+	style.corner_radius_top_right = 20
+	style.corner_radius_bottom_left = 20
+	style.corner_radius_bottom_right = 20
+	style.set_border_width_all(3)
+	style.border_color = Color(1.0, 0.97, 0.88, 0.72)
+	panel.add_theme_stylebox_override("panel", style)
+	hud.add_child(panel)
+
+
+func _build_coin_hud(hud: Control) -> void:
+	var coin := TextureRect.new()
+	coin.position = Vector2(532, 28)
+	coin.size = Vector2(54, 54)
+	coin.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	coin.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var coin_path := "res://assets/images/icons/coin.png"
+	if ResourceLoader.exists(coin_path):
+		coin.texture = load(coin_path) as Texture2D
+	hud.add_child(coin)
+	_coin_label = _make_label(hud, "0", 30, COL_CREAM, Vector2(588, 34))
+	_coin_label.size = Vector2(104, 44)
+	_coin_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+
+func _build_skill_hud(hud: Control) -> void:
+	var specs: Array = [
+		[
+			"fan",
+			"res://assets/images/icons/skill_fan.png",
+			BoomSkillSystem.FAN_COOLDOWN,
+			BoomSkillSystem.FAN_COLOR,
+			"TAP",
+			760.0
+		],
+		[
+			"chain",
+			"res://assets/images/icons/skill_chain.png",
+			BoomSkillSystem.CHAIN_COOLDOWN,
+			BoomSkillSystem.CHAIN_COLOR,
+			"< SWIPE",
+			886.0
+		],
+		[
+			"nuke",
+			"res://assets/images/icons/skill_nuke.png",
+			BoomSkillSystem.NUKE_COOLDOWN,
+			BoomSkillSystem.NUKE_COLOR,
+			"SWIPE >",
+			1012.0
+		],
+	]
+	for spec in specs:
+		var button := BoomSkillButton.new()
+		button.position = Vector2(596.0, float(spec[5]))
+		button.setup(spec[0], spec[1], spec[2], spec[3], spec[4])
+		hud.add_child(button)
+		_skill_buttons[spec[0]] = button
 
 
 func _build_hp(hud: Control) -> void:
 	# 先垫暗色插槽，再叠亮块：段间自然留缝形成分段血条。
 	var slot := ColorRect.new()
-	slot.color = Color(0.16, 0.2, 0.26, 0.9)
+	slot.color = Color(0.52, 0.20, 0.12, 0.72)
 	slot.size = Vector2(24 + float(sim.player.max_hp - 1) * 62.0 + 48.0, 34)
 	slot.position = Vector2(14, 111)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(slot)
 	for i in sim.player.max_hp:
 		var block := ColorRect.new()
-		block.color = Color(0.95, 0.3, 0.38)
+		block.color = COL_CREAM
 		block.size = Vector2(52, 24)
 		block.position = Vector2(24.0 + float(i) * 62.0, 116.0)
 		block.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -442,6 +635,7 @@ func _build_joystick(hud: Control) -> void:
 	joystick.exclude_right_x = SKILL_ZONE_X
 	joystick.position = Vector2(8, 900)
 	joystick.size = Vector2(360, 372)
+	joystick.modulate = Color(1.0, 0.56, 0.24, 0.92)
 	hud.add_child(joystick)
 
 
@@ -457,12 +651,23 @@ func _build_game_over(hud: Control) -> void:
 	_over_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	hud.add_child(_over_panel)
 	var dim := ColorRect.new()
-	dim.color = Color(0.03, 0.04, 0.08, 0.72)
+	dim.color = Color(1.0, 0.44, 0.24, 0.30)
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_over_panel.add_child(dim)
+	var backdrop_path := "res://assets/images/backgrounds/carnival_arena.png"
+	if ResourceLoader.exists(backdrop_path):
+		var backdrop := TextureRect.new()
+		backdrop.texture = load(backdrop_path) as Texture2D
+		backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		backdrop.modulate = Color(1.0, 1.0, 1.0, 0.92)
+		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_over_panel.add_child(backdrop)
+		_over_panel.move_child(backdrop, 0)
 
-	_over_title = _make_label(_over_panel, "GAME OVER", 52, COL_DANGER, Vector2(100, 360))
+	_over_title = _make_label(_over_panel, "BUBBLE BREAK!", 52, COL_ORANGE, Vector2(100, 360))
 	_over_title.size = Vector2(520, 70)
 	_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
@@ -511,10 +716,14 @@ func _hud_refresh() -> void:
 	_score_label.text = str(sim.score)
 	_kills_label.text = "KILLS %d   COMBO x%d" % [sim.kills, maxi(1, sim.combo)]
 	_wave_label.text = "WAVE %d" % sim.wave
+	if _coin_label != null:
+		_coin_label.text = str(sim.coins)
+	if skill_sys != null:
+		var skill_state := skill_sys.get_state()
+		for skill_id in _skill_buttons:
+			(_skill_buttons[skill_id] as BoomSkillButton).set_cooldown(float(skill_state[skill_id]))
 	for i in _hp_blocks.size():
 		var block := _hp_blocks[i] as ColorRect
 		if block == null:
 			continue
-		block.color = (
-			Color(0.95, 0.3, 0.38) if i < sim.player.hp else Color(0.95, 0.3, 0.38, 0.14)
-		)
+		block.color = COL_CREAM if i < sim.player.hp else Color(0.52, 0.20, 0.12, 0.20)

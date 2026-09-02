@@ -7,7 +7,7 @@ config_version=5
 [application]
 
 config/name="B-Boom"
-config/description="B-Boom: mobile portrait auto-fire bubble blaster. Top-down 3D, procedural placeholder art. Vertical slice M1."
+config/description="B-Boom: bright carnival bubble blaster. Portrait top-down 3D art vertical slice."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.5", "GL Compatibility")
 
@@ -26,6 +26,10 @@ window/stretch/aspect="keep"
 
 theme/custom_font="res://assets/fonts/ui_subset.ttf"
 
+[game_kit]
+
+asset_style="boom-3d"
+
 [input_devices]
 
 pointing/emulate_mouse_from_touch=true
@@ -36,4 +40,4 @@ pointing/emulate_touch_from_mouse=true
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
-environment/defaults/default_clear_color=Color(0.06, 0.07, 0.12, 1)
+environment/defaults/default_clear_color=Color(1, 0.85, 0.64, 1)

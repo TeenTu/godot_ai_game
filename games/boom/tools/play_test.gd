@@ -49,6 +49,7 @@ func _process(_delta: float) -> bool:
 		_test_player_moves()
 		_test_auto_fire_kill()
 		_test_hitnum()
+		_test_art_and_props()
 		_test_wave_advance()
 		_test_skills()
 		_test_skill_system_cd()
@@ -102,6 +103,14 @@ func _test_smoke() -> void:
 	_check(sim.wave == 1, "初始波次 1")
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
+	for asset_path in [
+		"res://assets/images/characters/bubble_captain.png",
+		"res://assets/images/characters/jelly_scout.png",
+		"res://assets/images/characters/water_gunner.png",
+		"res://assets/images/floors/carnival_tiles.png",
+		"res://assets/images/icons/skill_nuke.png",
+	]:
+		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
 
 
 # ------------------------------------------------------------------ 玩家移动
@@ -182,6 +191,23 @@ func _test_hitnum() -> void:
 	_check(lbl != null and lbl.text != "", "可取得活跃飘字实例且带文本")
 	root.remove_child(hn)
 	hn.free()
+
+
+# ------------------------------------------------------------------ 美术资源 / 可破坏物
+
+
+func _test_art_and_props() -> void:
+	print("[art-props]")
+	var g := _new_game()
+	_check(g.props.size() == 3, "场景创建 3 个可破坏物")
+	var prop := g.props[0] as BoomProp
+	_check(prop != null and not prop.broken, "可破坏物初始可见")
+	if prop != null:
+		_check(not prop.take_damage(), "木箱首次命中不立即破碎")
+		_check(prop.take_damage(), "木箱第二次命中破碎")
+		g.call("_finalize_prop", prop)
+		_check(g.coins == 1, "破坏物奖励金币 +1")
+	g.free()
 
 
 # ------------------------------------------------------------------ 波次
