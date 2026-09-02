@@ -1,4 +1,4 @@
-# Sonar 操作验证手册（Stage 1-3）
+# Sonar 操作验证手册（Stage 1-3，TMA 可视化重构版）
 
 > 线上地址：https://teentu.github.io/godot_ai_game/sonar/
 > 本地运行：`godot --path games/sonar`（Godot 4.5）
@@ -29,6 +29,32 @@
 │  - 最优解预测方位曲线（粗实线）/备选解（虚线）                   │
 │  - 本艇转向时刻竖线；方位跨 0/360 自动展开防跳变                 │
 └─────────────────────────────────────────────────────────────┘
+```
+
+## 1.5 可视化重构要点（本次新增）
+
+- **接触选择**：Contacts 列表可点击，Auto Fit 只作用于选中接触（Selected: S01 行
+  同步显示 B/R/C/S）；未选中的接触在海图上降到 alpha 0.12。
+- **LOB 减载**：默认只画 ≤24 条代表性 LOB（最新 4 / 最旧 2 / 观测腿边界 / 均匀
+  抽样）；σ 扇区只在悬停或选中测量时显示；离群点红虚线 + X 标记；
+  "All LOB History" 开关可展开全部。
+- **海图相机**：滚轮缩放（1~60 km）、左键拖拽平移、Reset View / Auto Frame；
+  左下比例尺、右上北向标记、自适应 km 网格；右下图例。
+- **拟合轨迹**：白 3px + 橙描边；≤12 个 mm:ss 时间刻度（可点击联动残差图）；
+  备选解 A/B/C 编号 + 三种虚线；Trial 青菱形、System 紫双环。
+- **Bearing-Time 图**（240px）：局部动态纵轴（跨北连续展开），可切 360° Overview；
+  悬停测量 → 海图联动显示 o_i / p_i / z_i / θ̂_i / e_i / e_iσ。
+- **残差图（新增）**：e_i 随时间分布，deg/sigma 轴点击切换，±1/2/3σ 带，
+  RMS/bias/max/used/rej 统计；离群点红 X。
+- **不确定度**：4x4 协方差外推（P_now = F P Fᵀ + Q），海图画 95% 置信椭圆；
+  rank<4 / cond>1e4 / MULTIMODAL 时不画椭圆。
+- **性能**：LOB / BT / 残差数组只在「新测量 / 新拟合 / 选择或图层变化」时重建。
+
+截图回归（7 状态，带渲染环境运行）：
+```bash
+godot --path games/sonar --script res://tools/ui_regression.gd
+# 输出 tools/regression/{NO_FIT,CONVERGED,MULTIMODAL,INSUFFICIENT_GEOMETRY,
+#   STALE,OUTLIER,NORTH_CROSSING}.png
 ```
 
 ---

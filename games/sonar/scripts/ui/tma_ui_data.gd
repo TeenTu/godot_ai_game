@@ -1,0 +1,233 @@
+class_name TmaUiData
+extends RefCounted
+## tma_ui_data.gd — TmaFitResult → UI 显示数据的纯函数转换层。
+## 从 main_ui 拆出（max-file-lines），全部 static，不持有状态。
+##
+## 公式约定（与 TmaSolver 一致）：
+##   p_i = p_ref + v * (t_i - t_ref)
+##   θ̂_i = atan2(p_i.east - o_i.east, p_i.north - o_i.north)
+##   e_i = wrap180(z_i - θ̂_i)，normalized = e_i / sigma_i
+##   P_now = F P Fᵀ + Q，F = [[I, Δt I], [0, I]]
+
+const MAX_ALTS: int = 3
+const CHI2_95: float = 5.991
+const POS_SCALE: float = 1000.0  # solver 协方差位置尺度（m）
+const VEL_SCALE: float = 5.0  # solver 协方差速度尺度（m/s）
+const QA: float = 0.02  # 过程噪声：目标加速度 σ (m/s²)
+
+
+## 海图假设列表：最优 + 权重最高的 ≤3 个备选（A/B/C 编号）。
+static func chart_hypotheses(last_fit: Dictionary, sel_id: String) -> Array:
+	if last_fit.is_empty() or not bool(last_fit.get("success", false)):
+		return []
+	if str(last_fit.get("track_id", "")) != sel_id:
+		return []
+	var best: Dictionary = last_fit.get("best", {})
+	if best.is_empty():
+		return []
+	var hyps: Array = []
+	(
+		hyps
+		. append(
+			{
+				"p_ref": best["p_ref"],
+				"v_ms": best["v_ms"],
+				"t_ref": float(best["t_ref"]),
+				"weight": 1.0,
+				"is_best": true,
+				"speed_kn": float(best.get("speed_kn", 0.0)),
+				"course_deg": float(best.get("course_deg", 0.0)),
+				"label": "FIT",
+			}
+		)
+	)
+	var alts: Array = last_fit.get("alternatives", []).duplicate()
+	alts.sort_custom(func(a, b): return float(a.get("weight", 0.0)) > float(b.get("weight", 0.0)))
+	var names: Array = ["A", "B", "C"]
+	var i: int = 0
+	for alt in alts:
+		if i >= MAX_ALTS:
+			break
+		alt["is_best"] = false
+		alt["label"] = "Alt " + (names[i] as String)
+		hyps.append(alt)
+		i += 1
+	return hyps
+
+
+## ≤12 个时间刻度：观测腿边界（就近 inlier）+ 首末测量 + 均匀抽样。
+static func fit_tick_times(last_fit: Dictionary, sel_id: String, leg_bounds: Array) -> Array:
+	if last_fit.is_empty() or str(last_fit.get("track_id", "")) != sel_id:
+		return []
+	var times: Array = []
+	for res in last_fit.get("residuals", []):
+		if bool(res.get("inlier", true)):
+			times.append(float(res["time"]))
+	if times.is_empty():
+		return []
+	times.sort()
+	var chosen: Array = [times[0], times[times.size() - 1]]
+	for bt in leg_bounds:
+		var nearest: float = times[0]
+		var bd: float = INF
+		for t in times:
+			var d: float = absf(t - float(bt))
+			if d < bd:
+				bd = d
+				nearest = t
+		if not chosen.has(nearest):
+			chosen.append(nearest)
+	var remaining: int = 12 - chosen.size()
+	if remaining > 0 and times.size() > chosen.size():
+		var stride: float = float(times.size() - 1) / float(remaining + 1)
+		for k in range(remaining):
+			var t2: float = times[int(round((k + 1) * stride))]
+			if not chosen.has(t2):
+				chosen.append(t2)
+	chosen.sort()
+	return chosen
+
+
+## P_now = F P Fᵀ + Q（白噪声加速度模型），返回位置 2x2 子块（m²）。
+## solver 协方差为尺度归一化空间：p/1000m、v/5ms⁻¹。
+## rank<4、cond>1e4 或 MULTIMODAL 时返回 []（禁止虚假小椭圆）。
+static func propagated_cov(last_fit: Dictionary, now: float) -> Array:
+	if last_fit.is_empty() or not bool(last_fit.get("success", false)):
+		return []
+	if int(last_fit.get("jacobian_rank", 0)) < 4:
+		return []
+	if float(last_fit.get("condition_number", 0.0)) > 1.0e4:
+		return []
+	if str(last_fit.get("status", "")) == "MULTIMODAL":
+		return []
+	var mat: Array = last_fit.get("covariance", {}).get("matrix", [])
+	if mat.size() != 4:
+		return []
+	var dt: float = maxf(now - float(last_fit.get("reference_time", now)), 0.0)
+	var p_mat: Array = _rescale(mat)
+	var q2: float = pow(QA, 2.0) * pow(dt, 4.0) * 0.25
+	var pee: float = p_mat[0][0] + dt * (p_mat[0][2] + p_mat[2][0]) + dt * dt * p_mat[2][2] + q2
+	var pnn: float = p_mat[1][1] + dt * (p_mat[1][3] + p_mat[3][1]) + dt * dt * p_mat[3][3] + q2
+	var pen: float = p_mat[0][1] + dt * (p_mat[0][3] + p_mat[2][1]) + dt * dt * p_mat[2][3] + q2
+	return [[pee, pen], [pen, pnn]]
+
+
+## 尺度归一化 4x4 → 实际单位（m / m·s⁻¹）。
+static func _rescale(mat: Array) -> Array:
+	var out: Array = []
+	for i in range(4):
+		var row: Array = []
+		var si: float = POS_SCALE if i < 2 else VEL_SCALE
+		for j in range(4):
+			var sj: float = POS_SCALE if j < 2 else VEL_SCALE
+			row.append(float(mat[i][j]) * si * sj)
+		out.append(row)
+	return out
+
+
+## Bearing-Time 模型曲线：最优（橙、置顶）+ 备选 A/B/C。
+static func bt_curves(last_fit: Dictionary, sel_id: String) -> Array:
+	var curves: Array = []
+	if last_fit.is_empty() or not bool(last_fit.get("success", false)):
+		return curves
+	if str(last_fit.get("track_id", "")) != sel_id:
+		return curves
+	var best: Dictionary = last_fit.get("best", {})
+	if not best.is_empty():
+		curves.append(model_curve(last_fit, best, Color(0.98, 0.55, 0.15), true))
+	var i: int = 0
+	for alt in last_fit.get("alternatives", []):
+		if i >= MAX_ALTS:
+			break
+		curves.append(model_curve(last_fit, alt, Color(0.55, 0.75, 1.0, 0.8), false))
+		i += 1
+	return curves
+
+
+static func model_curve(
+	last_fit: Dictionary, hyp: Dictionary, col: Color, is_best: bool
+) -> Dictionary:
+	var pts: Array = []
+	var pred: Array = hyp.get("pred_bearings", [])
+	var i: int = 0
+	for res in last_fit.get("residuals", []):
+		if i < pred.size():
+			pts.append({"time": float(res["time"]), "bearing_deg": float(pred[i])})
+		i += 1
+	return {"points": pts, "color": col, "best": is_best}
+
+
+## 参考σ：由 inlier 残差对的 |deg/normalized| 中位数估计。
+static func mean_sigma(res: Array) -> float:
+	var ratios: Array = []
+	for r in res:
+		var n: float = absf(float(r.get("normalized", 0.0)))
+		if n > 1e-6:
+			ratios.append(absf(float(r["residual_deg"])) / n)
+	if ratios.is_empty():
+		return 1.0
+	ratios.sort()
+	return ratios[ratios.size() / 2]
+
+
+## 拟合结果摘要（状态机全字段，不得只显示笼统置信度）。
+static func summary(r: Dictionary) -> String:
+	var lines: Array = []
+	lines.append("Track %s  Status: %s" % [str(r.get("track_id", "?")), str(r.get("status", "?"))])
+	if bool(r.get("maneuver_suspected", false)):
+		lines.append("!! Target maneuver suspected - re-maneuver & refit")
+	if int(r.get("hypothesis_count", 0)) > 1:
+		var n_alt: int = mini(int(r.get("hypothesis_count", 1)) - 1, MAX_ALTS)
+		lines.append("Alternatives: %d (A/B/C on chart)" % n_alt)
+	(
+		lines
+		. append(
+			(
+				"Ref t=%.0fs stale=%.0fs meas=%d rej=%d legs=%d"
+				% [
+					float(r.get("reference_time", 0.0)),
+					float(r.get("stale_seconds", 0.0)),
+					int(r.get("measurements_used", 0)),
+					int(r.get("measurements_rejected", []).size()),
+					int(r.get("legs", 0)),
+				]
+			)
+		)
+	)
+	var cond: float = float(r.get("condition_number", 0.0))
+	var cond_txt: String = "inf" if is_inf(cond) else "%.0f" % cond
+	(
+		lines
+		. append(
+			(
+				"RMSE %.2f° rank=%d cond=%s"
+				% [
+					float(r.get("angular_rmse", 0.0)),
+					int(r.get("jacobian_rank", 0)),
+					cond_txt,
+				]
+			)
+		)
+	)
+	var unc: float = float(r.get("position_uncertainty_m", -1.0))
+	if unc > 0.0:
+		(
+			lines
+			. append(
+				(
+					"Pos 95%% ±%.0fm  Spd ±%.1fkn"
+					% [
+						unc,
+						NavUtils.ms_to_kn(float(r.get("velocity_uncertainty_ms", 0.0))),
+					]
+				)
+			)
+		)
+	else:
+		lines.append("Uncertainty: N/A (insufficient geometry / multi-modal)")
+	if bool(r.get("boundary_hit", false)):
+		lines.append("!! BOUNDARY_HIT: solution at parameter limit")
+	var text: String = ""
+	for ln in lines:
+		text += ln + "\n"
+	return text
