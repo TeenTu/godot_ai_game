@@ -15,6 +15,8 @@ signal wave_cleared(wave: int, bonus: int)
 signal wave_started(wave: int)
 signal game_over(final_score: int)
 signal prop_broken(pos: Vector3, coin_value: int)
+## 技能弹道命中（非普通弹）：pos=命中点，skill_id=弹道归属（§4.2 fan 每命中飘字）。
+signal skill_bullet_hit(pos: Vector3, skill_id: String)
 
 const PLAYER_BOUND_X: float = 3.6
 const PLAYER_BOUND_Z: float = 9.5
@@ -248,10 +250,11 @@ func _nearest_enemy() -> BoomJelly:
 	return best
 
 
-func _spawn_bullet(from: Vector3, dir: Vector3) -> void:
+func _spawn_bullet(from: Vector3, dir: Vector3, variant: String = "straight") -> void:
 	var b := bullets[_bullet_idx] as BoomBullet
 	_bullet_idx = (_bullet_idx + 1) % bullets.size()
 	b.fire(from, dir)
+	b.variant = variant
 	shot_fired.emit(from)
 
 
@@ -306,7 +309,7 @@ func cast_fan_shot() -> int:
 	for i in FAN_COUNT:
 		var off := -span + float(i) * step_rad
 		var dir := base_dir.rotated(Vector3.UP, off)
-		_spawn_bullet(muzzle, dir)
+		_spawn_bullet(muzzle, dir, "fan")
 		count += 1
 	return count
 
@@ -413,6 +416,9 @@ func _tick_bullets(delta: float) -> void:
 				var hit_dir: Vector3 = bullet.vel.normalized()
 				bullet.recycle()
 				enemy_damaged.emit(bullet.position, hit_dir)
+				# 技能弹道命中广播（§4.2）：fan 每命中 1 个飘字，普通弹不发。
+				if bullet.variant != "straight":
+					skill_bullet_hit.emit(bullet.position, bullet.variant)
 				if jelly.take_damage(BULLET_DMG, hit_dir):
 					dead_this_tick.append(jelly)
 				break

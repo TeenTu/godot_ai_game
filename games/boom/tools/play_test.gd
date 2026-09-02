@@ -13,6 +13,7 @@ extends SceneTree
 ##             1. fan：cast_fan_shot 返回 5 且子弹池活跃数 +5；命中可击杀单敌
 ##             2. chain：三敌各在跳跃范围内 -> enemy_damaged 触发 3 次（链 3 跳）
 ##             3. nuke：6m 内 AOE BULLET_DMG*4 致死 + 触发顿帧；范围外不受
+##   [skill-float] §4.2 技能飘字：文案/颜色/字号映射（嘭!/链!/轰!）+ fan 命中飘字入池
 ##   [skillcd] BoomSkillSystem 冷却：CD 中连发只触发 1 次，CD 归零可再触发
 ##   [m3-logic] M3 纯逻辑：击杀播报阈值(2/3/5→DOUBLE/TRIPLE/RAMPAGE)、结算星级(2/4/6 波)
 ##   [m3-settle] M3 结算状态机：game over → 0.3x 慢镜头 → 恢复 1.0x 启动结算序列
@@ -54,6 +55,7 @@ func _process(_delta: float) -> bool:
 		_test_art_and_props()
 		_test_wave_advance()
 		_test_skills()
+		_test_skill_float_text()
 		_test_skill_system_cd()
 		_test_m3_logic()
 		_test_m3_settlement()
@@ -301,6 +303,56 @@ func _test_nuke_aoe() -> void:
 	_check(g.kills == 1, "nuke 击杀计数 +1")
 	_check(outside.is_dead() == false, "nuke 范围外敌未受伤害")
 	_check(g._freeze_left >= 0.14 and g._freeze_left > dmg_before, "nuke 命中触发 0.14s 顿帧")
+
+
+# ------------------------------------------------------------------ §4.2 技能飘字
+
+
+func _test_skill_float_text() -> void:
+	print("[skill-float]")
+	# 文案/颜色/字号映射（§4.2 规格表：fan 黄小字 / chain 紫大字 / nuke 金巨型）。
+	var fan_spec: Dictionary = BoomSkillSystem.float_text_for("fan")
+	_check(fan_spec["text"] == "嘭!", "fan 飘字文案 = 嘭!")
+	_check(fan_spec["color"] == BoomSkillSystem.TEXT_COLOR_FAN, "fan 飘字颜色 = 黄")
+	var chain_spec: Dictionary = BoomSkillSystem.float_text_for("chain")
+	_check(chain_spec["text"] == "链!", "chain 飘字文案 = 链!")
+	_check(chain_spec["color"] == BoomSkillSystem.TEXT_COLOR_CHAIN, "chain 飘字颜色 = 紫")
+	var nuke_spec: Dictionary = BoomSkillSystem.float_text_for("nuke")
+	_check(nuke_spec["text"] == "轰!", "nuke 飘字文案 = 轰!")
+	_check(nuke_spec["color"] == BoomSkillSystem.TEXT_COLOR_NUKE, "nuke 飘字颜色 = 金")
+	# 字号阶梯：小字 < 大字 < 巨型。
+	var fan_sc: float = fan_spec["scale"]
+	var chain_sc: float = chain_spec["scale"]
+	var nuke_sc: float = nuke_spec["scale"]
+	_check(fan_sc < chain_sc and chain_sc < nuke_sc, "飘字字号阶梯 fan<chain<nuke")
+	_check(BoomSkillSystem.float_text_for("unknown").is_empty(), "未登记技能返回空规格")
+	# fan 每命中 1 个飘字：BoomGame 驱动扇形弹命中 → skill_bullet_hit → 飘字入池。
+	var g := _new_game()
+	g.player.invuln_left = 10.0
+	var hn := BoomHitNum.new()
+	root.add_child(hn)
+	g.skill_bullet_hit.connect(
+		func(pos: Vector3, skill_id: String) -> void:
+			var spec: Dictionary = BoomSkillSystem.float_text_for(skill_id)
+			if not spec.is_empty():
+				var text: String = spec["text"]
+				var col: Color = spec["color"]
+				var sc: float = spec["scale"]
+				hn.spawn(pos, text, col, sc)
+	)
+	g.spawn_enemy_at(Vector3(0.0, 0.0, -5.0))
+	g.cast_fan_shot()
+	var guard := 0
+	while guard < MAX_FRAMES and hn.active_count() == 0:
+		guard += 1
+		g.player.invuln_left = 10.0
+		g.step(DT)
+	_check(hn.active_count() > 0, "fan 命中后技能飘字入池")
+	var lbl: Label3D = hn.first_active()
+	_check(lbl != null and lbl.text == "嘭!", "fan 命中飘字文本 = 嘭!")
+	root.remove_child(hn)
+	hn.free()
+	g.free()
 
 
 # ------------------------------------------------------------------ BoomSkillSystem 冷却
