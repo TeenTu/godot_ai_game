@@ -7,6 +7,7 @@ extends SceneTree
 ##   10. 切换分析方位后，其他方位目标的音线明显衰减（方向性——本文件验方位换算数学）。
 ## 纯函数验证，不依赖 Truth / 声场。
 
+
 func _initialize() -> void:
 	var fails: Array = []
 	var tol: float = 1e-6
