@@ -19,6 +19,7 @@ var bob_t: float = 0.0
 
 var _body: MeshInstance3D
 var _body_mat: StandardMaterial3D
+var _art: Sprite3D
 var _flicker_t: float = 0.0
 var _flash_energy: float = 0.0
 
@@ -85,6 +86,24 @@ func _build_visuals() -> void:
 	muzzle = Node3D.new()
 	muzzle.position = Vector3(0.0, 0.5, 0.9)
 	add_child(muzzle)
+	_add_character_art()
+
+
+func _add_character_art() -> void:
+	var path := "res://assets/images/characters/bubble_captain.png"
+	if not ResourceLoader.exists(path):
+		return
+	_art = Sprite3D.new()
+	_art.texture = load(path) as Texture2D
+	_art.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_art.pixel_size = 0.0033
+	_art.position = Vector3(0.0, 0.78, 0.0)
+	_art.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	_art.render_priority = 2
+	add_child(_art)
+	for child in get_children():
+		if child is MeshInstance3D:
+			(child as MeshInstance3D).visible = false
 
 
 func _add_eye(local_pos: Vector3, radius: float) -> void:
@@ -126,8 +145,12 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 		if _flicker_t <= 0.0:
 			_flicker_t = 0.06
 			_body.visible = not _body.visible
+			if _art != null:
+				_art.visible = not _art.visible
 	else:
-		_body.visible = true
+		_body.visible = _art == null
+		if _art != null:
+			_art.visible = true
 
 	# 受击闪白能量衰减回常态。
 	if _flash_energy > 0.0:
@@ -136,6 +159,8 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 
 	# 呼吸起伏。
 	_body.position.y = 0.52 + sin(bob_t) * 0.03
+	if _art != null:
+		_art.position.y = 0.78 + sin(bob_t) * 0.04
 
 
 ## 让枪口朝向某方向（XZ 平面，用于自动瞄准的可视反馈）。

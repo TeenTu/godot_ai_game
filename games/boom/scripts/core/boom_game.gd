@@ -14,6 +14,7 @@ signal player_damaged(amount: int, from_pos: Vector3)
 signal wave_cleared(wave: int, bonus: int)
 signal wave_started(wave: int)
 signal game_over(final_score: int)
+signal prop_broken(pos: Vector3, coin_value: int)
 
 const PLAYER_BOUND_X: float = 3.6
 const PLAYER_BOUND_Z: float = 9.5
@@ -36,11 +37,23 @@ const CHAIN_DECAY: float = 0.7
 const NUKE_RADIUS: float = 6.0
 const NUKE_DMG_MULT: int = 4
 
+# ---- M3 击杀播报阈值（design_boom.md §7.2：DOUBLE/TRIPLE/RAMPAGE）----
+const ANNOUNCE_DOUBLE: int = 2
+const ANNOUNCE_TRIPLE: int = 3
+const ANNOUNCE_RAMPAGE: int = 5
+
+# ---- M3 结算星级阈值（无尽模式：撑到的波次即荣誉，代替关卡的通关/限时/零受伤）----
+const RESULT_STAR_WAVE_1: int = 2
+const RESULT_STAR_WAVE_2: int = 4
+const RESULT_STAR_WAVE_3: int = 6
+
 var player: BoomPlayer
 var enemies: Array = []
 var bullets: Array = []  # BoomBullet 池
+var props: Array = []
 var wave: int = 1
 var score: int = 0
+var coins: int = 0
 var kills: int = 0
 var combo: int = 0
 var combo_left: float = 0.0
@@ -91,6 +104,7 @@ func step(delta: float) -> void:
 	_tick_player(delta)
 	_tick_enemies(delta)
 	_tick_bullets(delta)
+	_tick_props(delta)
 	_tick_spawns(delta)
 	_tick_player_contact()
 
@@ -98,6 +112,7 @@ func step(delta: float) -> void:
 func restart() -> void:
 	wave = 1
 	score = 0
+	coins = 0
 	kills = 0
 	combo = 0
 	combo_left = 0.0
@@ -124,6 +139,12 @@ func restart() -> void:
 			remove_child(e)
 			e.queue_free()
 	enemies.clear()
+	for prop in props:
+		if is_instance_valid(prop):
+			remove_child(prop)
+			prop.queue_free()
+	props.clear()
+	_spawn_props()
 	_begin_wave()
 
 
@@ -242,6 +263,35 @@ func nearest_attacker() -> BoomJelly:
 	return _nearest_enemy()
 
 
+## 供表现层触发一次性顿帧（如闪电链首跳 0.06s，design_m2_danmaku.md §4.2）。
+func trigger_freeze(dur: float) -> void:
+	_freeze_left = maxf(_freeze_left, dur)
+
+
+## M3 击杀播报：按当前连杀数给出播报文案（空串 = 不播报）。
+## 阈值 2/3/5（design_boom.md §7.2）；4 连杀维持 TRIPLE 档继续弹播报。
+static func announce_for_combo(combo: int) -> String:
+	if combo >= ANNOUNCE_RAMPAGE:
+		return "RAMPAGE"
+	if combo >= ANNOUNCE_TRIPLE:
+		return "TRIPLE"
+	if combo >= ANNOUNCE_DOUBLE:
+		return "DOUBLE"
+	return ""
+
+
+## M3 结算星级：无尽模式下按撑到的波次给星（2/4/6 波各一颗，上限 3）。
+static func result_stars(wave: int) -> int:
+	var stars := 0
+	if wave >= RESULT_STAR_WAVE_1:
+		stars += 1
+	if wave >= RESULT_STAR_WAVE_2:
+		stars += 1
+	if wave >= RESULT_STAR_WAVE_3:
+		stars += 1
+	return stars
+
+
 ## 爆裂弹幕：朝最近敌人方向射出 FAN_COUNT 发扇形散弹（复用子弹池，走既有命中/回收）。
 ## 无目标时朝玩家朝向扇形散射。返回实际发射数（顿帧/特效由上层订阅 shot_fired）。
 func cast_fan_shot() -> int:
@@ -262,7 +312,7 @@ func cast_fan_shot() -> int:
 
 
 ## 闪电链：以最近敌人为起点，向其它敌人链式弹跳 CHAIN_MAX_TARGETS 次，每次伤害衰减 CHAIN_DECAY。
-## 返回被命中的敌人数组（供上层画电弧/飘字/顿帧）。起点 null 返回空数组。
+## 返回被命中的敌人数组（含存活者，供上层画电弧/飘字/顿帧）。起点 null 返回空数组。
 func cast_chain_arc() -> Array:
 	var hits: Array = []
 	var from := player.position
@@ -322,15 +372,17 @@ func _nearest_jelly_from(from: Vector3, exclude: Array) -> BoomJelly:
 	return best
 
 
-## 对单个敌人结算一次技能伤害：扣血 + 发 damaged 信号；致死则最终结算击杀。
+## 对单个敌人结算一次技能伤害：扣血 + 发 damaged 信号。
+## 命中即把敌人放入 out_hits（含存活者——衰减伤害是常态，上层需要为每个
+## 被命中的目标画电弧/提示，而不是只画被击杀的）；致死则最终结算击杀。
 func _apply_skill_hit(jelly: BoomJelly, dmg: int, out_hits: Array) -> void:
 	if jelly.is_dead() or jelly.hp <= 0:
 		return
 	var hit_dir := (jelly.position - player.position).normalized()
 	enemy_damaged.emit(jelly.position, hit_dir)
+	out_hits.append(jelly)
 	if jelly.take_damage(dmg, hit_dir):
 		_finalize_kill(jelly)
-		out_hits.append(jelly)
 
 
 # ------------------------------------------------------------------ 子弹
@@ -338,6 +390,7 @@ func _apply_skill_hit(jelly: BoomJelly, dmg: int, out_hits: Array) -> void:
 
 func _tick_bullets(delta: float) -> void:
 	var dead_this_tick: Array = []
+	var broken_this_tick: Array = []
 	for b in bullets:
 		var bullet := b as BoomBullet
 		if not bullet.active:
@@ -363,10 +416,53 @@ func _tick_bullets(delta: float) -> void:
 				if jelly.take_damage(BULLET_DMG, hit_dir):
 					dead_this_tick.append(jelly)
 				break
+		if bullet.active:
+			for prop in props:
+				var target := prop as BoomProp
+				if target == null or target.broken:
+					continue
+				if bullet.position.distance_to(target.position) <= BoomProp.HIT_RADIUS:
+					bullet.recycle()
+					if target.take_damage():
+						broken_this_tick.append(target)
+					break
 	for e in dead_this_tick:
 		var jelly := e as BoomJelly
 		if jelly != null:
 			_finalize_kill(jelly)
+	for prop in broken_this_tick:
+		_finalize_prop(prop as BoomProp)
+
+
+func _tick_props(delta: float) -> void:
+	for prop in props:
+		var target := prop as BoomProp
+		if target != null:
+			target.tick(delta)
+
+
+func _spawn_props() -> void:
+	var placements: Array = [
+		["crate", Vector3(-2.8, 0.0, -3.5)],
+		["barrel", Vector3(3.0, 0.0, 1.8)],
+		["crate", Vector3(-3.1, 0.0, 6.0)],
+	]
+	for entry in placements:
+		var prop := BoomProp.new(entry[0])
+		prop.position = entry[1]
+		props.append(prop)
+		add_child(prop)
+
+
+func _finalize_prop(prop: BoomProp) -> void:
+	if prop == null or not props.has(prop):
+		return
+	coins += prop.coin_value
+	score += prop.coin_value
+	prop_broken.emit(prop.position, prop.coin_value)
+	props.erase(prop)
+	remove_child(prop)
+	prop.queue_free()
 
 
 func _finalize_kill(jelly: BoomJelly) -> void:

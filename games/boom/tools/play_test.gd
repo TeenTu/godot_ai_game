@@ -14,6 +14,8 @@ extends SceneTree
 ##             2. chain：三敌各在跳跃范围内 -> enemy_damaged 触发 3 次（链 3 跳）
 ##             3. nuke：6m 内 AOE BULLET_DMG*4 致死 + 触发顿帧；范围外不受
 ##   [skillcd] BoomSkillSystem 冷却：CD 中连发只触发 1 次，CD 归零可再触发
+##   [m3-logic] M3 纯逻辑：击杀播报阈值(2/3/5→DOUBLE/TRIPLE/RAMPAGE)、结算星级(2/4/6 波)
+##   [m3-settle] M3 结算状态机：game over → 0.3x 慢镜头 → 恢复 1.0x 启动结算序列
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -49,9 +51,12 @@ func _process(_delta: float) -> bool:
 		_test_player_moves()
 		_test_auto_fire_kill()
 		_test_hitnum()
+		_test_art_and_props()
 		_test_wave_advance()
 		_test_skills()
 		_test_skill_system_cd()
+		_test_m3_logic()
+		_test_m3_settlement()
 		_finish()
 	return false
 
@@ -94,6 +99,10 @@ func _test_smoke() -> void:
 	_check(_main.get("hitnum") != null, "hitnum 飘字模块已注入")
 	_check(_main.get("skill_sys") != null, "skill_sys 技能系统已注入")
 	_check(_main.get("skill_fx") != null, "skill_fx 技能特效已注入")
+	var btns: Dictionary = _main.get("skill_btns")
+	_check(btns.size() == 3, "技能 HUD 3 个圆形按钮已构建 (n=%d)" % btns.size())
+	_check(_main.get("waypoints") != null, "waypoint 边缘标记层已构建")
+	_check(_main.get("_combo_label") != null, "击杀播报大字 Label 已构建")
 	if not has_sim:
 		return
 	var sim := _main.get("sim") as BoomGame
@@ -102,6 +111,14 @@ func _test_smoke() -> void:
 	_check(sim.wave == 1, "初始波次 1")
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
+	for asset_path in [
+		"res://assets/images/characters/bubble_captain.png",
+		"res://assets/images/characters/jelly_scout.png",
+		"res://assets/images/characters/water_gunner.png",
+		"res://assets/images/floors/carnival_tiles.png",
+		"res://assets/images/icons/skill_nuke.png",
+	]:
+		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
 
 
 # ------------------------------------------------------------------ 玩家移动
@@ -184,6 +201,23 @@ func _test_hitnum() -> void:
 	hn.free()
 
 
+# ------------------------------------------------------------------ 美术资源 / 可破坏物
+
+
+func _test_art_and_props() -> void:
+	print("[art-props]")
+	var g := _new_game()
+	_check(g.props.size() == 3, "场景创建 3 个可破坏物")
+	var prop := g.props[0] as BoomProp
+	_check(prop != null and not prop.broken, "可破坏物初始可见")
+	if prop != null:
+		_check(not prop.take_damage(), "木箱首次命中不立即破碎")
+		_check(prop.take_damage(), "木箱第二次命中破碎")
+		g.call("_finalize_prop", prop)
+		_check(g.coins == 1, "破坏物奖励金币 +1")
+	g.free()
+
+
 # ------------------------------------------------------------------ 波次
 
 
@@ -245,11 +279,13 @@ func _test_chain_hits() -> void:
 	# GDScript lambda 对局部 int 按值捕获，必须用容器(Array)承载计数才能回写。
 	var dmg_box: Array = [0]
 	g.enemy_damaged.connect(func(_pos: Vector3, _dir: Vector3) -> void: dmg_box[0] += 1)
-	g.cast_chain_arc()  # 返回值(命中数组)仅当致死才填；此处以 damaged 计数为准。
+	var chain_hits: Array = g.cast_chain_arc()
 	var damaged: int = dmg_box[0]
 	# 每跳至少造成 1 伤害：三次伤害跳各触发一次 damaged。
 	_check(damaged == 3, "chain 命中 3 个不同敌人 (damaged=%d)" % damaged)
 	_check(not a.is_dead() and not b.is_dead() and not c.is_dead(), "chain 三敌未被秒杀（各受少量伤害）")
+	# P1-2：命中即返回（含存活者）——main.gd 依赖它为存活目标画电弧/提示。
+	_check(chain_hits.size() == 3, "chain 返回命中数组含存活者 (hits=%d)" % chain_hits.size())
 
 
 func _test_nuke_aoe() -> void:
@@ -303,6 +339,44 @@ func _test_skill_system_cd() -> void:
 	_check(fired_count == 4, "CD 归零后 tap 再触发 fan (fired=%d)" % fired_count)
 	g.remove_child(sys)
 	sys.free()
+
+
+# ------------------------------------------------------------------ M3 纯逻辑 + 结算状态机
+
+
+func _test_m3_logic() -> void:
+	print("[m3-logic]")
+	_check(BoomGame.announce_for_combo(0) == "", "combo 0 不播报")
+	_check(BoomGame.announce_for_combo(1) == "", "combo 1 不播报")
+	_check(BoomGame.announce_for_combo(2) == "DOUBLE", "combo 2 → DOUBLE")
+	_check(BoomGame.announce_for_combo(3) == "TRIPLE", "combo 3 → TRIPLE")
+	_check(BoomGame.announce_for_combo(4) == "TRIPLE", "combo 4 维持 TRIPLE 档")
+	_check(BoomGame.announce_for_combo(5) == "RAMPAGE", "combo 5 → RAMPAGE")
+	_check(BoomGame.announce_for_combo(9) == "RAMPAGE", "combo 9 → RAMPAGE")
+	_check(BoomGame.result_stars(1) == 0, "wave 1 → 0 星")
+	_check(BoomGame.result_stars(2) == 1, "wave 2 → 1 星")
+	_check(BoomGame.result_stars(4) == 2, "wave 4 → 2 星")
+	_check(BoomGame.result_stars(6) == 3, "wave 6 → 3 星")
+	_check(BoomGame.result_stars(10) == 3, "wave 10 → 封顶 3 星")
+
+
+func _test_m3_settlement() -> void:
+	print("[m3-settle]")
+	var panel: Control = _main.get("_over_panel")
+	_check(panel != null, "结算面板已构建")
+	if panel == null:
+		return
+	_check(not panel.visible, "开局结算面板隐藏")
+	_main.call("_on_game_over", 88)
+	_check(panel.visible, "game over 后结算面板显示")
+	_check(is_equal_approx(Engine.time_scale, 0.3), "最后一击进入 0.3x 慢镜头")
+	var stars: Array = _main.get("_result_stars")
+	_check(stars.size() == 3, "结算星级 3 颗已构建")
+	# 直接推进状态机（避免无头环境下 tween 墙钟时序抖动）：
+	# 慢镜头结束 → time_scale 恢复 → 结算序列已启动。
+	_main.call("_end_slowmo")
+	_check(is_equal_approx(Engine.time_scale, 1.0), "慢镜头恢复 1.0x")
+	_check(int(_main.get("_slowmo_until_ms")) == 0, "慢镜头计时已清零（序列已启动）")
 
 
 # ------------------------------------------------------------------ helpers
