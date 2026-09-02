@@ -29,13 +29,12 @@ const PREVIEW_OFFSET := Vector2(-54, -96)
 
 var game: FoundryGame
 var audio: FoundryAudio
+var vs_overlay: FoundryVsOverlay
 var _state: Dictionary = {}
 var _nodes: Dictionary = {}
 var _dragged_preview: Control
 var _icon_textures: Dictionary = {}
 var _bg_texture: Texture2D
-var _vs_played_round: int = 0  # 本局已播放过 VS 动画的回合号（防重播）
-var _vs_animating: bool = false
 var _sfx: Dictionary = {}
 
 
@@ -166,7 +165,8 @@ func _build_ui() -> void:
 	_build_hand()
 	_build_action_button()
 	_build_guide_label()
-	_build_vs_overlay()
+	vs_overlay = FoundryVsOverlay.new()
+	vs_overlay.setup(self, _on_vs_btn, _play_sfx)
 
 
 func _style_box(fill: Color, radius: int = 16, border_w: int = 3) -> StyleBoxFlat:
@@ -361,7 +361,7 @@ func _rebuild() -> void:
 	_refresh_hand()
 	_refresh_action_button()
 	_refresh_guide()
-	_refresh_vs_overlay()
+	vs_overlay.refresh(_state, game.phase, game.round)
 	if game.taken_card.is_empty():
 		_hide_dragged_preview()
 	elif _dragged_preview == null:
@@ -787,214 +787,10 @@ func _test_hook_get_state() -> Dictionary:
 	}
 
 
-# ---------- VS 结算覆盖层（战力对撞 + 大字结果） ----------
-
-
-func _build_vs_overlay() -> void:
-	var cover := ColorRect.new()
-	cover.color = Color(0, 0, 0, 0.55)
-	cover.set_anchors_preset(Control.PRESET_FULL_RECT)
-	cover.name = "VSCover"
-	add_child(cover)
-	_nodes["vs_cover"] = cover
-
-	var panel := Panel.new()
-	panel.position = Vector2(80, 380)
-	panel.size = Vector2(560, 440)
-	panel.add_theme_stylebox_override("panel", _style_box(COLOR_PANEL, 28, 5))
-	add_child(panel)
-	_nodes["vs_panel"] = panel
-
-	var title := _make_label(
-		panel, "", 64, Vector2(20, 16), Vector2(520, 92), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
-	)
-	_nodes["vs_title"] = title
-
-	var you_track := ColorRect.new()
-	you_track.color = Color("#3A1D0F")
-	you_track.position = Vector2(90, 142)
-	you_track.size = Vector2(380, 32)
-	panel.add_child(you_track)
-	_nodes["vs_you_track"] = you_track
-	var you_fill := ColorRect.new()
-	you_fill.color = COLOR_POWER
-	you_fill.position = Vector2(90, 142)
-	you_fill.size = Vector2(0, 32)
-	panel.add_child(you_fill)
-	_nodes["vs_you_fill"] = you_fill
-	_make_label(panel, "You", 26, Vector2(20, 138), Vector2(60, 44))
-	var you_num_lbl: Label = _make_label(
-		panel, "0", 30, Vector2(478, 138), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
-	)
-	_nodes["vs_you_num"] = you_num_lbl
-
-	var g_track := ColorRect.new()
-	g_track.color = Color("#3A1D0F")
-	g_track.position = Vector2(90, 200)
-	g_track.size = Vector2(380, 32)
-	panel.add_child(g_track)
-	_nodes["vs_ghost_track"] = g_track
-	var g_fill := ColorRect.new()
-	g_fill.color = COLOR_ENERGY
-	g_fill.position = Vector2(90, 200)
-	g_fill.size = Vector2(0, 32)
-	panel.add_child(g_fill)
-	_nodes["vs_ghost_fill"] = g_fill
-	_make_label(panel, "Ghost", 26, Vector2(20, 196), Vector2(60, 44))
-	var ghost_num_lbl: Label = _make_label(
-		panel, "0", 30, Vector2(478, 196), Vector2(60, 44), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
-	)
-	_nodes["vs_ghost_num"] = ghost_num_lbl
-
-	_nodes["vs_score"] = _make_label(
-		panel, "", 22, Vector2(20, 248), Vector2(520, 36), COLOR_TEXT, HORIZONTAL_ALIGNMENT_CENTER
-	)
-	# 幽灵人格台词：让对手"像个人"，输给谁记得住
-	_nodes["vs_quote"] = _make_label(
-		panel,
-		"",
-		19,
-		Vector2(30, 290),
-		Vector2(500, 52),
-		COLOR_TEXT.darkened(0.25),
-		HORIZONTAL_ALIGNMENT_CENTER
-	)
-
-	var btn := _make_btn(
-		panel, "Next Round", Vector2(180, 352), Vector2(200, 68), COLOR_BTN_ALT, 30
-	)
-	btn.pressed.connect(_on_vs_btn)
-	_nodes["vs_btn"] = btn
-
-	cover.visible = false
-	panel.visible = false
-
-
-func _refresh_vs_overlay() -> void:
-	var cover: ColorRect = _nodes["vs_cover"]
-	var panel: Panel = _nodes["vs_panel"]
-	if game.phase != FoundryGame.Phase.VS and game.phase != FoundryGame.Phase.GAME_OVER:
-		cover.visible = false
-		panel.visible = false
-		return
-	cover.visible = true
-	panel.visible = true
-
-	var result: String = str(_state["last_result"])
-	var is_final: bool = game.phase == FoundryGame.Phase.GAME_OVER
-
-	if is_final:
-		var ms: int = int(_state["my_score"])
-		var gs: int = int(_state["ghost_score"])
-		if ms > gs:
-			_set_text_color("vs_title", "VICTORY!", COLOR_GOLD)
-		elif ms < gs:
-			_set_text_color("vs_title", "DEFEAT", COLOR_POWER)
-		else:
-			_set_text_color("vs_title", "DRAW", COLOR_TEXT)
-		_set_text("vs_score", "Final  %d : %d" % [ms, gs])
-		_set_text("vs_quote", '"%s"  - %s' % [_state.get("ghost_quote", ""), _state["ghost_name"]])
-		(_nodes["vs_btn"] as Button).text = "Play Again"
-		# GAME_OVER 直接静态显示最终值
-		_set_vs_bars(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
-	else:
-		_set_text_color(
-			"vs_title",
-			"Win!" if result == "win" else ("Lose!" if result == "lose" else "DRAW"),
-			COLOR_GOLD if result == "win" else (COLOR_POWER if result == "lose" else COLOR_TEXT),
-		)
-		_set_text(
-			"vs_score",
-			(
-				"This Round  You %d  vs  Ghost %d"
-				% [_state["round_power"], _state["ghost_round_power"]]
-			)
-		)
-		_set_text("vs_quote", '"%s"  - %s' % [_state.get("ghost_quote", ""), _state["ghost_name"]])
-		(_nodes["vs_btn"] as Button).text = "Next Round"
-		if _vs_played_round != game.round:
-			_vs_played_round = game.round
-			_play_vs_anim(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
-		else:
-			_set_vs_bars(int(_state["round_power"]), int(_state["ghost_round_power"]), result)
-
-
-## 战力条对撞动画
-func _play_vs_anim(you: int, ghost: int, result: String) -> void:
-	if _vs_animating:
-		return
-	_vs_animating = true
-	_play_sfx("vs")
-	FoundryJuice.shake(self, 6.0, 0.5)
-	var you_fill: ColorRect = _nodes["vs_you_fill"]
-	var ghost_fill: ColorRect = _nodes["vs_ghost_fill"]
-	you_fill.size.x = 0
-	ghost_fill.size.x = 0
-	_set_text("vs_you_num", "0")
-	_set_text("vs_ghost_num", "0")
-	var max_v: int = maxi(maxi(you, ghost), 1)
-	var track_w: float = (_nodes["vs_you_track"] as ColorRect).size.x
-	var tw := create_tween().set_parallel(true)
-	tw.tween_property(you_fill, "size:x", track_w * float(you) / float(max_v), 0.6)
-	tw.tween_property(ghost_fill, "size:x", track_w * float(ghost) / float(max_v), 0.6)
-	tw.tween_method(_tween_you_num, 0.0, float(you), 0.6)
-	tw.tween_method(_tween_ghost_num, 0.0, float(ghost), 0.6)
-	tw.chain().tween_callback(func() -> void: _vs_animating = false)
-	if result == "win":
-		tw.tween_property(you_fill, "modulate", COLOR_GOLD, 0.1)
-		tw.tween_property(you_fill, "modulate", Color.WHITE, 0.25)
-		tw.tween_property(ghost_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
-		tw.tween_callback(_finish_vs.bind(true))
-	elif result == "lose":
-		tw.tween_property(ghost_fill, "modulate", COLOR_GOLD, 0.1)
-		tw.tween_property(ghost_fill, "modulate", Color.WHITE, 0.25)
-		tw.tween_property(you_fill, "modulate", Color(0.55, 0.55, 0.55), 0.3)
-		tw.tween_callback(_finish_vs.bind(false))
-
-
-## VS 动画落幕：胜负音 + 赢家撒花 / 输家重震
-func _finish_vs(won: bool) -> void:
-	_play_sfx("win" if won else "lose")
-	if won:
-		FoundryJuice.confetti(self, Vector2(360, 380))
-	else:
-		FoundryJuice.shake(self, 11.0, 0.45)
-
-
-func _tween_you_num(v: float) -> void:
-	_set_text("vs_you_num", str(int(round(v))))
-
-
-func _tween_ghost_num(v: float) -> void:
-	_set_text("vs_ghost_num", str(int(round(v))))
-
-
-func _set_vs_bars(you: int, ghost: int, result: String) -> void:
-	var max_v: int = maxi(maxi(you, ghost), 1)
-	var track_w: float = (_nodes["vs_you_track"] as ColorRect).size.x
-	(_nodes["vs_you_fill"] as ColorRect).size.x = track_w * float(you) / float(max_v)
-	(_nodes["vs_ghost_fill"] as ColorRect).size.x = track_w * float(ghost) / float(max_v)
-	_set_text("vs_you_num", str(you))
-	_set_text("vs_ghost_num", str(ghost))
-	if result == "win":
-		(_nodes["vs_you_fill"] as ColorRect).color = COLOR_GOLD
-	elif result == "lose":
-		(_nodes["vs_ghost_fill"] as ColorRect).color = COLOR_GOLD
-
-
-func _set_text_color(key: String, text: String, color: Color) -> void:
-	if _nodes.has(key):
-		var l: Label = _nodes[key]
-		l.text = text
-		l.add_theme_color_override("font_color", color)
-
-
 func _on_vs_btn() -> void:
 	if game.phase == FoundryGame.Phase.VS:
-		_vs_played_round = 0
 		if game.next_round():
 			_rebuild()
 	elif game.phase == FoundryGame.Phase.GAME_OVER:
-		_vs_played_round = 0
 		game = FoundryGame.new(0, {})
 		_rebuild()
