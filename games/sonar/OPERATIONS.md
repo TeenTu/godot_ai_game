@@ -62,14 +62,28 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 - **信息链纪律**：Truth 只进入声场与阵列采样（OperatorSonar.update）；
   对外输出仅操作员视角数据（瀑布行/分类/DEMON 估计），绝不暴露目标真值。
   Measurement 只由 玩家 Mark / 已分配 Tracker / Autocrew 产生。
-- **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（±55..125°，高增益高精度）/
-  TOWED（120..240°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
-- **TOWED 拖曳阵状态机（批次2+）**：切到 TOWED 且本艇配置 `own_ship.tow` 时，
-  阵具备真实物理生命周期：Deploy 布放（进度随时间到 100%）→ 阵航向对本艇转向
-  做一阶滞后收敛（不再恒等 own.course）；未部署/刚转向未沉降时 `usable` 受限，
-  有效增益被压低，全展并沉降后才给满增益。面板显示状态/部署%/阵航向/可用度，
-  可 Retract 回收。物理由 `scripts/towed_array.gd`（纯逻辑，可无头测）驱动，
-  经 `TruthEntity.advance` 每步推进；TOWED 覆盖用 `own.towed.array_heading_deg`。
+- **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（左右舷 ±55..125°，高增益高精度）/
+  TOWED（相对阵轴前视 ±100°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
+  多扇区阵列（FLANK）方向性增益取"所有覆盖扇区中最优一支"（S1-01 回归）。
+- **TOWED 可控长度拖曳阵（S1-03，批次2+ 重做）**：状态机
+  `STOWED ↔ STREAMING ↔ HOLD_PARTIAL ↔ RETRIEVING`——实际缆长 ACT 与命令缆长 CMD
+  分离，`stream/hold/retrieve` 任意长度可停可反向，缆长按固定收放速率（m/s）逼近命令；
+  面板提供 Stream/Hold/Retrieve 按钮 + 长度滑条（25/50/75/100% 预设），
+  状态行同时显示 ACT/CMD/阵航向/可用度。部分长度真实参与声学：有效孔径比例
+  `q_L=clamp((L−L_dead)/(L_full−L_dead),0,1)` 决定增益损失，回收第一帧起性能连续
+  下降（绝不瞬间静音），`L≤L_dead` 或 STOWED 时阵无声学孔径、严格无 TOWED 测量。
+  阵轴对本艇转向一阶滞后收敛，tau 随实际缆长插值并按本艇实际航速标定（慢速更飘、
+  快速拖直）；TOWED 观察站位 = 阵列声学中心 `p_array = p_own − d_center·[sin ψa, cos ψa]`。
+  物理由 `scripts/towed_array.gd`（纯逻辑，可无头测）驱动，经 `TruthEntity.advance`
+  每步注入实际航速推进；本艇未配置 `own_ship.tow` 时 TOWED 选项禁用
+  （`towed_available()=false`，无"跟艇+满可用"的虚构回退）。
+- **TOWED 左右舷镜像歧义（S1-03A/S1-06）**：单线阵对阵轴两侧等角响应，每次到达
+  生成共享 pair_id/SE/噪声样本的 A/B 候选峰（`θ_A=ψa+β`、`θ_B=ψa−β`，消歧前对玩家
+  等价、不标真假）。玩家点击镜像峰时 `create_mark_group` 产生一组两个 Measurement，
+  进同一 Track（不建第二个目标、不双倍计数）。TMA `solve_auto` 按 branch 过滤为
+  A/B 两套观测分别拟合，softmax 出分支权重；仅当可观测性合格（rank≥4 且 legs≥2）
+  且最佳权重≥0.9 才置 `mirror_resolved=true`，否则状态 `AMBIGUOUS_LR`（落选分支
+  保留在 alternatives 可回看）。直航观测无法消歧；机动后分支代价拉开才消歧。
 - **瀑布图**：Broadband（方位-时间，点击游标 Mark）、Narrowband/LOFAR
   （频率-时间 + DEMON 谐波标记联动）、DEMON 包络谱。
 - **概率分类**：观测（桨叶率/音线数/响度）与情报库模板 softmax → MERCHANT /
@@ -81,10 +95,16 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   宽带 41 次 Mark → 窄带识别 MERCHANT → DEMON 测速 12.0±3.6kn(真值12) →
   本艇 +70° 机动两腿 TMA CONVERGED → 提交 System Solution → 全部断言 PASS。
   运行：`godot --headless --path games/sonar --script res://tools/operator_test.gd`
-- TOWED 拖曳阵状态机无头验收：`tools/towed_test.gd` —— 部署生命周期 / 转向航向
-  一阶滞后收敛 / 可用度门限 / own.advance 集成 / OperatorSonar TOWED 用滞后阵航向，
-  全部确定性 PASS。运行：
+- TOWED 可控长度拖曳阵无头验收（S1-03/S1-03A/S1-06）：`tools/towed_test.gd` ——
+  T1 STOWED 初态 / T2 STREAM·HOLD·RETRIEVE 任意长度可停可反向 / T3 孔径 q_L 连续
+  （回收不瞬间静音）/ T4 阵轴滞后 tau 随缆长+实际航速标定 / T5 阵心观察站位 /
+  T6 无硬件禁用（usable=0、无峰）+ own.advance 集成 / T7 镜像对共享 pair_id·SE·
+  噪声且 θ_A+θ_B=2ψa / T8 Tracker 镜像候选不重复计数 / T9 TMA 直航不消歧·机动
+  后分支消歧（胜者逼近真值），全部确定性 PASS。运行：
   `godot --headless --path games/sonar --script res://tools/towed_test.gd`
+- 0.2 六条回归（S1-01）无头验收：`tools/fix_batch1b_test.gd` R1 多扇区增益 maxf /
+  R2 TRUE 瀑布源列恒 -180..180 / R3 历史行 Mark 携带该行时间·艏向·站位 /
+  R4 create_mark 峰匹配 canonical frame（TRUE 输入先转显示 frame 再比峰）。
 - 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
   （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 

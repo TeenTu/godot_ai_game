@@ -9,11 +9,13 @@ extends VBoxContainer
 ## 数据流：main_ui 调 set_operator(op) 并在 op 有新行时调 refresh()；
 ## 玩家点击 BB 瀑布 → mark_requested(bearing_deg) 信号 → main_ui 建 Mark。
 
-signal mark_requested(bearing_deg: float, as_true: bool)
+signal mark_requested(bearing_deg: float, as_true: bool, row: Dictionary)
 signal array_changed(array_id: String)
 signal autocrew_toggled(on: bool)
 signal towed_deploy_requested
 signal towed_retract_requested
+signal towed_hold_requested
+signal towed_length_commanded(frac: float)  # 0..1 × max_tow_length_m（S1-03）
 
 const MAX_ROWS_SHOWN: int = 80
 
@@ -25,10 +27,13 @@ var _lbl_bb_mode: Label = null  # 标注当前 BB 瀑布显示基准（RELATIVE 
 var _autocrew: CheckBox = null
 var _lbl_class: Label = null
 var _lbl_demon: Label = null
-var _tow_ctl: HBoxContainer = null  # TOWED 部署/回收按钮行
+var _arr_opt: OptionButton = null  # 阵列选择（无拖曳硬件时禁用 TOWED 项，S1-03）
+var _tow_ctl: VBoxContainer = null  # TOWED 长度命令区（S1-03）
 var _btn_tow_deploy: Button = null
 var _btn_tow_retract: Button = null
-var _lbl_tow: Label = null  # TOWED 状态/阵航向/部署进度显示
+var _btn_tow_hold: Button = null
+var _len_slider: HSlider = null
+var _lbl_tow: Label = null  # TOWED 状态/阵航向/长度显示
 var _last_row_count: int = -1
 
 
@@ -42,6 +47,7 @@ func _init() -> void:
 	for aid in OperatorSonar.ARRAY_DEFS:
 		arr_opt.add_item(aid)
 	arr_opt.item_selected.connect(func(i: int): array_changed.emit(arr_opt.get_item_text(i)))
+	_arr_opt = arr_opt
 	row.add_child(arr_opt)
 	_autocrew = CheckBox.new()
 	_autocrew.text = "Autocrew (off)"
@@ -55,23 +61,56 @@ func _init() -> void:
 	row.add_child(_autocrew)
 	add_child(row)
 
-	# TOWED 拖曳阵（批次2+）：部署/回收按钮 + 状态/阵航向显示。仅 TOWED 相关。
-	_tow_ctl = HBoxContainer.new()
-	_tow_ctl.add_theme_constant_override("separation", 4)
+	# TOWED 拖曳阵（S1-03 可控长度）：STREAM/HOLD/RETRIEVE + 长度滑条 + 预设。
+	# 选择 TOWED 显示不再自动触发布放；按钮不可用时显示原因。
+	_tow_ctl = VBoxContainer.new()
+	_tow_ctl.add_theme_constant_override("separation", 2)
 	add_child(_tow_ctl)
+	var tow_btns := HBoxContainer.new()
+	tow_btns.add_theme_constant_override("separation", 4)
+	_tow_ctl.add_child(tow_btns)
 	_btn_tow_deploy = Button.new()
-	_btn_tow_deploy.text = "Deploy"
+	_btn_tow_deploy.text = "Stream"
 	_btn_tow_deploy.pressed.connect(func(): towed_deploy_requested.emit())
-	_tow_ctl.add_child(_btn_tow_deploy)
+	tow_btns.add_child(_btn_tow_deploy)
+	_btn_tow_hold = Button.new()
+	_btn_tow_hold.text = "Hold"
+	_btn_tow_hold.pressed.connect(func(): towed_hold_requested.emit())
+	tow_btns.add_child(_btn_tow_hold)
 	_btn_tow_retract = Button.new()
-	_btn_tow_retract.text = "Retract"
+	_btn_tow_retract.text = "Retrieve"
 	_btn_tow_retract.pressed.connect(func(): towed_retract_requested.emit())
-	_tow_ctl.add_child(_btn_tow_retract)
+	tow_btns.add_child(_btn_tow_retract)
+	_len_slider = HSlider.new()
+	_len_slider.min_value = 0.0
+	_len_slider.max_value = 1.0
+	_len_slider.step = 0.05
+	_len_slider.custom_minimum_size = Vector2(0, 16)
+	# 拖动只预览，松开才提交命令（S1-08：提交前可见，不瞬发）
+	_len_slider.drag_ended.connect(
+		func(changed: bool):
+			if changed:
+				towed_length_commanded.emit(_len_slider.value)
+	)
+	_tow_ctl.add_child(_len_slider)
+	var preset_row := HBoxContainer.new()
+	preset_row.add_theme_constant_override("separation", 4)
+	_tow_ctl.add_child(preset_row)
+	for frac in [0.25, 0.5, 0.75, 1.0]:
+		var pb := Button.new()
+		pb.text = "%d%%" % int(frac * 100.0)
+		pb.add_theme_font_size_override("font_size", 11)
+		pb.pressed.connect(
+			func():
+				_len_slider.set_value_no_signal(frac)
+				towed_length_commanded.emit(frac)
+		)
+		preset_row.add_child(pb)
 	_lbl_tow = Label.new()
-	_lbl_tow.text = "Towed: RETRACTED"
+	_lbl_tow.text = "Towed: STOWED"
 	_lbl_tow.add_theme_font_size_override("font_size", 12)
 	_lbl_tow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	add_child(_lbl_tow)
+	_tow_ctl.add_child(_lbl_tow)
 
 	# BB 瀑布显示基准切换：RELATIVE(默认,艇艏=0°) / TRUE STABILIZED(真北稳定)
 	var bb_mode_row := HBoxContainer.new()
@@ -99,7 +138,8 @@ func _init() -> void:
 	wf_bb.x_max = 180.0
 	wf_bb.custom_minimum_size = Vector2(0, 100)
 	wf_bb.mark_requested.connect(
-		func(x: float, _t: float): mark_requested.emit(x, wf_bb.bearing_mode == "true")
+		func(x: float, _t: float, row: Dictionary):
+			mark_requested.emit(x, wf_bb.bearing_mode == "true", row)
 	)
 	add_child(wf_bb)
 
@@ -132,14 +172,45 @@ func _mk_label(txt: String) -> Label:
 	return l
 
 
-## 主 UI 设置 TOWED 状态显示文本（含可用度/部署进度/阵航向）。
-## active=true 表示当前选中 TOWED 阵列，显示部署/回收控件；否则隐藏。
+## 设置拖曳硬件可用性（S1-03）：未安装硬件时禁用 TOWED 选项，不得提供
+## "跟艇+满可用"的虚构回退。
+func set_towed_available(avail: bool) -> void:
+	if _arr_opt == null:
+		return
+	for i in range(_arr_opt.item_count):
+		if _arr_opt.get_item_text(i) == "TOWED":
+			_arr_opt.set_item_disabled(i, not avail)
+	if not avail and _lbl_tow != null:
+		_lbl_tow.text = "Towed: not installed"
+
+
+## 主 UI 设置 TOWED 状态显示文本（含 ACT→CMD 长度/阵航向/可用度）。
+## active=true 表示当前选中 TOWED 阵列，显示长度命令区；否则隐藏。
 func set_towed_status(text: String, active: bool) -> void:
 	if _lbl_tow == null:
 		return
 	_lbl_tow.text = text
 	if _tow_ctl != null:
 		_tow_ctl.visible = active
+
+
+## 按拖曳阵状态启用/禁用命令按钮并标注原因（S1-03/S1-08）。
+func update_towed_controls(t: TowedArray) -> void:
+	if _btn_tow_deploy == null or t == null:
+		return
+	_btn_tow_deploy.disabled = t.actual_tow_length_m >= t.max_tow_length_m - 1e-6
+	_btn_tow_deploy.tooltip_text = (
+		"" if not _btn_tow_deploy.disabled else "Already at full length"
+	)
+	_btn_tow_retract.disabled = t.actual_tow_length_m <= 1e-6
+	_btn_tow_retract.tooltip_text = ("" if not _btn_tow_retract.disabled else "Already stowed")
+	_btn_tow_hold.disabled = (
+		t.state == TowedArray.State.HOLD_PARTIAL or t.state == TowedArray.State.STOWED
+	)
+	_btn_tow_hold.tooltip_text = ("" if not _btn_tow_hold.disabled else "Already holding")
+	if _len_slider != null and not _len_slider.has_focus():
+		if t.max_tow_length_m > 0.0:
+			_len_slider.set_value_no_signal(t.commanded_tow_length_m / t.max_tow_length_m)
 
 
 ## Operator 有新瀑布行时调用（只在行数变化时重建 UI 数据）。

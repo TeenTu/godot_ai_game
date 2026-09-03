@@ -102,6 +102,9 @@ func _ready() -> void:
 	world.auto_measurements = false
 	op = OperatorSonar.new()
 	op.setup(world.world)
+	# S1-01：本艇无拖曳阵硬件时禁用 TOWED 选项（不提供虚构回退）
+	if _op_panel != null:
+		_op_panel.set_towed_available(op.towed_available())
 
 	trial = TrialSolution.new()
 	system_sol = null
@@ -203,15 +206,15 @@ func _build_panel() -> void:
 		func(aid: String):
 			op.set_array(aid)
 			_update_status("Array -> " + aid)
-			# 切到 TOWED 且本艇配有拖曳阵且未部署时，自动开始布放（顺畅上手）
-			if aid == "TOWED":
-				_auto_deploy_towed_if_needed()
+			# S1-03：不再自动布放——拖曳阵缆长完全由操作员命令控制
 	)
 	_op_panel.autocrew_toggled.connect(
 		func(on: bool): _update_status("Autocrew " + ("ON" if on else "OFF"))
 	)
 	_op_panel.towed_deploy_requested.connect(_on_towed_deploy)
 	_op_panel.towed_retract_requested.connect(_on_towed_retract)
+	_op_panel.towed_hold_requested.connect(_on_towed_hold)
+	_op_panel.towed_length_commanded.connect(_on_towed_length_commanded)
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
 
@@ -974,13 +977,18 @@ func dot_stack_compute(r: Dictionary, sel: Track) -> void:
 
 
 func _meas_to_dict(m: Measurement) -> Dictionary:
-	return {
+	var d: Dictionary = {
 		"time": m.timestamp,
 		"observer_e": m.observer_east_m,
 		"observer_n": m.observer_north_m,
 		"bearing": m.measured_bearing_deg,
 		"sigma": m.bearing_sigma_deg,
 	}
+	# S1-03A/S1-06：歧义支路标识透传给 TMA 分支消歧
+	if m.ambiguous_pair_id != "":
+		d["ambiguous_pair_id"] = m.ambiguous_pair_id
+		d["ambiguity_branch"] = m.ambiguity_branch
+	return d
 
 
 func _on_enter_solution() -> void:
@@ -1053,35 +1061,44 @@ func _towed_ref() -> TowedArray:
 	return world.world.get("own", null).get("towed")
 
 
-## 切到 TOWED 时若本艇配有拖曳阵且处于 RETRACTED，自动开始布放。
-func _auto_deploy_towed_if_needed() -> void:
-	var t: TowedArray = _towed_ref()
-	if t != null and t.state == TowedArray.State.RETRACTED:
-		t.deploy()
-		_update_status("Towed array deploying...")
-
-
+## S1-03：STREAM——放缆（缺省放到全长，可指定目标长度）。
 func _on_towed_deploy() -> void:
 	var t: TowedArray = _towed_ref()
 	if t == null:
 		return
-	if t.deploy():
-		_update_status("Towed array deploying...")
-	else:
-		_update_status("Towed array cannot deploy from %s" % t.state_name())
+	t.stream()
+	_update_status("Towed array streaming to %.0f m..." % t.commanded_tow_length_m)
 
 
+## S1-03：RETRIEVE——收缆（回到 STOWED）。
 func _on_towed_retract() -> void:
 	var t: TowedArray = _towed_ref()
 	if t == null:
 		return
-	if t.retract():
-		_update_status("Retracting towed array...")
-	else:
-		_update_status("Towed array cannot retract from %s" % t.state_name())
+	t.retrieve()
+	_update_status("Retrieving towed array...")
 
 
-## 刷新操作员面板的 TOWED 状态行。仅在选中 TOWED 且本艇有拖曳阵时显示控件。
+## S1-03：HOLD——冻结缆长命令，保持当前实际缆长。
+func _on_towed_hold() -> void:
+	var t: TowedArray = _towed_ref()
+	if t == null:
+		return
+	t.hold()
+	_update_status("Towed length HOLD at %.0f m" % t.actual_tow_length_m)
+
+
+## S1-03：缆长命令（frac ∈ 0..1 × max_tow_length_m，来自滑条/预设按钮）。
+func _on_towed_length_commanded(frac: float) -> void:
+	var t: TowedArray = _towed_ref()
+	if t == null:
+		return
+	t.set_length_command(frac * t.max_tow_length_m)
+	_update_status("Towed length cmd -> %.0f m" % t.commanded_tow_length_m)
+
+
+## 刷新操作员面板的 TOWED 状态行 + 控件可用性（S1-03）。
+## 状态行同时显示 ACT（实际缆长）与 CMD（命令缆长）——二者分离是 S1-03 核心。
 func _refresh_towed_status() -> void:
 	if _op_panel == null:
 		return
@@ -1090,14 +1107,18 @@ func _refresh_towed_status() -> void:
 	if t == null or not on_towed:
 		_op_panel.set_towed_status("Towed: n/a", false)
 		return
-	var pct: int = int(t.deployment_progress * 100.0)
-	var use: int = int(t.usable_fraction() * 100.0)
-	var state_txt: String = t.state_name()
-	# 部署/回收过程显示进度
-	if state_txt in ["DEPLOYING", "RETRIEVING"]:
-		state_txt = "%s %d%%" % [state_txt, pct]
-	var line: String = "Towed: %s | arr %.0f° | usable %d%%" % [state_txt, t.array_heading_deg, use]
+	var line: String = (
+		"Towed: %s | ACT %.0fm / CMD %.0fm | arr %.0f° | usable %d%%"
+		% [
+			t.state_name(),
+			t.actual_tow_length_m,
+			t.commanded_tow_length_m,
+			t.array_heading_deg,
+			int(t.usable_fraction() * 100.0),
+		]
+	)
 	_op_panel.set_towed_status(line, true)
+	_op_panel.update_towed_controls(t)
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
@@ -1105,9 +1126,12 @@ func _refresh_towed_status() -> void:
 ##   as_true=false（RELATIVE 瀑布）：x 为艇艏相对方位(-180..180，艇艏=0)，
 ##     create_mark 内部反算真方位。
 ##   as_true=true（TRUE STABILIZED 瀑布）：x 为真北方位(0..360)，直接加噪声。
-func _on_op_mark(x_value: float, as_true: bool = false) -> void:
+func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
-	var m: Measurement = op.create_mark(brg, world.sim_time, "", as_true)
+	# S1-01/S1-03：携带被点瀑布行的上下文（时间/站位/阵轴/峰表取自历史行）
+	# S1-03A：组版本——镜像峰自动生成 A/B 两个共享证据的候选测量
+	var group: Array = op.create_mark_group(brg, world.sim_time, "", as_true, row)
+	var m: Measurement = group[0] as Measurement
 	world.measurements.append(m)
 	var t: Track = null
 	if selected_track_id != "":
@@ -1117,7 +1141,13 @@ func _on_op_mark(x_value: float, as_true: bool = false) -> void:
 				break
 	if t == null:
 		t = tracker.mark(m, "M")
+	# 镜像候选进同一 Track（共享 pair_id/证据，不得当独立目标或双倍计数）
+	if group.size() > 1:
+		var sib: Measurement = group[1] as Measurement
+		world.measurements.append(sib)
+		t.add_measurement(sib)
 	selected_track_id = t.track_id
 	_dirty = true
 	_last_meas_count = world.measurements.size()
-	_update_status("Marked %.1f deg -> %s" % [brg, t.track_id])
+	var amb_txt: String = " (LR mirror pair)" if group.size() > 1 else ""
+	_update_status("Marked %.1f deg -> %s%s" % [brg, t.track_id, amb_txt])
