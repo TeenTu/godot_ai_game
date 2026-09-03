@@ -37,7 +37,14 @@ var ping_freq_max_hz: float = 4000.0
 var ping_array_gain_db: float = 24.0
 var ping_sound_speed_m_s: float = AcousticService.SOUND_SPEED_M_S
 var ping_listen_window_s: float = 15.0  # 监听窗口：发射后等待回波的最长秒数
+var ping_pulse_duration_s: float = 0.25  # 脉冲时长（ActiveEmissionEvent/暴露刻画，REQ-05）
 var ping_hardware: bool = false  # 场景显式配置主动阵才为 true
+# ---- S1-04C-REQ-05 主动暴露事件 ----
+# 每次显式发射记录一条 ActiveEmissionEvent（本艇发射事实，非目标 Truth）：
+#   {emitter_internal_ref, emit_time, source_position_internal:{e,n},
+#    center_frequency_hz, bandwidth_hz, source_level_db, pulse_duration_s}
+# 阶段一只记录事件供敌方被动截获判定/审计使用（完整敌方行为 S2-05 接入）。
+var active_emissions: Array = []
 
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
 var _paused: bool = false
@@ -79,9 +86,11 @@ func load_scenario(scenario: Dictionary) -> void:
 	ping_array_gain_db = float(as_cfg.get("array_gain_db", ping_array_gain_db))
 	ping_sound_speed_m_s = float(as_cfg.get("sound_speed_m_s", ping_sound_speed_m_s))
 	ping_listen_window_s = maxf(float(as_cfg.get("listen_window_s", ping_listen_window_s)), 0.5)
+	ping_pulse_duration_s = maxf(float(as_cfg.get("pulse_duration_s", ping_pulse_duration_s)), 0.05)
 	_ping_session = {}
 	_ping_results.clear()
 	_next_ping_id = 1
+	active_emissions.clear()
 
 
 ## 推进内部仿真时间 dt（秒）。dt 已由上层按 time_scale 折算。
@@ -205,6 +214,14 @@ func ping_session_id() -> int:
 	return int(_ping_session.get("ping_id", -1))
 
 
+## 本艇最近一次发射时刻（无在途返回 -1）。本艇事实，供 UI 显示
+## TRANSMITTING→LISTENING 相位（S1-04C-REQ-01 徽标，非目标 Truth）。
+func ping_emit_time() -> float:
+	if _ping_session.is_empty():
+		return -1.0
+	return float(_ping_session.get("emit_t", -1.0))
+
+
 ## 当前是否可发起 Ping：有硬件 + 无在途 PingSession（单在途，REQ-16/17）。
 func can_ping() -> bool:
 	return ping_hardware and _ping_session.is_empty()
@@ -217,9 +234,29 @@ func ping_cooldown_remaining() -> float:
 	return maxf(float(_ping_session.get("cooldown_until", sim_time)) - sim_time, 0.0)
 
 
-## 玩家发起一次主动脉冲（S1-04B）。发射瞬间按各目标当前几何距离登记在途
-## 回波（R=c·τ/2 静态基准），会话进入 LISTENING；每个回波在各自
+## 主动脉冲中心频率（Hz，参数展示用，S1-04C-REQ-01 卡片）。
+func ping_center_freq_hz() -> float:
+	return 0.5 * (ping_freq_min_hz + ping_freq_max_hz)
+
+
+## 主动脉冲带宽（Hz）。
+func _ping_bandwidth_hz() -> float:
+	return maxf(ping_freq_max_hz - ping_freq_min_hz, 1.0)
+
+
+## 配置监听窗对应的最大可测距（m）：R_max = c·T_listen/2（REQ-04）。
+## 监听窗固定来自本艇配置，绝不随场景目标/Truth 距离变化。
+func ping_max_range_m() -> float:
+	return 0.5 * ping_sound_speed_m_s * ping_listen_window_s
+
+
+## 玩家发起一次主动脉冲（S1-04B/S1-04C）。发射瞬间按各目标当前几何距离登记
+## 在途回波（R=c·τ/2 静态基准），会话进入 LISTENING；每个回波在各自
 ## arrive_t = emit + 2R/c 结算（检测 + 测距 + 进测量流）。
+## REQ-04（固定监听窗）：listen_end_t = emit_t + configured_listen_window_s，
+## 绝不用最远 Truth 目标的 τ 延长监听窗；arrive_t 超出窗口的回波在窗口
+## 到期时丢弃（不可接收），不延长状态机。
+## REQ-05：发射成功即记录一条 ActiveEmissionEvent（本艇发射事实）。
 ## 无硬件 / 在途未清 / 冷却中返回 false（不发脉冲、不推进冷却）。
 func issue_ping() -> bool:
 	if not can_ping():
@@ -227,13 +264,11 @@ func issue_ping() -> bool:
 	var own: TruthEntity = world["own"]
 	var sensor: SensorArray = _ping_sensor()
 	var echoes: Array = []
-	var farthest_tau: float = 0.0
 	for t in world["targets"]:
 		var rng_m: float = NavUtils.distance(
 			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
 		)
 		var tau_s: float = AcousticService.echo_travel_time_s(rng_m, ping_sound_speed_m_s)
-		farthest_tau = maxf(farthest_tau, tau_s)
 		(
 			echoes
 			. append(
@@ -243,6 +278,7 @@ func issue_ping() -> bool:
 					"range_ref_m": rng_m,  # 发射时刻登记距离（测距同源基准）
 					"range_ref_time_s": sim_time,
 					"settled": false,
+					"dropped": false,  # 超出监听窗被丢弃（REQ-04，不可接收）
 					"detected": false,
 					"se_db": 0.0,
 					"pd": 0.0,
@@ -252,19 +288,38 @@ func issue_ping() -> bool:
 				}
 			)
 		)
+	var listen_end: float = sim_time + ping_listen_window_s
 	_ping_session = {
 		"state": "LISTENING",
 		"ping_id": _next_ping_id,
 		"emit_t": sim_time,
-		# 监听窗口至少覆盖已登记最远回波（单在途：等它们回来或窗口超时，
-		# 窗口内绝不提前清空，REQ-16/17）
-		"listen_end_t": sim_time + maxf(ping_listen_window_s, farthest_tau + 0.1),
+		# REQ-04 固定监听窗：只由本艇配置决定，不读任何目标 Truth。
+		"listen_end_t": listen_end,
 		"cooldown_until": sim_time + ping_cooldown_s,
 		"echoes": echoes,
 		"returned_count": 0,
 		"sensor": sensor,
 	}
 	_next_ping_id += 1
+	# REQ-05：发射成功记录 ActiveEmissionEvent（本艇发射事实）。
+	(
+		active_emissions
+		. append(
+			{
+				"emitter_internal_ref": "own",
+				"emit_time": sim_time,
+				"source_position_internal":
+				{
+					"e": own.position_east_m,
+					"n": own.position_north_m,
+				},
+				"center_frequency_hz": ping_center_freq_hz(),
+				"bandwidth_hz": _ping_bandwidth_hz(),
+				"source_level_db": ping_sl_db,
+				"pulse_duration_s": ping_pulse_duration_s,
+			}
+		)
+	)
 	return true
 
 
@@ -316,6 +371,9 @@ func _advance_ping_session() -> void:
 	var st: String = str(_ping_session["state"])
 	if st == "LISTENING":
 		if _ping_listen_done():
+			# 监听窗结束：丢弃仍未到达/超出窗口的回波（REQ-04，不可接收），
+			# 再按已返回 detected 数判 RETURN/NO_RETURN。窗口不因远目标延长。
+			_drop_unsettled_echoes()
 			_ping_session["state"] = (
 				"RETURN" if int(_ping_session["returned_count"]) > 0 else "NO_RETURN"
 			)
@@ -325,15 +383,32 @@ func _advance_ping_session() -> void:
 			_ping_session = {}
 
 
+## 监听是否结束（REQ-04 固定监听窗）：
+##   - 窗口（configured_listen_window_s）到期即结束——与登记了多少/多远回波
+##     无关，绝不因最远 Truth 目标 τ 拉长 LISTENING；
+##   - 窗口内若全部登记回波已提前结算（无超窗残留）也可提前结束。
 func _ping_listen_done() -> bool:
 	var echoes: Array = _ping_session["echoes"]
+	if sim_time >= float(_ping_session["listen_end_t"]) - 1e-9:
+		return true
 	if echoes.is_empty():
-		# 无登记回波（无声学目标）：诚实监听整个窗口再判 NO_RETURN
-		return sim_time >= float(_ping_session["listen_end_t"]) - 1e-9
+		return false
 	for e in echoes:
 		if not bool(e["settled"]):
 			return false
 	return true
+
+
+## 监听窗到期：把仍未结算（未到达/超窗）的回波标记为 dropped（不可接收）。
+## 它们不得再被结算（settled=true 拦截），也不进入 returned_count/测量流。
+func _drop_unsettled_echoes() -> void:
+	var echoes: Array = _ping_session["echoes"]
+	for e in echoes:
+		if bool(e["settled"]):
+			continue
+		e["settled"] = true
+		e["dropped"] = true
+		e["detected"] = false
 
 
 ## 结算已到点（sim_time >= arrive_t）的登记回波。测距以发射时刻登记的
@@ -351,6 +426,9 @@ func _settle_due_echoes() -> void:
 	var ping_id: int = int(_ping_session["ping_id"])
 	for e in echoes:
 		if bool(e["settled"]):
+			continue
+		# REQ-04：超出固定监听窗的回波不可接收——即使 tick 恰好越过窗口也不结算。
+		if float(e["arrive_t"]) > float(_ping_session["listen_end_t"]) + 1e-9:
 			continue
 		if sim_time < float(e["arrive_t"]) - 1e-9:
 			continue

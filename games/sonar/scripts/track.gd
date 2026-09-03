@@ -69,6 +69,22 @@ func latest_measurement() -> Measurement:
 	return measurement_history[measurement_history.size() - 1]
 
 
+## 移除一条测量（S1-04C 撤销自动关联/改绑）。维护时间排序与更新时间。
+## 找不到时返回 false；移除后空历史保留（由调用方决定是否弃用 Track）。
+func remove_measurement(m: Measurement) -> bool:
+	var idx: int = measurement_history.find(m)
+	if idx < 0:
+		return false
+	measurement_history.remove_at(idx)
+	# 重算 last_update_time（可能已非 ACTIVE 语义由调用方处理）
+	if measurement_history.is_empty():
+		last_update_time = -1.0
+	else:
+		var last: Measurement = measurement_history[measurement_history.size() - 1]
+		last_update_time = last.timestamp
+	return true
+
+
 ## 最早一次测量（Mark 点）。
 func first_measurement() -> Measurement:
 	if measurement_history.is_empty():

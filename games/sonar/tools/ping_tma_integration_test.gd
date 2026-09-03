@@ -49,6 +49,8 @@ func _initialize() -> void:
 	_r11_tracker_range_gate(fails)
 	_r19_roundtrip_same_source(fails)
 	_r03_truth_isolation(fails)
+	_r20_fixed_listen_window(fails)
+	_r22_emission_event(fails)
 	_e2e_controller_to_fit(fails)
 	if fails.is_empty():
 		print("PING_TMA_INTEGRATION result=PASS")
@@ -345,7 +347,14 @@ func _r11_tracker_range_gate(fails: Array) -> void:
 # =====================================================================
 
 
-func _mk_scenario(target_speed_kn: float = 0.0, ts_db: float = 25.0) -> Dictionary:
+func _mk_scenario(
+	target_speed_kn: float = 0.0,
+	ts_db: float = 25.0,
+	target_range_m: float = 8000.0,
+	cooldown_s: float = 15.0
+) -> Dictionary:
+	# 45° 斜距 → 每轴偏移；默认 8000m ↔ 5656.85m（历史用例几何不变）
+	var off: float = 0.5 * sqrt(2.0) * target_range_m
 	return {
 		"name": "ping_tma_int",
 		"seed": 20260903,
@@ -368,7 +377,7 @@ func _mk_scenario(target_speed_kn: float = 0.0, ts_db: float = 25.0) -> Dictiona
 			"active_sonar":
 			{
 				"ping_sl_db": 210.0,
-				"cooldown_s": 15.0,
+				"cooldown_s": cooldown_s,
 				"freq_min_hz": 2000.0,
 				"freq_max_hz": 4000.0,
 				"array_gain_db": 24.0,
@@ -384,8 +393,8 @@ func _mk_scenario(target_speed_kn: float = 0.0, ts_db: float = 25.0) -> Dictiona
 				"class_id": "frigate",
 				"side": "red",
 				"platform_type": "surface",
-				"position_east_m": 5656.85,
-				"position_north_m": 5656.85,
+				"position_east_m": off,
+				"position_north_m": off,
 				"depth_m": 0.0,
 				"course_deg": 90.0,
 				"speed_kn": target_speed_kn,
@@ -471,6 +480,75 @@ func _r03_truth_isolation(fails: Array) -> void:
 	)
 	var d: Dictionary = found.to_dict()
 	_assert_true(fails, "R03 to_dict() has no target_id", not d.has("target_id"))
+
+
+# =====================================================================
+#  R20 / R22（S1-04C）：固定监听窗 + ActiveEmissionEvent
+# =====================================================================
+
+
+## R20（S1-04C-REQ-04）固定监听窗：监听窗只由本艇配置决定，绝不因最远
+## 目标 τ 拉长；arrive_t 超出窗口的回波在窗口到期即被丢弃（不可接收），
+## 不进结算结果、不进 returned_count，也不让状态机继续 LISTENING 干等。
+func _r20_fixed_listen_window(fails: Array) -> void:
+	# 目标 20km（τ=2R/c≈26.7s）远超配置监听窗 15s（最大可测距 11.25km）；
+	# 冷却 40s > 窗口 15s，保证窗口到期后 NO_RETURN 停留可观测（不被冷却清空）。
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0, 25.0, 20000.0, 40.0))
+	_assert_true(fails, "R20 ping ok", w.issue_ping())
+	# 窗口内（t=5s）仍在监听：远目标不得让窗口立即判死
+	w.run_steps(10)  # t=5.0
+	_assert_eq(fails, "R20 still LISTENING inside window", w.ping_state_name(), "LISTENING")
+	_assert_eq(fails, "R20 1 echo pending inside window", str(w.pending_echo_count()), "1")
+	# 窗口到期（t=15.0）：远回波（26.7s 才到）被丢弃 → NO_RETURN。
+	# 旧缺陷会把 listen_end 拉到 max(窗, 最远τ+0.1)≈26.8s → 此刻仍 LISTENING。
+	w.run_steps(22)  # t=16.0
+	_assert_eq(fails, "R20 window expiry -> NO_RETURN", w.ping_state_name(), "NO_RETURN")
+	_assert_eq(fails, "R20 no echo pending after drop", str(w.pending_echo_count()), "0")
+	# 越过远回波原定到达时刻（t=30s）：超窗回波不得补结算/产出任何结果摘要
+	w.run_steps(28)  # t=30.0
+	var results: Array = w.take_arrived_echoes()
+	_assert_eq(fails, "R20 over-window echo never settles", str(results.size()), "0")
+	_assert_eq(fails, "R20 stays NO_RETURN past far arrival", w.ping_state_name(), "NO_RETURN")
+
+
+## R22（S1-04C-REQ-05）ActiveEmissionEvent：每次成功发射记录一条本艇
+## 发射事实事件（时刻/位置/中心频率/带宽/声源级/脉冲时长）；被拒的发射
+## （无硬件/在途/冷却）绝不产生事件。
+func _r22_emission_event(fails: Array) -> void:
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0))
+	_assert_eq(fails, "R22 no emission before ping", str(w.active_emissions.size()), "0")
+	_assert_true(fails, "R22 ping ok", w.issue_ping())
+	_assert_eq(fails, "R22 one emission after ping", str(w.active_emissions.size()), "1")
+	var ev: Dictionary = w.active_emissions[0]
+	_assert_eq(
+		fails, "R22 emitter_internal_ref own", str(ev.get("emitter_internal_ref", "")), "own"
+	)
+	_assert_close(fails, "R22 emit_time at launch", float(ev.get("emit_time", -1.0)), 0.0, 1e-6)
+	var pos: Dictionary = ev.get("source_position_internal", {})
+	_assert_close(fails, "R22 source east 0", float(pos.get("e", 1e9)), 0.0, 1e-6)
+	_assert_close(fails, "R22 source north 0", float(pos.get("n", 1e9)), 0.0, 1e-6)
+	# 场景 2–4kHz → 中心 3kHz / 带宽 2kHz；SL 210dB；缺省脉冲 0.25s
+	_assert_close(
+		fails, "R22 center_frequency_hz", float(ev.get("center_frequency_hz", -1.0)), 3000.0, 1.0
+	)
+	_assert_close(fails, "R22 bandwidth_hz", float(ev.get("bandwidth_hz", -1.0)), 2000.0, 1.0)
+	_assert_close(fails, "R22 source_level_db", float(ev.get("source_level_db", -1.0)), 210.0, 0.01)
+	_assert_close(
+		fails, "R22 pulse_duration_s", float(ev.get("pulse_duration_s", -1.0)), 0.25, 0.001
+	)
+	# 在途二次发射被拒 → 不新增事件
+	_assert_true(fails, "R22 in-flight ping rejected", not w.issue_ping())
+	_assert_eq(fails, "R22 no event for rejected ping", str(w.active_emissions.size()), "1")
+	# 冷却回 READY 后再发 → 第二条事件，emit_time 前进到当前 sim_time
+	w.run_steps(32)  # t=16.0，冷却 15s 已过 → READY
+	_assert_eq(fails, "R22 READY after cooldown", w.ping_state_name(), "READY")
+	_assert_true(fails, "R22 second ping ok", w.issue_ping())
+	_assert_eq(fails, "R22 two emissions", str(w.active_emissions.size()), "2")
+	_assert_close(
+		fails, "R22 second emit_time", float(w.active_emissions[1]["emit_time"]), 16.0, 1e-6
+	)
 
 
 # =====================================================================
