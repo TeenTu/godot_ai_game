@@ -26,7 +26,10 @@ extends VBoxContainer
 
 signal ping_requested  # 玩家按 [PING]
 signal return_selected(return_index: int)  # 点击 Latest Returns 某行
-signal undo_requested  # 撤销最近一次自动关联（改绑入口）
+signal undo_requested  # 撤销最近一次自动关联（改绑/Reject 入口）
+signal fit_mode_requested(mode: String)  # S1-04C-REQ-02：切换 TMA 拟合模式
+signal take_control_requested  # S1-04C-REQ-02：切 MANUAL 并保留证据
+signal apply_requested  # S1-04C-REQ-02：ASSISTED 下把 range 应用到 Trial
 
 const COL_STATE := {
 	"UNAVAILABLE": Color(0.45, 0.45, 0.48),
@@ -39,6 +42,7 @@ const COL_STATE := {
 }
 const COL_EXPOSURE := Color(1.0, 0.5, 0.3)
 const MAX_RETURNS: int = 8
+const FIT_MODES: Array = ["AUTO", "ASSISTED", "MANUAL"]
 
 var _badge: Label = null
 var _btn_ping: Button = null
@@ -52,6 +56,8 @@ var _return_rows: Array = []  # [Button]（与 set_data 的 returns 顺序一致
 var _lbl_tma_track: Label = null
 var _lbl_tma_evidence: Label = null
 var _lbl_tma_fit: Label = null
+var _opt_fit_mode: OptionButton = null  # REQ-02：AUTO/ASSISTED/MANUAL
+var _prompt_box: HBoxContainer = null  # REQ-02：Apply range to Trial? 提示行
 var _btn_undo: Button = null
 var _ping_cd: float = 0.0  # 冷却剩余（本艇事实，可显示）
 
@@ -119,12 +125,61 @@ func _init() -> void:
 	_lbl_tma_track = _add_param_row(tma_grid, "Track")
 	_lbl_tma_evidence = _add_param_row(tma_grid, "Evidence")
 	_lbl_tma_fit = _add_param_row(tma_grid, "Fit")
+	# REQ-02：TMA 拟合模式（AUTO/ASSISTED/MANUAL）+ Take Control
+	var mode_row := HBoxContainer.new()
+	mode_row.add_theme_constant_override("separation", 4)
+	add_child(mode_row)
+	var mode_lbl := Label.new()
+	mode_lbl.text = "Fit Mode"
+	mode_lbl.add_theme_font_size_override("font_size", 12)
+	mode_lbl.custom_minimum_size = Vector2(96, 0)
+	mode_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 0.85))
+	mode_row.add_child(mode_lbl)
+	_opt_fit_mode = OptionButton.new()
+	for fm in FIT_MODES:
+		_opt_fit_mode.add_item(fm as String)
+	_opt_fit_mode.add_theme_font_size_override("font_size", 12)
+	_opt_fit_mode.custom_minimum_size = Vector2(92, 0)
+	_opt_fit_mode.item_selected.connect(_on_fit_mode_selected)
+	mode_row.add_child(_opt_fit_mode)
+	var btn_take := Button.new()
+	btn_take.text = "Take Control"
+	btn_take.add_theme_font_size_override("font_size", 11)
+	btn_take.flat = true
+	btn_take.tooltip_text = "Switch to MANUAL: keep range evidence, stop auto-refitting Trial"
+	btn_take.pressed.connect(func(): take_control_requested.emit())
+	mode_row.add_child(btn_take)
+	# REQ-02：ASSISTED 提示行（默认隐藏）：Apply range evidence to Trial?
+	_prompt_box = HBoxContainer.new()
+	_prompt_box.add_theme_constant_override("separation", 4)
+	_prompt_box.visible = false
+	add_child(_prompt_box)
+	var prompt_lbl := Label.new()
+	prompt_lbl.text = "Apply range to Trial?"
+	prompt_lbl.add_theme_font_size_override("font_size", 11)
+	prompt_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
+	_prompt_box.add_child(prompt_lbl)
+	var btn_apply := Button.new()
+	btn_apply.text = "Apply"
+	btn_apply.add_theme_font_size_override("font_size", 11)
+	btn_apply.pressed.connect(func(): apply_requested.emit())
+	_prompt_box.add_child(btn_apply)
+	var btn_reject := Button.new()
+	btn_reject.text = "Reject"
+	btn_reject.add_theme_font_size_override("font_size", 11)
+	btn_reject.pressed.connect(func(): undo_requested.emit())
+	_prompt_box.add_child(btn_reject)
 	_btn_undo = Button.new()
 	_btn_undo.text = "Undo last association"
 	_btn_undo.add_theme_font_size_override("font_size", 12)
 	_btn_undo.flat = true
 	_btn_undo.pressed.connect(func(): undo_requested.emit())
 	add_child(_btn_undo)
+
+
+func _on_fit_mode_selected(index: int) -> void:
+	if index >= 0 and index < FIT_MODES.size():
+		fit_mode_requested.emit(FIT_MODES[index] as String)
 
 
 func _add_param_row(grid: GridContainer, key: String) -> Label:
@@ -205,13 +260,26 @@ func set_data(d: Dictionary) -> void:
 	var fit_txt: String = str(tma.get("fit", "-"))
 	_lbl_tma_fit.text = fit_txt
 	var fit_col := Color(0.85, 0.9, 0.9)
-	if fit_txt == "REFIT REQUIRED":
+	if fit_txt == "AWAITING APPLY":
+		fit_col = Color(0.4, 0.9, 1.0)
+	elif fit_txt == "REFIT REQUIRED":
 		fit_col = Color(1.0, 0.8, 0.3)
 	elif fit_txt == "RANGE AIDED":
 		fit_col = Color(0.35, 1.0, 0.6)
 	elif fit_txt == "REJECTED":
 		fit_col = Color(1.0, 0.4, 0.35)
 	_lbl_tma_fit.add_theme_color_override("font_color", fit_col)
+	# REQ-02：模式 OptionButton 同步（select 不触发 item_selected）+ 提示行显隐
+	var fm: String = str(d.get("fit_mode", "ASSISTED"))
+	var fi: int = FIT_MODES.find(fm)
+	_opt_fit_mode.select(maxi(fi, 1))
+	_opt_fit_mode.tooltip_text = (
+		"AUTO: refit Trial on every active range\n"
+		+ "ASSISTED: ask before applying range to Trial\n"
+		+ "MANUAL: keep evidence, Trial only changes on manual Auto Fit"
+	)
+	var pending: bool = bool(d.get("pending_apply", false))
+	_prompt_box.visible = pending and fm == "ASSISTED"
 	_btn_undo.disabled = not bool(d.get("undo_enabled", false))
 
 

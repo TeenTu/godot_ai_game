@@ -14,6 +14,14 @@ extends SceneTree
 ##   E2E  控制器（operator 模式）：request_ping→回波→喂 Tracker 建 P 接触
 ##        → on_echo_hits 回调携带 Track → 摘要含 range → 主 UI REFIT 语义
 ##        （RANGE AIDED 文本出现在 TmaUiData.summary）。
+##   C5-C REQ-06：残差行单位分离（bearing=deg / range=m）+ summary 分列计数
+##        （B/R used/rej + 物理证据）+ 残差图 deg/m/σ 三态视图过滤。
+##   C5-D REQ-03/06 视觉联动：Contact 行徽章（R/P/B+置信）+ range ring 数据
+##        （圆心=测距时刻观测位，半径=measured_range，>300s 过期抑制）。
+##   C5-E REQ-02/03 验收：fit_mode MANUAL/ASSISTED/AUTO 路由（证据都进 Track、
+##        任何模式不自动提交 System Solution，只发 on_fit_requested 拟合请求）；
+##        多回波优先级（选中→置信→SE 降序）；测距门控细节（最后有效测距非最新
+##        参照 + 错距绝不回退 + 预测测距门控 conf≤0.85 + 带测距候选优先）。
 ##
 ## 运行：godot --headless --path games/sonar --script res://tools/ping_tma_integration_test.gd
 
@@ -51,7 +59,12 @@ func _initialize() -> void:
 	_r03_truth_isolation(fails)
 	_r20_fixed_listen_window(fails)
 	_r22_emission_event(fails)
+	_c5c_residual_kind_rows(fails)
+	_c5d_visual_badges(fails)
 	_e2e_controller_to_fit(fails)
+	_c5e_fit_mode_routing(fails)
+	_c5e_echo_priority(fails)
+	_c5e_assoc_gating(fails)
 	if fails.is_empty():
 		print("PING_TMA_INTEGRATION result=PASS")
 		quit(0)
@@ -552,6 +565,201 @@ func _r22_emission_event(fails: Array) -> void:
 
 
 # =====================================================================
+#  C5-C（REQ-06）：残差行单位分离 + summary 分列计数 + 残差图三态
+# =====================================================================
+
+
+func _c5c_residual_kind_rows(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO, 45.0, 8.0)
+	var tgt := _tgt_at(Vector2(8000.0, 6000.0), 200.0, 10.0)
+	var ms: Array = _collect_leg(own, tgt, 420.0, 60.0, 420.0, 0.0, 200.0, 200.0, 135.0)
+	ms.pop_back()
+	# 合成测量不带 evidence_id/measurement_id → 手工赋唯一物理证据号，使
+	# Track.evidence_count() 口径可断言（N 次物理到达，而非展开行数）。
+	var ev: int = 0
+	for m in ms:
+		ev += 1
+		m.evidence_id = "ev_%03d" % ev
+		m.measurement_id = ev
+	var track := Track.create("P", 1, ms[0])
+	for i in range(1, ms.size()):
+		track.add_measurement(ms[i])
+	var n_phys: int = ms.size()  # 7 被动 + 1 主动 = 8
+	_assert_eq(fails, "C5C evidence_count physical", str(track.evidence_count()), str(n_phys))
+	# 主动测距微偏 +120m（仍在 σ=200 门内）：保证 range 残差非零，使 σ_ref
+	# 的 |raw/normalized| 中位数口径可被实际求值（零残差会触发回退）。
+	var last_m: Measurement = ms[ms.size() - 1]
+	last_m.measured_range_m += 120.0
+	var meas: Array = []
+	for m in ms:
+		meas.append(TmaUiData.fit_meas_dict(m))
+	var r: Dictionary = TmaSolver.solve_auto(meas)
+	if not bool(r.get("success", false)):
+		fails.append("C5C solve failed: status=" + str(r.get("status", "?")))
+		return
+	var b_rows: int = 0
+	var r_rows: int = 0
+	for row in r["residuals"]:
+		if str(row.get("kind", "bearing")) == "range":
+			r_rows += 1
+		else:
+			b_rows += 1
+	_assert_eq(fails, "C5C rows = 8 bearing + 1 range", str(b_rows + r_rows), "9")
+	var txt: String = TmaUiData.summary(r, track)
+	_assert_true(fails, "C5C summary Rows B", txt.contains("Rows B used"))
+	_assert_true(fails, "C5C summary R used", txt.contains("R used"))
+	_assert_true(fails, "C5C summary RANGE AIDED", txt.contains("RANGE AIDED"))
+	_assert_true(
+		fails, "C5C summary B used %d rej 0" % b_rows, txt.contains("B used %d rej 0" % b_rows)
+	)
+	_assert_true(
+		fails, "C5C summary R used %d rej 0" % r_rows, txt.contains("R used %d rej 0" % r_rows)
+	)
+	_assert_true(fails, "C5C summary Ev %d phys" % n_phys, txt.contains("Ev %d phys" % n_phys))
+	# 单位分离：bearing 行 deg、range 行 m（不得混单位）。
+	for row in r["residuals"]:
+		if str(row.get("kind", "bearing")) == "range":
+			_assert_eq(fails, "C5C range row unit m", str(row.get("raw_unit", "?")), "m")
+		else:
+			_assert_eq(fails, "C5C bearing row unit deg", str(row.get("raw_unit", "?")), "deg")
+	# kind 过滤 helper 各自只回本通道。
+	var rrows: Array = TmaUiData.range_residuals(r["residuals"])
+	var brows: Array = TmaUiData.bearing_residuals(r["residuals"])
+	_assert_eq(fails, "C5C range_residuals size", str(rrows.size()), "1")
+	_assert_eq(fails, "C5C bearing_residuals size", str(brows.size()), str(b_rows))
+	# 测距参考 σ（m）≈ 合成 range_sigma=200；方位参考 σ 用 deg 通道。
+	var sr_m: float = TmaUiData.mean_sigma_range(r["residuals"])
+	_assert_close(fails, "C5C sigma_ref_m ~200m", sr_m, 200.0, 80.0)
+	var sd_deg: float = TmaUiData.mean_sigma(r["residuals"])
+	_assert_close(fails, "C5C sigma_ref_deg ~0.5deg", sd_deg, 0.5, 0.3)
+	# 纯方位路径：无 range 行 → sigma_ref_m 回退 1.0。
+	var meas_b: Array = []
+	for m in ms.slice(0, n_phys - 1):
+		meas_b.append(TmaUiData.fit_meas_dict(m))
+	var rb: Dictionary = TmaSolver.solve_auto(meas_b)
+	if bool(rb.get("success", false)):
+		_assert_close(
+			fails,
+			"C5C sigma_ref_m fallback 1.0",
+			TmaUiData.mean_sigma_range(rb["residuals"]),
+			1.0,
+			1e-6
+		)
+	# 残差图三态（deg→m→σ→deg）：每态只显示对应 kind / 全部。
+	var plot := ResidualPlot.new()
+	plot.residuals = r["residuals"]
+	plot.sigma_ref_deg = TmaUiData.mean_sigma(r["residuals"])
+	plot.sigma_ref_m = sr_m
+	_assert_eq(fails, "C5C plot starts deg", plot.mode, "deg")
+	_assert_eq(fails, "C5C deg view bearing only", str(plot._visible_rows().size()), str(b_rows))
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C m view after cycle", plot.mode, "m")
+	_assert_eq(fails, "C5C m view range only", str(plot._visible_rows().size()), "1")
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C sigma view after cycle", plot.mode, "sigma")
+	_assert_eq(
+		fails, "C5C sigma view all rows", str(plot._visible_rows().size()), str(b_rows + r_rows)
+	)
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C cycles back to deg", plot.mode, "deg")
+	plot.free()
+	# 纯被动（无 range 行）时点击应跳过 m 直达 σ。
+	if bool(rb.get("success", false)):
+		var plot2 := ResidualPlot.new()
+		plot2.residuals = rb["residuals"]
+		plot2.sigma_ref_deg = TmaUiData.mean_sigma(rb["residuals"])
+		plot2._cycle_mode()
+		_assert_eq(fails, "C5C no-range skips m", plot2.mode, "sigma")
+		plot2.free()
+
+
+# =====================================================================
+#  C5-D（REQ-03/06 视觉联动）：Contact 行徽章 + range ring 数据
+# =====================================================================
+
+
+func _c5d_visual_badges(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO, 45.0, 8.0)
+	var tgt := _tgt_at(Vector2(8000.0, 6000.0), 200.0, 10.0)
+	var ms: Array = _collect_leg(own, tgt, 300.0, 60.0, 300.0, 0.0, 200.0, 150.0, 120.0)
+	ms.pop_back()
+	var ev: int = 0
+	for m in ms:
+		ev += 1
+		m.evidence_id = "ev_%03d" % ev
+		m.measurement_id = ev
+	var track := Track.create("P", 1, ms[0])
+	for i in range(1, ms.size()):
+		track.add_measurement(ms[i])
+	var n_phys: int = ms.size()  # 5 被动 + 1 主动 = 6
+	var active_m: Measurement = ms[ms.size() - 1]
+	_assert_true(fails, "C5D last meas has range", active_m.has_range())
+	# 徽章分级：R（真实测距）/ P（预测测距）/ B（纯方位）；conf=0 → 空。
+	track.association_confidence = 0.9
+	track.last_association_mode = "range"
+	_assert_eq(fails, "C5D badge R", TmaUiData.association_badge(track), "R.90")
+	track.last_association_mode = "predicted"
+	track.association_confidence = 0.8
+	_assert_eq(fails, "C5D badge P", TmaUiData.association_badge(track), "P.80")
+	track.last_association_mode = "bearing_only"
+	track.association_confidence = 0.35
+	_assert_eq(fails, "C5D badge B", TmaUiData.association_badge(track), "B.35")
+	track.association_confidence = 0.0
+	_assert_eq(fails, "C5D no badge on conf 0", TmaUiData.association_badge(track), "")
+	# 行文本：编号 + Brg + Rng（最新带测距）+ 徽章 + 测量数。
+	track.association_confidence = 0.9
+	track.last_association_mode = "range"
+	var lab: String = TmaUiData.contact_label(track)
+	_assert_true(fails, "C5D label has track id", lab.contains(track.track_id))
+	_assert_true(fails, "C5D label has Rng", lab.contains("Rng %.0fm" % active_m.measured_range_m))
+	_assert_true(fails, "C5D label has R.90", lab.contains("R.90"))
+	_assert_true(fails, "C5D label has meas count", lab.contains("(%d meas)" % n_phys))
+	# range ring 数据：中心=测量时刻观测位，半径=measured_range，σ/方位随附。
+	var ring: Dictionary = TmaUiData.range_ring_data(
+		track, active_m.timestamp, Color(0.4, 1.0, 0.6)
+	)
+	if ring.is_empty():
+		fails.append("C5D range_ring_data empty for fresh range")
+		return
+	_assert_close(
+		fails,
+		"C5D ring center east",
+		float((ring["center"] as Vector2).x),
+		active_m.observer_east_m,
+		1e-3
+	)
+	_assert_close(
+		fails,
+		"C5D ring center north",
+		float((ring["center"] as Vector2).y),
+		active_m.observer_north_m,
+		1e-3
+	)
+	_assert_close(
+		fails, "C5D ring range_m", float(ring["range_m"]), active_m.measured_range_m, 1e-3
+	)
+	_assert_close(fails, "C5D ring sigma_m", float(ring["sigma_m"]), active_m.range_sigma_m, 1e-3)
+	_assert_close(
+		fails, "C5D ring bearing", float(ring["bearing_deg"]), active_m.measured_bearing_deg, 1e-3
+	)
+	# 过期证据（>300s）→ 空 dict（不画误导环）。
+	_assert_true(
+		fails,
+		"C5D stale ring suppressed",
+		TmaUiData.range_ring_data(track, active_m.timestamp + 400.0, Color.WHITE).is_empty()
+	)
+	# 纯被动 Track（无测距历史）→ 无 ring。
+	var track_b := Track.create("S", 2, ms[0])
+	for i in range(1, n_phys - 1):
+		track_b.add_measurement(ms[i])
+	_assert_true(
+		fails,
+		"C5D no-range track has no ring",
+		TmaUiData.range_ring_data(track_b, ms[n_phys - 2].timestamp, Color.WHITE).is_empty()
+	)
+
+
+# =====================================================================
 #  E2E：控制器（operator 模式）→ Tracker → on_echo_hits → RANGE AIDED
 # =====================================================================
 
@@ -617,3 +825,242 @@ func _e2e_controller_to_fit(fails: Array) -> void:
 	var txt: String = TmaUiData.summary(r)
 	_assert_true(fails, "E2E summary shows RANGE AIDED", txt.contains("RANGE AIDED"))
 	_assert_true(fails, "E2E summary has no Truth id", not txt.contains("tgt"))
+
+
+# =====================================================================
+#  C5-E（REQ-02/03 验收）：fit_mode 路由 + 多回波优先级 + 测距门控细节
+# =====================================================================
+
+
+## 完整跑一次 ping 周期（发射→等回波→排空结算），返回 controller 排出的
+## hits（fed 命中数组）。op_panel 传 null（无头只走逻辑层）。
+func _c5e_ping_cycle(w: World, ctrl: ActivePingController) -> Array:
+	var hits: Array = []
+	ctrl.on_echo_hits = func(fed: Array): hits.append_array(fed)
+	ctrl.request_ping()
+	w.run_steps(ceili(ECHO_T_S / 0.5) + 2)
+	ctrl.refresh_panel(null)
+	return hits
+
+
+## REQ-02 fit_mode 路由验收。核心不变量：三种模式证据都已进 Track，但任何
+## 模式都不自动提交 System Solution——控制器唯一副作用是 on_fit_requested
+## 拟合请求（Trial 重拟合/提交由 main_ui 玩家 Accept 门控，本层无提交路径）。
+##   MANUAL   证据入 Track、Trial 不动 → REFIT_REQUIRED（不请求拟合）
+##   ASSISTED 挂起待 Apply；Apply → 请求拟合 → mark_range_applied → RANGE AIDED；
+##            Undo/Reject → 测量移除 + REJECTED
+##   AUTO     命中即请求拟合（不留 PENDING_APPLY）
+func _c5e_fit_mode_routing(fails: Array) -> void:
+	_c5e_routing_manual(fails)
+	_c5e_routing_assisted_apply(fails)
+	_c5e_routing_assisted_reject(fails)
+	_c5e_routing_auto(fails)
+
+
+func _c5e_routing_manual(fails: Array) -> void:
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0))
+	w.auto_measurements = false
+	var c := ActivePingController.new()
+	c.world = w
+	c.tracker = Tracker.new()
+	c.fit_mode = ActivePingController.MODE_MANUAL
+	var fit: Array = []
+	c.on_fit_requested = func(tid: String): fit.append(tid)
+	var hits: Array = _c5e_ping_cycle(w, c)
+	_assert_true(fails, "C5E MANUAL echo hit", not hits.is_empty())
+	if hits.is_empty():
+		return
+	var t: Track = hits[0].get("track")
+	_assert_true(fails, "C5E MANUAL track present", t != null)
+	if t == null:
+		return
+	_assert_eq(fails, "C5E MANUAL state REFIT_REQUIRED", c.evidence_state, "REFIT_REQUIRED")
+	_assert_true(fails, "C5E MANUAL no pending apply", not c.has_pending_apply())
+	_assert_eq(fails, "C5E MANUAL no fit requested", str(fit.size()), "0")
+	_assert_true(fails, "C5E MANUAL evidence in track", _c5e_track_has_active(t))
+	_assert_true(fails, "C5E MANUAL undo armed", c.has_undo())
+
+
+func _c5e_routing_assisted_apply(fails: Array) -> void:
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0))
+	w.auto_measurements = false
+	var c := ActivePingController.new()
+	c.world = w
+	c.tracker = Tracker.new()
+	c.fit_mode = ActivePingController.MODE_ASSISTED
+	var fit: Array = []
+	c.on_fit_requested = func(tid: String): fit.append(tid)
+	var hits: Array = _c5e_ping_cycle(w, c)
+	_assert_true(fails, "C5E ASSISTED echo hit", not hits.is_empty())
+	if hits.is_empty():
+		return
+	var t: Track = hits[0].get("track")
+	_assert_true(fails, "C5E ASSISTED track present", t != null)
+	if t == null:
+		return
+	_assert_eq(fails, "C5E ASSISTED PENDING_APPLY", c.evidence_state, "PENDING_APPLY")
+	_assert_true(fails, "C5E ASSISTED pending set", c.has_pending_apply())
+	_assert_eq(fails, "C5E ASSISTED no auto fit", str(fit.size()), "0")
+	_assert_true(fails, "C5E ASSISTED apply ok", c.apply_pending())
+	_assert_eq(fails, "C5E ASSISTED fit requested once", str(fit.size()), "1")
+	_assert_eq(fails, "C5E ASSISTED fit id", str(fit[0]), t.track_id)
+	_assert_true(fails, "C5E ASSISTED pending cleared", not c.has_pending_apply())
+	c.mark_range_applied(true)
+	_assert_eq(fails, "C5E ASSISTED RANGE_AIDED", c.evidence_state, "RANGE_AIDED")
+	_assert_true(fails, "C5E ASSISTED undo still armed", c.has_undo())
+
+
+func _c5e_routing_assisted_reject(fails: Array) -> void:
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0))
+	w.auto_measurements = false
+	var c := ActivePingController.new()
+	c.world = w
+	c.tracker = Tracker.new()
+	c.fit_mode = ActivePingController.MODE_ASSISTED
+	var hits: Array = _c5e_ping_cycle(w, c)
+	_assert_true(fails, "C5E REJECT echo hit", not hits.is_empty())
+	if hits.is_empty():
+		return
+	var t: Track = hits[0].get("track")
+	_assert_true(fails, "C5E REJECT track present", t != null)
+	if t == null:
+		return
+	var n_before: int = t.measurement_history.size()
+	_assert_eq(fails, "C5E REJECT PENDING_APPLY", c.evidence_state, "PENDING_APPLY")
+	_assert_true(fails, "C5E REJECT undo ok", c.undo_last_association())
+	_assert_eq(fails, "C5E REJECT state REJECTED", c.evidence_state, "REJECTED")
+	_assert_true(
+		fails, "C5E REJECT measurement removed", t.measurement_history.size() == n_before - 1
+	)
+	_assert_true(fails, "C5E REJECT no undo left", not c.has_undo())
+
+
+func _c5e_routing_auto(fails: Array) -> void:
+	var w := World.new()
+	w.load_scenario(_mk_scenario(0.0))
+	w.auto_measurements = false
+	var c := ActivePingController.new()
+	c.world = w
+	c.tracker = Tracker.new()
+	c.fit_mode = ActivePingController.MODE_AUTO
+	var fit: Array = []
+	c.on_fit_requested = func(tid: String): fit.append(tid)
+	var hits: Array = _c5e_ping_cycle(w, c)
+	_assert_true(fails, "C5E AUTO echo hit", not hits.is_empty())
+	if hits.is_empty():
+		return
+	var t: Track = hits[0].get("track")
+	_assert_true(fails, "C5E AUTO track present", t != null)
+	if t == null:
+		return
+	_assert_eq(fails, "C5E AUTO fit requested once", str(fit.size()), "1")
+	_assert_eq(fails, "C5E AUTO fit id", str(fit[0]), t.track_id)
+	_assert_eq(fails, "C5E AUTO no PENDING_APPLY", c.evidence_state, "")
+	_assert_true(fails, "C5E AUTO no pending apply", not c.has_pending_apply())
+	_assert_true(fails, "C5E AUTO evidence in track", _c5e_track_has_active(t))
+
+
+func _c5e_track_has_active(t: Track) -> bool:
+	for m in t.measurement_history:
+		if m.measurement_type == "ACTIVE_RANGE_BEARING" and m.has_range():
+			return true
+	return false
+
+
+## REQ-02 多回波优先级：选中 Track（preferred_track_id）最前 → 其余按
+## association_confidence 降序 → SE 降序（controller 排序后主 UI 取 fed[0]）。
+func _c5e_echo_priority(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO)
+	var tgt := _tgt_at(Vector2(6000.0, 0.0), 90.0, 0.0)
+	var ta := Track.create("P", 1, _mk_passive(own, tgt, 0.0))
+	var tb := Track.create("P", 2, _mk_passive(own, tgt, 0.0))
+	var tc := Track.create("P", 3, _mk_passive(own, tgt, 0.0))
+	ta.association_confidence = 0.5
+	tb.association_confidence = 0.9
+	tc.association_confidence = 0.4
+	var ctrl := ActivePingController.new()
+	ctrl.preferred_track_id = tc.track_id
+	var fed: Array = [
+		{"track": ta, "summary": {"se_db": 12.0}},
+		{"track": tb, "summary": {"se_db": 18.0}},
+		{"track": tc, "summary": {"se_db": 15.0}},
+	]
+	ctrl._sort_hits_by_priority(fed)
+	_assert_eq(fails, "C5E priority preferred first", str(fed[0]["track"].track_id), tc.track_id)
+	_assert_eq(fails, "C5E priority conf 2nd", str(fed[1]["track"].track_id), tb.track_id)
+	_assert_eq(fails, "C5E priority conf 3rd", str(fed[2]["track"].track_id), ta.track_id)
+	# 等置信 → SE 降序
+	var fed2: Array = [
+		{"track": ta, "summary": {"se_db": 12.0}},
+		{"track": tb, "summary": {"se_db": 18.0}},
+	]
+	ta.association_confidence = 0.9
+	tb.association_confidence = 0.9
+	ctrl._sort_hits_by_priority(fed2)
+	_assert_eq(fails, "C5E tiebreak SE first", str(fed2[0]["track"].track_id), tb.track_id)
+	_assert_eq(fails, "C5E tiebreak SE second", str(fed2[1]["track"].track_id), ta.track_id)
+
+
+## REQ-03 测距门控细节验收：
+##   - 最后有效测距可非最新（后随纯方位）仍作参照（mode="range"）；
+##   - 错距主动回波：测距门全拒 → 绝不回退纯方位（返回 null，不入 Track）；
+##   - 预测测距门控：无测距历史 + 有效预测（≤300s）→ mode="predicted"，
+##     confidence 上限 0.85；
+##   - 带测距候选优先于纯方位候选（gated 非空先取，不回退 bearing_only）。
+func _c5e_assoc_gating(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO)
+	var tgt := _tgt_at(Vector2(6000.0, 0.0), 90.0, 0.0)  # 静止目标 → 几何恒定
+	# 主动测距后跟两条被动：最新测量无 range，但"最后有效测距"仍是 t=0 主动
+	var trk := Tracker.new()
+	var a0 := _mk_active(own, tgt, 0.0, 6000.0, 150.0, 1)
+	var track: Track = trk.mark(a0, "P")
+	track.add_measurement(_mk_passive(own, tgt, 60.0))
+	track.add_measurement(_mk_passive(own, tgt, 120.0))
+	_assert_true(
+		fails, "C5E gate last-valid is non-latest", track.last_valid_range_measurement() == a0
+	)
+	_assert_eq(
+		fails, "C5E gate latest is passive", str(track.latest_measurement().timestamp), "120.0"
+	)
+	# 正确测距（静止几何 6000m）→ range 档关联成功（参照=非最新也生效）
+	var good := _mk_active(own, tgt, 180.0, 6000.0, 150.0, 2)
+	var assoc: Track = trk.feed(good)
+	_assert_bool(fails, "C5E gate non-latest ref associates", assoc == track, true)
+	_assert_eq(fails, "C5E gate mode range", track.last_association_mode, "range")
+	_assert_true(
+		fails,
+		"C5E gate conf in [0.25,0.98]",
+		track.association_confidence >= 0.25 and track.association_confidence <= 0.98
+	)
+	# 错距（6000m off）→ 门拒；存在测距能力 Track 时绝不回退纯方位
+	var bad := _mk_active(own, tgt, 240.0, 12000.0, 150.0, 3)
+	var assoc_bad: Track = trk.feed(bad)
+	_assert_bool(fails, "C5E gate wrong-range no fallback", assoc_bad == null, true)
+	_assert_true(fails, "C5E gate rejected not added", not track.measurement_history.has(bad))
+	# 预测测距门控：Track 无测距历史 + Tracker 有 ≤300s 预测 → predicted 档
+	var trk2 := Tracker.new()
+	var tb: Track = trk2.mark(_mk_passive(own, tgt, 0.0), "P")
+	tb.add_measurement(_mk_passive(own, tgt, 60.0))
+	tb.add_measurement(_mk_passive(own, tgt, 120.0))
+	_assert_true(fails, "C5E gate no range history", tb.last_valid_range_measurement() == null)
+	trk2.set_predicted_range(tb.track_id, 6000.0, 200.0, 120.0)
+	var act_p := _mk_active(own, tgt, 180.0, 6000.0, 150.0, 4)
+	var assoc_p: Track = trk2.feed(act_p)
+	_assert_bool(fails, "C5E gate predicted associates", assoc_p == tb, true)
+	_assert_eq(fails, "C5E gate mode predicted", tb.last_association_mode, "predicted")
+	_assert_true(fails, "C5E gate predicted conf <=0.85", tb.association_confidence <= 0.85)
+	_assert_true(fails, "C5E gate predicted conf >=0.2", tb.association_confidence >= 0.2)
+	# 带测距候选优先：纯方位 Track 方位够近也不抢（gated 先于 bearing_only）
+	var trk3 := Tracker.new()
+	var t_bear: Track = trk3.mark(_mk_passive(own, tgt, 0.0), "P")
+	var t_rng: Track = trk3.mark(_mk_active(own, tgt, 0.0, 6000.0, 150.0, 5), "P")
+	var act3 := _mk_active(own, tgt, 60.0, 6000.0, 150.0, 6)
+	var assoc3: Track = trk3.feed(act3)
+	_assert_bool(fails, "C5E gate range-track preferred", assoc3 == t_rng, true)
+	_assert_eq(fails, "C5E gate range mode preferred", t_rng.last_association_mode, "range")
+	_assert_true(
+		fails, "C5E gate bearing track untouched", not t_bear.measurement_history.has(act3)
+	)

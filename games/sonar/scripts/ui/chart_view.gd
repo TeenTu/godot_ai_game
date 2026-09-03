@@ -76,6 +76,9 @@ var fit_now_time: float = 0.0
 # 位置协方差子矩阵（外推到 now 的 2x2）：[[PEE, PEN], [PEN, PNN]]
 var fit_cov_pos: Array = []
 var fit_status: String = ""
+# S1-04C-REQ-03/06：选中 Track 最近一次有效测距证据（海图 range ring/带宽）。
+# {center, range_m, sigma_m, bearing_deg, color, track_id}；空 = 不画。
+var range_ring: Dictionary = {}
 # 在水鱼雷：[{trail: [{e, n, t}], state: String}]（自身传感器/状态，非 Truth）
 var torpedoes: Array = []
 
@@ -203,6 +206,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.04, 0.08, 0.10, 1.0))
 	_draw_grid()
 	_draw_own_track()
+	_draw_range_ring()
 	if bool(layers.get("lob", true)):
 		_draw_lobs()
 	if bool(layers.get("fit", true)):
@@ -277,6 +281,31 @@ func _draw_own_track() -> void:
 	draw_line(s, s + fwd * 22.0, Color(COL_OWN.r, COL_OWN.g, COL_OWN.b, 0.9), 1.5)
 	draw_colored_polygon(PackedVector2Array([tip, right, s - fwd * 3.0, left]), COL_OWN)
 	_draw_label(s + Vector2(10, -10), "OWN", COL_OWN)
+
+
+## 主动测距证据环（REQ-03/06）：以测量时刻观测位置为心、measured_range 为
+## 半径画 ring，±σ 为半透明带宽；沿测量方位画径向短线把证据锚到该接触，
+## 颜色 = Track 色（同色高亮）。过期/无测距由调用方传空 dict 禁用。
+func _draw_range_ring() -> void:
+	if range_ring.is_empty():
+		return
+	var c: Vector2 = range_ring["center"] as Vector2
+	var r_m: float = float(range_ring["range_m"])
+	var s_m: float = maxf(float(range_ring.get("sigma_m", 0.0)), 0.0)
+	var col: Color = range_ring.get("color", COL_BEST) as Color
+	var cs: Vector2 = world_to_screen(c)
+	var scl: float = _scale_px()
+	var r_px: float = r_m * scl
+	var band_px: float = 2.0 * s_m * scl
+	if band_px >= 2.0:
+		draw_arc(cs, r_px, 0.0, TAU, 128, Color(col.r, col.g, col.b, 0.16), band_px)
+	draw_arc(cs, r_px, 0.0, TAU, 128, Color(col.r, col.g, col.b, 0.95), 1.5)
+	var brad: float = deg_to_rad(float(range_ring.get("bearing_deg", 0.0)))
+	var dirv := Vector2(sin(brad), -cos(brad))  # 屏幕 y 向下
+	draw_line(cs, cs + dirv * r_px, Color(col.r, col.g, col.b, 0.9), 1.0)
+	var lp: Vector2 = cs + dirv * r_px
+	var lab: String = "R %.1fkm ±%.0fm" % [r_m / 1000.0, s_m]
+	_draw_label(lp + Vector2(6, -4), lab, Color(col.r, col.g, col.b, 0.95), 12)
 
 
 # ------------------------------------------------------------------

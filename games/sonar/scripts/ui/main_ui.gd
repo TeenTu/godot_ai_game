@@ -93,8 +93,11 @@ func _ready() -> void:
 	_ping_ctrl.tracker = tracker
 	_ping_ctrl.on_status = _update_status
 	_ping_ctrl.on_dirty = func(): _dirty = true
-	# S1-04B：回波命中已喂 Tracker → 自动选中该接触并 REFIT（range 进 TMA）
+	# S1-04B/S1-04C：回波命中已喂 Tracker → 选中该接触；是否 REFIT 由
+	# REQ-02 fit_mode 裁决（AUTO 经 on_fit_requested 回调驱动，ASSISTED 等
+	# Apply，MANUAL 只入 Track）——不在此无条件自动拟合。
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
+	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
 	# S1-04C：撤销一次自动关联后刷新视图（REFIT REQUIRED 语义）。
 	_ping_ctrl.on_assoc_undone = func(_tid: String):
 		_dirty = true
@@ -218,6 +221,10 @@ func _build_panel() -> void:
 	_op_panel.ping_requested.connect(_on_ping_requested)
 	_op_panel.active_undo_requested.connect(_on_active_undo)
 	_op_panel.active_return_selected.connect(_on_active_return_selected)
+	# REQ-02：拟合模式 / Take Control / Apply 都是纯控制器状态机转发。
+	_op_panel.active_fit_mode_requested.connect(func(m: String): _ping_ctrl.set_fit_mode(m))
+	_op_panel.active_take_control_requested.connect(func(): _ping_ctrl.take_control())
+	_op_panel.active_apply_requested.connect(func(): _ping_ctrl.apply_pending())
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
 
@@ -562,6 +569,11 @@ func _rebuild_display_data() -> void:
 		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
 	)
 	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
+	# S1-04C-REQ-03/06：选中 Track 最近有效测距 → 海图 range ring/带宽（同色）
+	if sel != null:
+		_chart.range_ring = TmaUiData.range_ring_data(sel, now, _color_for_track(sel.track_id))
+	else:
+		_chart.range_ring = {}
 
 	# 2) Bearing-Time（选中 track，标注 track_id）
 	var points: Array = []
@@ -593,13 +605,15 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图（REQ-05：只喂方位残差行——range 行是米量纲，禁混进 deg 轴）
+	# 3) 残差图（REQ-06 单位分离：喂全量残差行，plot 内部 deg 视图只画
+	# bearing 行、m 视图只画 range 行、σ 视图共用归一化；σ 参考线按通道对齐）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
-		res = TmaUiData.bearing_residuals(last_fit.get("residuals", []))
+		res = last_fit.get("residuals", [])
 	_res_plot.residuals = res
 	_res_plot.track_id = selected_track_id
 	_res_plot.sigma_ref_deg = TmaUiData.mean_sigma(res)
+	_res_plot.sigma_ref_m = TmaUiData.mean_sigma_range(res)
 	_res_plot.set_time_window(
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
@@ -770,15 +784,7 @@ func _update_contact_rows() -> void:
 			(_contact_rows[tid] as Button).queue_free()
 			_contact_rows.erase(tid)
 	for t in active:
-		var m: Measurement = t.latest_measurement()
-		var label := (
-			"%s  Brg %.0f°  (%d meas)"
-			% [
-				t.track_id,
-				m.measured_bearing_deg,
-				t.measurement_history.size(),
-			]
-		)
+		var label := TmaUiData.contact_label(t)
 		if _contact_rows.has(t.track_id):
 			(_contact_rows[t.track_id] as Button).text = label
 		else:
@@ -791,6 +797,16 @@ func _update_contact_rows() -> void:
 			_panel.add_child(b)
 			_contact_rows[t.track_id] = b
 		var btn := _contact_rows[t.track_id] as Button
+		# REQ-03/06 关联徽章色阶：R（测距门控）绿 / P（预测门控）橙 / B（纯方位）灰
+		var badge: String = TmaUiData.association_badge(t)
+		var badge_col := Color(0.9, 0.92, 0.94)
+		if badge.begins_with("R"):
+			badge_col = Color(0.4, 1.0, 0.6)
+		elif badge.begins_with("P"):
+			badge_col = Color(1.0, 0.82, 0.4)
+		elif badge.begins_with("B"):
+			badge_col = Color(0.8, 0.85, 0.92)
+		btn.add_theme_color_override("font_color", badge_col)
 		btn.set_pressed_no_signal(t.track_id == selected_track_id)
 
 
@@ -798,6 +814,9 @@ func _on_contact_selected(track_id: String) -> void:
 	if selected_track_id == track_id:
 		return
 	selected_track_id = track_id
+	# REQ-02 多回波优先级：命中当前选中 Track 的回波排最前。
+	if _ping_ctrl != null:
+		_ping_ctrl.preferred_track_id = track_id
 	_lbl_selected.text = "Selected: " + track_id
 	_dirty = true
 	_rebuild_display_data()
@@ -942,8 +961,8 @@ func _on_fit_tma() -> void:
 	trial.estimated_position_east_m = (best["p_ref"] as Vector2).x + v.x * dt_now
 	trial.estimated_position_north_m = (best["p_ref"] as Vector2).y + v.y * dt_now
 
-	dot_stack_compute(r, sel)
-	_lbl_tma.text = TmaUiData.summary(r)
+	TmaUiData.dot_stack_compute(dot_stack, r, sel)
+	_lbl_tma.text = TmaUiData.summary(r, sel)
 	_dirty = true
 	_rebuild_display_data()
 	_update_status(
@@ -958,29 +977,6 @@ func _on_fit_tma() -> void:
 				trial.speed_kn,
 			]
 		)
-	)
-
-
-## Dot Stack（等价计算）：只用 inlier 测量 + 最优解状态。
-func dot_stack_compute(r: Dictionary, sel: Track) -> void:
-	var best: Dictionary = r.get("best", {})
-	var inlier_set: Dictionary = {}
-	for res in r.get("residuals", []):
-		if bool(res.get("inlier", true)):
-			inlier_set[float(res["time"])] = true
-	var inlier_meas: Array = []
-	for m in sel.measurement_history:
-		if inlier_set.has(m.timestamp):
-			inlier_meas.append(TmaUiData.fit_meas_dict(m))
-	if inlier_meas.is_empty():
-		return
-	dot_stack.compute(
-		inlier_meas,
-		(best["p_ref"] as Vector2).x,
-		(best["p_ref"] as Vector2).y,
-		(best["v_ms"] as Vector2).x,
-		(best["v_ms"] as Vector2).y,
-		float(best["t_ref"])
 	)
 
 
@@ -1142,8 +1138,8 @@ func _on_active_return_selected(i: int) -> void:
 	_on_contact_selected(tid)
 
 
-## 主动回波命中回调（S1-04B）：命中测量已由控制器喂 Tracker，自动选中该接触
-## 并 REFIT——单腿+range 可锚定（REQ-10），命中即 RANGE AIDED。
+## 主动回波命中回调（REQ-02）：控制器已按 fit_mode 裁决（AUTO 重拟合 /
+## ASSISTED 挂起 / MANUAL 仅入 Track）；这里只把最高优先命中选中高亮。
 func _on_ping_echo_hits(fed: Array) -> void:
 	if fed.is_empty():
 		return
@@ -1151,8 +1147,21 @@ func _on_ping_echo_hits(fed: Array) -> void:
 	if tr == null:
 		return
 	selected_track_id = tr.track_id
+	_ping_ctrl.preferred_track_id = tr.track_id
 	_dirty = true
+	_update_status("Selected %s — active range on contact" % tr.track_id)
+
+
+## REQ-02：AUTO 命中 / ASSISTED Apply 触发的重拟合（选中 + Auto Fit）。
+## 成功后卡片 Fit 行置 RANGE AIDED；失败 → REFIT REQUIRED（证据仍在）。
+func _on_ping_fit_requested(track_id: String) -> void:
+	if track_id != selected_track_id:
+		selected_track_id = track_id
+		_ping_ctrl.preferred_track_id = track_id
+		_dirty = true
 	_on_fit_tma()
+	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == track_id:
+		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。

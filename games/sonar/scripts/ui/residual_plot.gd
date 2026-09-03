@@ -2,9 +2,14 @@ class_name ResidualPlot
 extends Control
 ## residual_plot.gd — 残差图（Dot Stack 的可视化升级版）。
 ##
-##   - 横轴时间；纵轴可切换 deg / sigma（点击图内切换）
-##   - 绘制 e_i = wrap180(z_i - θ̂_i)；0 线突出；±1σ/±2σ/±3σ 区域带
-##   - 离群点红色 X；底部统计：RMS / bias / max / used / rejected
+##   - 横轴时间；点击图内循环显示：方位度(deg) → 测距米(m) → 归一化σ。
+##   - REQ-06 单位分离：deg/m 原始值视图各自只画对应 kind 行（禁止 deg/m
+##     混轴）；σ 视图共用归一化 u = raw/σ，两通道可同轴比较。
+##   - ±1σ/±2σ/±3σ 区域带：deg 用 sigma_ref_deg、m 用 sigma_ref_m（由对应
+##     kind 残差行的 |raw/normalized| 中位数估计，与真实测距波动对齐）、
+##     σ 视图用 1.0。0 线突出。
+##   - 离群点红色 X；底部统计：RMS / bias / max / used / rejected（当前
+##     视图通道口径）。
 ##   - 悬停联动：hover_changed(time) 与 Bearing-Time 图一致
 
 signal hover_changed(time: float)  # -1 = 离开
@@ -14,11 +19,16 @@ const PAD_R: float = 10.0
 const PAD_T: float = 8.0
 const PAD_B: float = 20.0
 
-var residuals: Array = []  # [{time, raw_value, raw_unit, normalized, inlier}]（方位行）
-var sigma_ref_deg: float = 1.0  # ±Nσ 带的参考 σ（被使用测量的平均 σ）
+const MODE_DEG: String = "deg"
+const MODE_M: String = "m"
+const MODE_SIGMA: String = "sigma"
+
+var residuals: Array = []  # [{time, raw_value, raw_unit, normalized, inlier, kind}]
+var sigma_ref_deg: float = 1.0  # 方位通道 ±Nσ 带参考 σ（°）
+var sigma_ref_m: float = 1.0  # 测距通道 ±Nσ 带参考 σ（m，与 range 波动对齐）
+var mode: String = MODE_DEG  # 当前视图：deg / m / sigma
 var t_min: float = 0.0
 var t_max: float = 1.0
-var use_sigma: bool = false  # false=deg, true=sigma
 var track_id: String = ""
 var highlight_time: float = -1.0
 
@@ -42,12 +52,37 @@ func _plot_rect() -> Rect2:
 	return Rect2(PAD_L, PAD_T, size.x - PAD_L - PAD_R, size.y - PAD_T - PAD_B)
 
 
+## 当前视图应绘制的残差行：σ 视图全部；原始值视图只取对应 kind。
+func _visible_rows() -> Array:
+	if mode == MODE_SIGMA:
+		return residuals
+	var kind: String = "bearing" if mode == MODE_DEG else "range"
+	var out: Array = []
+	for r in residuals:
+		if str(r.get("kind", "bearing")) == kind:
+			out.append(r)
+	return out
+
+
+func _has_range_rows() -> bool:
+	for r in residuals:
+		if str(r.get("kind", "bearing")) == "range":
+			return true
+	return false
+
+
 func _val(r: Dictionary) -> float:
-	return float(r["normalized"]) if use_sigma else float(r["raw_value"])
+	if mode == MODE_SIGMA:
+		return float(r["normalized"])
+	return float(r["raw_value"])
 
 
 func _band_val(n_sigma: float) -> float:
-	return n_sigma if use_sigma else n_sigma * sigma_ref_deg
+	if mode == MODE_DEG:
+		return n_sigma * sigma_ref_deg
+	if mode == MODE_M:
+		return n_sigma * sigma_ref_m
+	return n_sigma
 
 
 func _ty(v: float) -> float:
@@ -63,9 +98,27 @@ func _tx(t: float) -> float:
 
 func _compute_span() -> float:
 	var m: float = _band_val(3.2)
-	for r in residuals:
+	for r in _visible_rows():
 		m = maxf(m, absf(_val(r)) * 1.15)
 	return maxf(m, 1.0)
+
+
+func _fmt(v: float) -> String:
+	if mode == MODE_M:
+		return "%.0f" % v
+	return "%.2f" % v
+
+
+func _unit_suffix() -> String:
+	if mode == MODE_M:
+		return "m"
+	if mode == MODE_DEG:
+		return "°"
+	return "σ"
+
+
+func _mode_hint() -> String:
+	return "click: deg/m/σ" if _has_range_rows() else "click: deg/σ"
 
 
 func _draw() -> void:
@@ -75,7 +128,7 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.06, 0.08, 1.0))
 	var pr := _plot_rect()
 	draw_rect(pr, Color(0.2, 0.3, 0.35, 0.8), false, 1.0)
-	# ±1/2/3σ 区域带
+	# ±1/2/3σ 区域带（按当前通道的参考 σ）
 	var bands: Array = [
 		[3.0, Color(1.0, 0.3, 0.3, 0.05)],
 		[2.0, Color(1.0, 0.8, 0.3, 0.06)],
@@ -94,9 +147,9 @@ func _draw() -> void:
 		)
 		draw_string(
 			_font,
-			Vector2(2, y1 + 5),
+			Vector2(pr.position.x - 5, y1 + 5),
 			_band_label(n),
-			HORIZONTAL_ALIGNMENT_LEFT,
+			HORIZONTAL_ALIGNMENT_RIGHT,
 			-1,
 			14,
 			Color(0.5, 0.7, 0.75, 0.9)
@@ -109,8 +162,8 @@ func _draw() -> void:
 	if highlight_time >= 0.0:
 		var xh: float = _tx(highlight_time)
 		draw_line(Vector2(xh, pr.position.y), Vector2(xh, pr.end.y), Color(1, 1, 1, 0.5), 1.5)
-	# 残差点
-	for r in residuals:
+	# 残差点（当前视图）
+	for r in _visible_rows():
 		var x: float = _tx(float(r["time"]))
 		var y: float = _ty(_val(r))
 		var inlier: bool = bool(r.get("inlier", true))
@@ -130,58 +183,61 @@ func _draw() -> void:
 
 
 func _band_label(n: float) -> String:
-	if use_sigma:
-		return "%+d" % int(n)
-	return "%+.1f°" % [n * sigma_ref_deg]
+	if mode == MODE_DEG:
+		return "%+.1f°" % (n * sigma_ref_deg)
+	if mode == MODE_M:
+		return "%+.0fm" % (n * sigma_ref_m)
+	return "%+dσ" % int(n)
 
 
 func _draw_stats(pr: Rect2) -> void:
 	var used: Array = []
-	for r in residuals:
+	for r in _visible_rows():
 		if bool(r.get("inlier", true)):
 			used.append(r)
-	if used.is_empty():
-		draw_string(
-			_font,
-			Vector2(pr.position.x + 6, pr.position.y + 16),
-			"no residuals (fit first)  |  click: deg/sigma",
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			14,
-			Color(0.6, 0.7, 0.75, 0.9)
+	var msg: String = ""
+	if residuals.is_empty():
+		msg = "no residuals (fit first)  |  " + _mode_hint()
+	elif used.is_empty() and mode != MODE_SIGMA:
+		var kind_txt: String = "bearing" if mode == MODE_DEG else "range"
+		msg = "no inlier %s rows  |  %s" % [kind_txt, _mode_hint()]
+	else:
+		var sq: float = 0.0
+		var sm: float = 0.0
+		var mx: float = 0.0
+		for r in used:
+			var v: float = _val(r)
+			sq += v * v
+			sm += v
+			mx = maxf(mx, absf(v))
+		var n: float = float(used.size())
+		var rms: float = sqrt(sq / n)
+		var bias: float = sm / n
+		var rej: int = _visible_rows().size() - used.size()
+		var suf: String = _unit_suffix()
+		msg = (
+			"RMS %s%s  bias %s%s  max %s%s  used %d  rej %d  [track %s]  %s"
+			% [
+				_fmt(rms),
+				suf,
+				_fmt(bias),
+				suf,
+				_fmt(mx),
+				suf,
+				used.size(),
+				rej,
+				track_id,
+				_mode_hint(),
+			]
 		)
-		return
-	var sq: float = 0.0
-	var sm: float = 0.0
-	var mx: float = 0.0
-	for r in used:
-		var v: float = float(r["raw_value"])
-		sq += v * v
-		sm += v
-		mx = maxf(mx, absf(v))
-	var n: float = float(used.size())
-	var rms: float = sqrt(sq / n)
-	var bias: float = sm / n
-	var rej: int = residuals.size() - used.size()
-	var txt := (
-		"RMS %.2f°  bias %+.2f°  max %.2f°  used %d  rej %d  [track %s]  click: deg/sigma"
-		% [
-			rms,
-			bias,
-			mx,
-			used.size(),
-			rej,
-			track_id,
-		]
-	)
 	draw_rect(
-		Rect2(Vector2(pr.position.x + 4, pr.position.y + 2), Vector2(560, 20)),
+		Rect2(Vector2(pr.position.x + 4, pr.position.y + 2), Vector2(640, 20)),
 		Color(0.02, 0.05, 0.07, 0.75)
 	)
 	draw_string(
 		_font,
 		Vector2(pr.position.x + 8, pr.position.y + 18),
-		txt,
+		msg,
 		HORIZONTAL_ALIGNMENT_LEFT,
 		-1,
 		14,
@@ -198,7 +254,7 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-			use_sigma = not use_sigma
+			_cycle_mode()
 			queue_redraw()
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
@@ -209,10 +265,20 @@ func _gui_input(event: InputEvent) -> void:
 			queue_redraw()
 
 
+## deg → m → σ → deg；无 range 行时跳过 m（保持纯被动下 deg↔σ 两态）。
+func _cycle_mode() -> void:
+	if mode == MODE_DEG:
+		mode = MODE_M if _has_range_rows() else MODE_SIGMA
+	elif mode == MODE_M:
+		mode = MODE_SIGMA
+	else:
+		mode = MODE_DEG
+
+
 func _nearest_time(pos: Vector2) -> float:
 	var best_t: float = -1.0
 	var best_d: float = 14.0
-	for r in residuals:
+	for r in _visible_rows():
 		var p := Vector2(_tx(float(r["time"])), _ty(_val(r)))
 		var d: float = p.distance_to(pos)
 		if d < best_d:

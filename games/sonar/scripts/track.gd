@@ -35,6 +35,16 @@ var staleness: float = 0.0  # 距上次更新的秒数
 var merged_track_ids: Array = []  # 若为 Master Track，记录合并进来的子航迹
 var state: int = TrackState.ACTIVE
 var origin_time: float = 0.0  # 首次 Mark 的时间
+## S1-04C-REQ-03/06：最近一次关联的置信度 0..1（由 Tracker 评分写入，
+## 无 range 参考的方位退化关联会偏低；Contact 行显示用）。
+var association_confidence: float = 0.0
+## S1-04C-REQ-03：最近一次关联的评分模式（Tracker 写入）：
+##   "range"        新测量带测距且 Track 有最后有效测距 → 双测距门控
+##   "predicted"    Track 无测距历史但有有效 TMA 预测测距 → 预测门控
+##   "bearing_only" 纯方位退化关联（无任何 range 参照）
+var last_association_mode: String = "bearing_only"
+## 最近一次关联的归一化评分 d²（越小越紧；无关联时保持大值）。
+var last_association_score: float = 1.0e9
 
 
 ## 创建一个新接触。source_type 取 "S"/"E"/"R"/"V"/"M"。
@@ -90,6 +100,18 @@ func first_measurement() -> Measurement:
 	if measurement_history.is_empty():
 		return null
 	return measurement_history[0]
+
+
+## S1-04C-REQ-03：最后一次"有效测距"的测量。
+## 最新测量可能只是纯方位被动（无 range），但 Track 此前曾收到过主动测距；
+## 关联测距门控做协方差比较（σRc² = σR_new² + σR_last_valid² + σmotion²）时
+## 必须用它而不是 latest_measurement()。无测距历史时返回 null。
+func last_valid_range_measurement() -> Measurement:
+	for i in range(measurement_history.size() - 1, -1, -1):
+		var m: Measurement = measurement_history[i]
+		if m.has_range():
+			return m
+	return null
 
 
 ## 有效物理证据数（S1-00-REQ-02）：按去重 evidence_id 统计，A/B 镜像共享
