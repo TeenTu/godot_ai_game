@@ -569,6 +569,11 @@ func _rebuild_display_data() -> void:
 		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
 	)
 	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
+	# S1-04C-REQ-03/06：选中 Track 最近有效测距 → 海图 range ring/带宽（同色）
+	if sel != null:
+		_chart.range_ring = TmaUiData.range_ring_data(sel, now, _color_for_track(sel.track_id))
+	else:
+		_chart.range_ring = {}
 
 	# 2) Bearing-Time（选中 track，标注 track_id）
 	var points: Array = []
@@ -779,15 +784,7 @@ func _update_contact_rows() -> void:
 			(_contact_rows[tid] as Button).queue_free()
 			_contact_rows.erase(tid)
 	for t in active:
-		var m: Measurement = t.latest_measurement()
-		var label := (
-			"%s  Brg %.0f°  (%d meas)"
-			% [
-				t.track_id,
-				m.measured_bearing_deg,
-				t.measurement_history.size(),
-			]
-		)
+		var label := TmaUiData.contact_label(t)
 		if _contact_rows.has(t.track_id):
 			(_contact_rows[t.track_id] as Button).text = label
 		else:
@@ -800,6 +797,16 @@ func _update_contact_rows() -> void:
 			_panel.add_child(b)
 			_contact_rows[t.track_id] = b
 		var btn := _contact_rows[t.track_id] as Button
+		# REQ-03/06 关联徽章色阶：R（测距门控）绿 / P（预测门控）橙 / B（纯方位）灰
+		var badge: String = TmaUiData.association_badge(t)
+		var badge_col := Color(0.9, 0.92, 0.94)
+		if badge.begins_with("R"):
+			badge_col = Color(0.4, 1.0, 0.6)
+		elif badge.begins_with("P"):
+			badge_col = Color(1.0, 0.82, 0.4)
+		elif badge.begins_with("B"):
+			badge_col = Color(0.8, 0.85, 0.92)
+		btn.add_theme_color_override("font_color", badge_col)
 		btn.set_pressed_no_signal(t.track_id == selected_track_id)
 
 

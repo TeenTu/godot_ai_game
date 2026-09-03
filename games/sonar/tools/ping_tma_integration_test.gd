@@ -54,6 +54,7 @@ func _initialize() -> void:
 	_r20_fixed_listen_window(fails)
 	_r22_emission_event(fails)
 	_c5c_residual_kind_rows(fails)
+	_c5d_visual_badges(fails)
 	_e2e_controller_to_fit(fails)
 	if fails.is_empty():
 		print("PING_TMA_INTEGRATION result=PASS")
@@ -661,6 +662,92 @@ func _c5c_residual_kind_rows(fails: Array) -> void:
 		plot2._cycle_mode()
 		_assert_eq(fails, "C5C no-range skips m", plot2.mode, "sigma")
 		plot2.free()
+
+
+# =====================================================================
+#  C5-D（REQ-03/06 视觉联动）：Contact 行徽章 + range ring 数据
+# =====================================================================
+
+
+func _c5d_visual_badges(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO, 45.0, 8.0)
+	var tgt := _tgt_at(Vector2(8000.0, 6000.0), 200.0, 10.0)
+	var ms: Array = _collect_leg(own, tgt, 300.0, 60.0, 300.0, 0.0, 200.0, 150.0, 120.0)
+	ms.pop_back()
+	var ev: int = 0
+	for m in ms:
+		ev += 1
+		m.evidence_id = "ev_%03d" % ev
+		m.measurement_id = ev
+	var track := Track.create("P", 1, ms[0])
+	for i in range(1, ms.size()):
+		track.add_measurement(ms[i])
+	var n_phys: int = ms.size()  # 5 被动 + 1 主动 = 6
+	var active_m: Measurement = ms[ms.size() - 1]
+	_assert_true(fails, "C5D last meas has range", active_m.has_range())
+	# 徽章分级：R（真实测距）/ P（预测测距）/ B（纯方位）；conf=0 → 空。
+	track.association_confidence = 0.9
+	track.last_association_mode = "range"
+	_assert_eq(fails, "C5D badge R", TmaUiData.association_badge(track), "R.90")
+	track.last_association_mode = "predicted"
+	track.association_confidence = 0.8
+	_assert_eq(fails, "C5D badge P", TmaUiData.association_badge(track), "P.80")
+	track.last_association_mode = "bearing_only"
+	track.association_confidence = 0.35
+	_assert_eq(fails, "C5D badge B", TmaUiData.association_badge(track), "B.35")
+	track.association_confidence = 0.0
+	_assert_eq(fails, "C5D no badge on conf 0", TmaUiData.association_badge(track), "")
+	# 行文本：编号 + Brg + Rng（最新带测距）+ 徽章 + 测量数。
+	track.association_confidence = 0.9
+	track.last_association_mode = "range"
+	var lab: String = TmaUiData.contact_label(track)
+	_assert_true(fails, "C5D label has track id", lab.contains(track.track_id))
+	_assert_true(fails, "C5D label has Rng", lab.contains("Rng %.0fm" % active_m.measured_range_m))
+	_assert_true(fails, "C5D label has R.90", lab.contains("R.90"))
+	_assert_true(fails, "C5D label has meas count", lab.contains("(%d meas)" % n_phys))
+	# range ring 数据：中心=测量时刻观测位，半径=measured_range，σ/方位随附。
+	var ring: Dictionary = TmaUiData.range_ring_data(
+		track, active_m.timestamp, Color(0.4, 1.0, 0.6)
+	)
+	if ring.is_empty():
+		fails.append("C5D range_ring_data empty for fresh range")
+		return
+	_assert_close(
+		fails,
+		"C5D ring center east",
+		float((ring["center"] as Vector2).x),
+		active_m.observer_east_m,
+		1e-3
+	)
+	_assert_close(
+		fails,
+		"C5D ring center north",
+		float((ring["center"] as Vector2).y),
+		active_m.observer_north_m,
+		1e-3
+	)
+	_assert_close(
+		fails, "C5D ring range_m", float(ring["range_m"]), active_m.measured_range_m, 1e-3
+	)
+	_assert_close(fails, "C5D ring sigma_m", float(ring["sigma_m"]), active_m.range_sigma_m, 1e-3)
+	_assert_close(
+		fails, "C5D ring bearing", float(ring["bearing_deg"]), active_m.measured_bearing_deg, 1e-3
+	)
+	# 过期证据（>300s）→ 空 dict（不画误导环）。
+	_assert_true(
+		fails,
+		"C5D stale ring suppressed",
+		TmaUiData.range_ring_data(track, active_m.timestamp + 400.0, Color.WHITE).is_empty()
+	)
+	# 纯被动 Track（无测距历史）→ 无 ring。
+	var track_b := Track.create("S", 2, ms[0])
+	for i in range(1, n_phys - 1):
+		track_b.add_measurement(ms[i])
+	_assert_true(
+		fails,
+		"C5D no-range track has no ring",
+		TmaUiData.range_ring_data(track_b, ms[n_phys - 2].timestamp, Color.WHITE).is_empty()
+	)
 
 
 # =====================================================================

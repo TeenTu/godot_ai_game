@@ -427,6 +427,65 @@ static func dot_stack_compute(ds: DotStack, r: Dictionary, sel: Track) -> void:
 	ds.compute(inlier_meas, p0.x, p0.y, v0.x, v0.y, float(best.get("t_ref", 0.0)))
 
 
+# ------------------------------------------------------------------
+#  S1-04C-REQ-03/06：Contact 行徽章 + 海图 range ring 数据（视觉联动）
+# ------------------------------------------------------------------
+
+
+## Contact 行关联徽章：R=真实测距门控 / P=预测测距门控 / B=纯方位退化，
+## 附最近一次关联置信度（REQ-03）。从未经 Tracker 关联（conf=0）返回空串。
+static func association_badge(t: Track) -> String:
+	if t == null or t.association_confidence <= 0.0:
+		return ""
+	var sym: String = "B"
+	match t.last_association_mode:
+		"range":
+			sym = "R"
+		"predicted":
+			sym = "P"
+	return "%s.%.0f" % [sym, t.association_confidence * 100.0]
+
+
+## Contact 行完整文本：编号 + 最新方位 +（最新带测距时）Rng + 关联徽章 + 测量数。
+static func contact_label(t: Track) -> String:
+	if t == null:
+		return "?"
+	var m: Measurement = t.latest_measurement()
+	var parts: Array = [t.track_id]
+	if m != null:
+		parts.append("Brg %.0f°" % m.measured_bearing_deg)
+		if m.has_range():
+			parts.append("Rng %.0fm" % m.measured_range_m)
+	else:
+		parts.append("no meas")
+	var badge := association_badge(t)
+	if badge != "":
+		parts.append(badge)
+	parts.append("(%d meas)" % t.measurement_history.size())
+	return "  ".join(parts)
+
+
+## 海图 range ring 数据：取 Track 最后一次有效测距（可能非最新测量）为心/
+## 半径，附 σ 带宽与测量方位。超出 max_age_s 视为过期证据，返回 {}。
+## color 由调用方按 Track 色传入（同色高亮，与 LOB/拟合一致）。
+static func range_ring_data(
+	t: Track, now: float, color: Color, max_age_s: float = 300.0
+) -> Dictionary:
+	if t == null:
+		return {}
+	var m: Measurement = t.last_valid_range_measurement()
+	if m == null or now - m.timestamp > max_age_s:
+		return {}
+	return {
+		"center": Vector2(m.observer_east_m, m.observer_north_m),
+		"range_m": m.measured_range_m,
+		"sigma_m": m.range_sigma_m,
+		"bearing_deg": m.measured_bearing_deg,
+		"color": color,
+		"track_id": t.track_id,
+	}
+
+
 ## 最近一次测量。
 static func latest_measurement(world: World) -> Measurement:
 	if world.measurements.is_empty():
