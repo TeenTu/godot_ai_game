@@ -32,6 +32,15 @@
       "full_length_heading_tau_s": 45.0,
       "short_length_heading_tau_s": 8.0,
       "settle_deg": 3.0
+    },
+    "active_sonar": {
+      "ping_sl_db": 210.0,
+      "cooldown_s": 15.0,
+      "freq_min_hz": 2000.0,
+      "freq_max_hz": 4000.0,
+      "array_gain_db": 24.0,
+      "sound_speed_m_s": 1500.0,
+      "listen_window_s": 15.0
     }
   },
   "own_acoustic": {

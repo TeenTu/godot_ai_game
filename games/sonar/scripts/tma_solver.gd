@@ -43,9 +43,13 @@ const CLUSTER_COURSE_DEG: float = 15.0
 
 ## 一条解算输入的测量（普通 Dictionary）：
 ##   { "time": float, "observer_e": float, "observer_n": float,
-##     "bearing": float, "sigma": float }
+##     "bearing": float, "sigma": float（或 bearing_sigma_deg）,
+##     可选 "range_m"/"range" + "range_sigma_m"/"range_sigma" }
 ## bearing 为从本艇看目标的方位（度，从北顺时针）；observer_* 必须是
 ## 测量发生时刻的本艇位置，不得用当前帧位置代替。
+## S1-04B 混合观测：带 range 的测量（主动声呐回波）展开为 BEARING+RANGE
+## 两个独立残差行——距离观测量进入候选搜索/LM/Huber/雅可比/可观测性/
+## 协方差/离群判断/残差报告；纯方位输入（无 range 键）行为零变化。
 
 # =====================================================================
 #  对外主入口：solve_auto
@@ -146,6 +150,10 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	var n: int = valid.size()
 	if res["status"] == "NO_DATA" or res["status"] == "INSUFFICIENT_MEASUREMENTS":
 		return res
+	# 带测距测量（主动声呐回波）展开为 方位+距离 双残差行：range 必须参与
+	# TMA 拟合，而不是只画 LOB/当摘要数字后被丢弃（S1-04B-REQ-08）。
+	valid = _expand_range(valid)
+	n = valid.size()
 
 	var t_ref: float = float(valid[n - 1]["time"])
 	var o_ref := Vector2(float(valid[n - 1]["observer_e"]), float(valid[n - 1]["observer_n"]))
@@ -231,10 +239,14 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	# ---------- 7. 残差与统计 ----------
 	var residuals: Array = []
 	var sq_sum_deg: float = 0.0
+	var sq_sum_rng: float = 0.0
 	var sq_sum_w: float = 0.0
 	var used_count: int = 0
+	var used_bearing: int = 0
+	var used_range: int = 0
 	var us2: Array = _normalized_residuals(valid, t_ref, best["x"])
 	for i in range(n):
+		var is_rng: bool = bool(valid[i].get("_is_range", false))
 		var sigma: float = maxf(float(valid[i].get("sigma", 1.0)), 0.1)
 		var r_deg: float = _single_residual(valid[i], t_ref, best["x"])
 		(
@@ -246,15 +258,24 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 					"residual_deg": r_deg,
 					"normalized": float(us2[i]),
 					"inlier": inlier_mask[i],
+					"kind": "range" if is_rng else "bearing",
 				}
 			)
 		)
 		if inlier_mask[i]:
 			used_count += 1
-			sq_sum_deg += r_deg * r_deg
 			sq_sum_w += float(us2[i]) * float(us2[i])
-	var angular_rmse: float = sqrt(sq_sum_deg / maxf(used_count, 1))
+			if is_rng:
+				used_range += 1
+				sq_sum_rng += r_deg * r_deg
+			else:
+				used_bearing += 1
+				sq_sum_deg += r_deg * r_deg
+	var angular_rmse: float = sqrt(sq_sum_deg / maxf(used_bearing, 1))
 	var weighted_rmse: float = sqrt(sq_sum_w / maxf(used_count, 1))
+	var range_rmse_m: float = -1.0
+	if used_range > 0:
+		range_rmse_m = sqrt(sq_sum_rng / float(used_range))
 
 	# ---------- 8. 可观测性（雅可比 SVD，尺度归一化） ----------
 	var svd: Dictionary = _observability(valid, t_ref, best["x"], inlier_mask)
@@ -268,7 +289,8 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	var status: String = "CONVERGED"
 	if n < 4:
 		status = "INSUFFICIENT_MEASUREMENTS"
-	elif legs < 2 or rank < 4 or cond > 1.0e4:
+	elif rank < 4 or cond > 1.0e4 or (legs < 2 and used_range == 0):
+		# 主动测距提供距离观测量：单腿也能锚定目标（无 range 时保持纯方位需 2 腿）
 		status = "INSUFFICIENT_GEOMETRY"
 	elif alt_weight_max >= MULTIMODAL_WEIGHT_RATIO:
 		status = "MULTIMODAL"
@@ -313,6 +335,14 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	res["weighted_cost"] = j_min
 	res["angular_rmse"] = angular_rmse
 	res["weighted_rmse"] = weighted_rmse
+	res["range_rmse_m"] = range_rmse_m
+	res["has_range_measurements"] = used_range > 0
+	res["active_range_rows_used"] = used_range
+	var rr_rejected: int = 0
+	for rr in residuals:
+		if str(rr.get("kind", "")) == "range" and not bool(rr.get("inlier", true)):
+			rr_rejected += 1
+	res["active_range_rows_rejected"] = rr_rejected
 	res["jacobian_rank"] = rank
 	res["condition_number"] = cond
 	res["singular_values"] = svd["singular_values"]
@@ -354,7 +384,7 @@ static func _validate(measurements: Array, res: Dictionary, options: Dictionary)
 		var m: Dictionary = measurements[i]
 		var t: float = float(m.get("time", NAN))
 		var brg: float = float(m.get("bearing", NAN))
-		var sig: float = float(m.get("sigma", 0.0))
+		var sig: float = maxf(float(m.get("bearing_sigma_deg", m.get("sigma", 0.0))), 0.0)
 		if is_nan(t) or is_nan(brg) or sig <= 0.0:
 			continue  # 无效测量：直接丢弃（记入诊断）
 		if t < last_t:
@@ -365,7 +395,16 @@ static func _validate(measurements: Array, res: Dictionary, options: Dictionary)
 		if seen.has(key):
 			continue  # 重复测量
 		seen[key] = true
+		# 规范化（S1-04B-REQ-04）：统一映射为内部 sigma/range 键，兼容旧 sigma
+		# 与文档字段 range_m/range_sigma_m/bearing_sigma_deg。
 		var copy: Dictionary = m.duplicate()
+		copy["bearing"] = brg
+		copy["sigma"] = sig
+		var rng_m: float = float(m.get("range_m", m.get("range", -1.0)))
+		var rng_sig_m: float = float(m.get("range_sigma_m", m.get("range_sigma", -1.0)))
+		if rng_m >= 0.0 and rng_sig_m > 0.0:
+			copy["range"] = rng_m
+			copy["range_sigma"] = rng_sig_m
 		copy["_orig_index"] = i
 		out.append(copy)
 	if out.is_empty():
@@ -374,6 +413,23 @@ static func _validate(measurements: Array, res: Dictionary, options: Dictionary)
 		res["status"] = "INSUFFICIENT_MEASUREMENTS"
 	else:
 		res["status"] = ""  # 校验通过，清空骨架默认状态
+	return out
+
+
+## 把带测距的测量展开为 方位+距离 双观测量（S1-04B-REQ-08 ResidualRow）。
+## range 副本 _is_range=true 且 sigma 覆盖为 range_sigma（米）——归一化 u 与方位
+## 同量纲，LM/IRLS/雅可比/可观测性无需区分类型；残差由 _single_residual 按
+## _is_range 走 预测距离−实测距离。纯方位输入零展开（行为不变）。
+static func _expand_range(valid: Array) -> Array:
+	var out: Array = []
+	for m in valid:
+		out.append(m)
+		if float(m.get("range", -1.0)) >= 0.0 and float(m.get("range_sigma", -1.0)) > 0.0:
+			var r: Dictionary = m.duplicate()
+			r["_is_range"] = true
+			r["sigma"] = float(m["range_sigma"])  # 距离观测量按米归一化
+			out.append(r)
+	out.sort_custom(func(a, b): return float(a["time"]) < float(b["time"]))
 	return out
 
 
@@ -398,6 +454,21 @@ static func _global_candidates(
 	var brad: float = deg_to_rad(brg_ref)
 	var dir_lob := Vector2(sin(brad), cos(brad))
 	var ranges: Array = _log_space(maxf(min_r, 300.0), max_r, 8)
+	# 主动测距辅助初值（S1-04B-REQ-09）：最新测量带 range 时沿 LOB 以 R 及
+	# R±nσ 加窄采样（LM 起步在正确 basin）；原对数全局搜索保留兜底，避免错误
+	# 主动回波完全控制解算。
+	var last_m: Dictionary = valid[valid.size() - 1]
+	if float(last_m.get("range", -1.0)) >= 0.0:
+		var r_anchor: float = clampf(float(last_m["range"]), maxf(min_r, 300.0), max_r)
+		var r_sig: float = maxf(float(last_m.get("range_sigma", 1.0)), 1.0)
+		var narrow: Array = []
+		for f in [0.6, 0.8, 1.0, 1.2, 1.4]:
+			narrow.append(clampf(r_anchor * f, maxf(min_r, 300.0), max_r))
+		for k in range(-3, 4):
+			if k == 0:
+				continue
+			narrow.append(clampf(r_anchor + float(k) * r_sig, maxf(min_r, 300.0), max_r))
+		ranges = narrow + ranges
 	var courses: Array = []
 	for c in range(0, 360, 30):
 		courses.append(float(c))
@@ -568,6 +639,9 @@ static func _single_residual(m: Dictionary, t0: float, x: Vector4) -> float:
 	var p := Vector2(x.x + x.z * t, x.y + x.w * t)
 	var o := Vector2(float(m["observer_e"]), float(m["observer_n"]))
 	var d: Vector2 = p - o
+	if bool(m.get("_is_range", false)):
+		# 距离残差行（S1-04B-REQ-06）：u_R=(R_pred−R_meas)/σ_R（米）
+		return d.length() - float(m["range"])
 	var pred_bearing: float = rad_to_deg(atan2(d.x, d.y))  # 从北顺时针
 	return NavUtils.wrap180(pred_bearing - float(m["bearing"]))
 
@@ -634,6 +708,8 @@ static func _make_hypothesis(
 	# 预测方位序列（供 Bearing-Time 图画模型曲线）
 	var pred: Array = []
 	for m in valid:
+		if bool(m.get("_is_range", false)):
+			continue  # range 行无独立方位预测（同刻方位已由 BEARING 行计）
 		var t: float = float(m["time"]) - t_ref
 		var p := Vector2(x.x + x.z * t, x.y + x.w * t)
 		var dd: Vector2 = p - Vector2(float(m["observer_e"]), float(m["observer_n"]))
@@ -908,6 +984,10 @@ static func _empty_result() -> Dictionary:
 		"weighted_cost": INF,
 		"angular_rmse": INF,
 		"weighted_rmse": INF,
+		"range_rmse_m": -1.0,
+		"has_range_measurements": false,
+		"active_range_rows_used": 0,
+		"active_range_rows_rejected": 0,
 		"jacobian_rank": 0,
 		"condition_number": INF,
 		"singular_values": [],

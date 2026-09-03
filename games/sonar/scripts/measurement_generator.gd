@@ -70,6 +70,8 @@ func generate_passive(
 	m.timestamp = timestamp
 	m.sensor_id = sensor.sensor_id
 	m.target_id = target.id
+	m.measurement_type = "PASSIVE_BEARING"
+	m.available_time = timestamp
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing
@@ -87,14 +89,20 @@ func generate_passive(
 	return m
 
 
-## 生成对某目标的主动观测（带测距）。
+## 生成对某目标的主动观测（方位＋距离，ACTIVE_RANGE_BEARING）。
+## S1-04B-REQ-19 往返测距同源：range_ref_m>0 时，measured_range_m 以发射时刻
+## 登记距离（=c(t_return-t_emit)/2 的静态近似）为基准加噪声，绝不回填到达时刻
+## 的当前 Truth 距离；目标在往返 τ 内的位移进入 range_sigma_m（移动近似误差）。
 func generate_active(
 	observer: RefCounted,
 	target: RefCounted,
 	target_ac: RefCounted,
 	sensor: RefCounted,
 	ping_sl_db: float,
-	timestamp: float
+	timestamp: float,
+	ping_id: int = -1,
+	range_ref_m: float = -1.0,
+	range_ref_time_s: float = -1.0
 ) -> Measurement:
 	var m := Measurement.new()
 
@@ -123,6 +131,9 @@ func generate_active(
 	m.timestamp = timestamp
 	m.sensor_id = sensor.sensor_id
 	m.target_id = target.id
+	m.measurement_type = "ACTIVE_RANGE_BEARING"
+	m.ping_id = ping_id
+	m.available_time = timestamp
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing
@@ -136,7 +147,18 @@ func generate_active(
 		m.bearing_sigma_deg = nb["sigma"]
 		# 主动声呐带测距，误差随 SE 变化
 		var range_sigma: float = rng_range * 0.02 + (1.0 / maxf(se, 0.1)) * 30.0
-		m.measured_range_m = rng_range + _rng.randfn(0.0, range_sigma)
+		if range_ref_m > 0.0:
+			# 测距即测时：以发射时刻登记的几何距离为基准（往返测距同源）。
+			# τ 内目标位移的保守径向项并入 σ（R=cτ/2 仅对静止目标严格成立）。
+			var drift: float = 0.0
+			if range_ref_time_s > 0.0:
+				drift = (
+					absf(timestamp - range_ref_time_s) * NavUtils.kn_to_ms(target.speed_kn)
+				)
+			range_sigma = sqrt(range_sigma * range_sigma + drift * drift)
+			m.measured_range_m = range_ref_m + _rng.randfn(0.0, range_sigma)
+		else:
+			m.measured_range_m = rng_range + _rng.randfn(0.0, range_sigma)
 		m.range_sigma_m = range_sigma
 		m.detected_frequencies = _build_lofar(target_ac, se)
 		m.snr_db = se

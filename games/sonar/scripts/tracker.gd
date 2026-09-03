@@ -15,6 +15,11 @@ extends RefCounted
 ##   - 接触丢失 → 对应 Track 进入 LOST 状态，不得凭空继续生成精确测量。
 ##   - 关联：按方位 + 本艇位置最近邻，把新测量归到最可能的已有 Track。
 
+# 方位＋距离关联门控（S1-04B-REQ-11）：
+#   d² = (Δθ/σθc)² + (ΔR/σRc)²；σRc² = σnew² + σold² + (v·Δt)²
+const RANGE_GATE_D2: float = 6.0  # 归一化门限（χ² 2dof 95% ≈ 5.99）
+const RANGE_GATE_VEL_MS: float = 8.0  # 门内目标机动速度估计（~15kn），随 Δt 累计
+
 var _tracks: Array = []  # 全部 Track
 var _next_number: Dictionary = {}  # source_type -> 下一个编号（S/E/R/V/M 各自计数）
 var _rng: RandomNumberGenerator = null
@@ -47,9 +52,12 @@ func mark(m: Measurement, source_type: String = "S") -> Track:
 
 ## 把所有测量按最近邻关联到已有 Track（或返回 null 表示无匹配）。
 ## 用于 Tracker 持续跟踪时把新测量归到正确接触。
+## S1-04B-REQ-11 方位＋距离门控：新测量与 Track 最近测量均带测距时，
+## d²=(Δθ/σθc)²+(ΔR/σRc)²（σRc² 含 σ_motion²=v²Δt²），d²<门限才可关联；
+## Track 无历史测距时退化为方位门控（保持既有行为）。
 func associate(m: Measurement, max_angle_deg: float = 6.0) -> Track:
 	var best: Track = null
-	var best_angle: float = 1e9
+	var best_score: float = 1e9
 	for track in _tracks:
 		if track.state != Track.TrackState.ACTIVE:
 			continue
@@ -60,8 +68,25 @@ func associate(m: Measurement, max_angle_deg: float = 6.0) -> Track:
 		var dangle: float = absf(
 			NavUtils.angle_diff(m.measured_bearing_deg, prev.measured_bearing_deg)
 		)
-		if dangle < best_angle and dangle <= max_angle_deg:
-			best_angle = dangle
+		if dangle > max_angle_deg:
+			continue
+		var s_theta: float = sqrt(
+			m.bearing_sigma_deg * m.bearing_sigma_deg + prev.bearing_sigma_deg * prev.bearing_sigma_deg
+		)
+		var score: float = (dangle / maxf(s_theta, 0.1)) * (dangle / maxf(s_theta, 0.1))
+		if prev.has_range() and m.has_range():
+			var dt: float = maxf(m.timestamp - prev.timestamp, 0.0)
+			var s_rng: float = sqrt(
+				m.range_sigma_m * m.range_sigma_m
+				+ prev.range_sigma_m * prev.range_sigma_m
+				+ pow(RANGE_GATE_VEL_MS * dt, 2.0)
+			)
+			var d_rng: float = m.measured_range_m - prev.measured_range_m
+			score += (d_rng / maxf(s_rng, 1.0)) * (d_rng / maxf(s_rng, 1.0))
+			if score >= RANGE_GATE_D2:
+				continue
+		if score < best_score:
+			best_score = score
 			best = track
 	return best
 

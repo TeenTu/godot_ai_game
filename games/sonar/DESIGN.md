@@ -237,14 +237,26 @@ SE_active = SL_ping - 2*TL + TS - N_eff + AG - DT   # 两段路径损失
 τ = 2R/c          # 一去一回传播时间；c = 声速 ≈ 1500m/s
 R = c·τ/2         # 测距即测时（AcousticService.echo_travel_time_s / range_from_echo_time_s）
 ```
-发射瞬间只登记各目标的在途回波（`arrive_t = now + 2R/c`）；`take_arrived_echoes()`
-在到达时刻（`sim_time >= arrive_t`）才结算：跑主动 SE 检测、带测距
-（`measured_range_m`，误差随 SE 增大）、append 进 measurements 并由 UI 喂
-Tracker（等价一次玩家触发的自动 Mark）。冷却从发射时刻起算；等待期 UI 显示
-"echo in ~Xs"。默认艇首主动阵缺省 2-4kHz / AG 24dB / SL_ping 210dB / 冷却
-15s / 声速 1500m/s；场景可用 `own_ship.active_sonar`（ping_sl_db / cooldown_s /
-freq_min_hz / freq_max_hz / array_gain_db / sound_speed_m_s）覆盖；场景配了
-`array_type=="active"` 传感器则复用之。
+**单在途状态机（REQ-16/17）**：`READY →(issue_ping) LISTENING →(回波全部
+结算/监听窗口结束) RETURN | NO_RETURN →(冷却到) READY`。会话未清时新 Ping
+一律被拒，绝不清理未返回回波。**硬件显式配置（REQ-20）**：场景必须有
+`own_ship.active_sonar` 块（或 sensors 含 `array_type=="active"` 阵）才可
+Ping；无硬件 → 状态 `UNAVAILABLE`、按钮禁用，绝不自动构造缺省主动阵。
+艇首主动阵参数（ping_sl_db / cooldown_s / freq_min_hz / freq_max_hz /
+array_gain_db / sound_speed_m_s / listen_window_s）全部由
+`own_ship.active_sonar` 覆盖；场景配了 `array_type=="active"` 传感器则复用之。
+
+发射瞬间只按当前几何登记各目标的在途回波（`arrive_t = now + 2R/c` 与
+`range_ref_m`，**测距同源基准 REQ-19**）；结算在到达时刻
+（`sim_time >= arrive_t`）触发：跑主动 SE 检测、以 `range_ref_m` 为基准加
+噪声得 `measured_range_m`（τ 内目标位移并入 `range_sigma_m`），绝不读到达
+时刻 Truth 距离回填。detected 回波 append 进 measurements 并由
+`ActivePingController` 喂 Tracker（等价一次玩家触发的 "P" Mark），随后经
+`on_echo_hits` 回调自动选中该接触并 REFIT——**主动 range 进入 TMA 解算**
+（range 残差行 + `RANGE AIDED` 摘要，S1-04B-REQ-08/REQ-10），而不是只显示
+在面板上当数字被丢弃。冷却从发射时刻起算；**面板状态完全来自
+`ping_state_name()`**（UNAVAILABLE/READY/LISTENING/RETURN/NO_RETURN），
+不显示 "echo in ~Xs" 之类由 Truth 推导的回波倒计时（ISSUE-06）。
 主动工作频率须权衡吸收（`alpha(f_khz)r_km` 随频率涨）——远距主动探测要低频。
 **隐蔽性代价**：发 ping 即暴露（面板橙字提示 + 世界记录 `_last_ping_t` 供
 敌方被动截获逻辑读取；AI 联动归武器批次）。
