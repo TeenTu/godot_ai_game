@@ -229,20 +229,23 @@ func issue_ping() -> bool:
 		)
 		var tau_s: float = AcousticService.echo_travel_time_s(rng_m, ping_sound_speed_m_s)
 		farthest_tau = maxf(farthest_tau, tau_s)
-		echoes.append(
-			{
-				"target_id": str(t.id),
-				"arrive_t": sim_time + tau_s,
-				"range_ref_m": rng_m,  # 发射时刻登记距离（测距同源基准）
-				"range_ref_time_s": sim_time,
-				"settled": false,
-				"detected": false,
-				"se_db": 0.0,
-				"pd": 0.0,
-				"bearing_deg": 0.0,
-				"range_m": -1.0,
-				"range_sigma_m": -1.0,
-			}
+		(
+			echoes
+			. append(
+				{
+					"target_id": str(t.id),
+					"arrive_t": sim_time + tau_s,
+					"range_ref_m": rng_m,  # 发射时刻登记距离（测距同源基准）
+					"range_ref_time_s": sim_time,
+					"settled": false,
+					"detected": false,
+					"se_db": 0.0,
+					"pd": 0.0,
+					"bearing_deg": 0.0,
+					"range_m": -1.0,
+					"range_sigma_m": -1.0,
+				}
+			)
 		)
 	_ping_session = {
 		"state": "LISTENING",
@@ -355,16 +358,19 @@ func _settle_due_echoes() -> void:
 		if target == null:
 			continue
 		var ac: AcousticProfile = world["target_acs"][target.id]
-		var m: Measurement = gen.generate_active(
-			own,
-			target,
-			ac,
-			sensor,
-			ping_sl_db,
-			sim_time,
-			ping_id,
-			float(e["range_ref_m"]),
-			float(e["range_ref_time_s"]),
+		var m: Measurement = (
+			gen
+			. generate_active(
+				own,
+				target,
+				ac,
+				sensor,
+				ping_sl_db,
+				sim_time,
+				ping_id,
+				float(e["range_ref_m"]),
+				float(e["range_ref_time_s"]),
+			)
 		)
 		var detected: bool = m.has_range()
 		e["detected"] = detected
@@ -398,16 +404,19 @@ func _ping_sensor() -> SensorArray:
 		if str(s.array_type) == "active":
 			return s
 	var s := SensorArray.new()
-	s.from_dict(
-		{
-			"sensor_id": ACTIVE_SENSOR_ID,
-			"array_type": "active",
-			"owner_id": str(world["own"].id),
-			"freq_min_hz": ping_freq_min_hz,
-			"freq_max_hz": ping_freq_max_hz,
-			"array_gain_db": ping_array_gain_db,
-			"detection_threshold_db": 0.0,
-		}
+	(
+		s
+		. from_dict(
+			{
+				"sensor_id": ACTIVE_SENSOR_ID,
+				"array_type": "active",
+				"owner_id": str(world["own"].id),
+				"freq_min_hz": ping_freq_min_hz,
+				"freq_max_hz": ping_freq_max_hz,
+				"array_gain_db": ping_array_gain_db,
+				"detection_threshold_db": 0.0,
+			}
+		)
 	)
 	s.set_rng(world["rng"])
 	return s

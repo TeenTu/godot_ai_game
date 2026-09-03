@@ -71,15 +71,20 @@ func associate(m: Measurement, max_angle_deg: float = 6.0) -> Track:
 		if dangle > max_angle_deg:
 			continue
 		var s_theta: float = sqrt(
-			m.bearing_sigma_deg * m.bearing_sigma_deg + prev.bearing_sigma_deg * prev.bearing_sigma_deg
+			(
+				m.bearing_sigma_deg * m.bearing_sigma_deg
+				+ prev.bearing_sigma_deg * prev.bearing_sigma_deg
+			)
 		)
 		var score: float = (dangle / maxf(s_theta, 0.1)) * (dangle / maxf(s_theta, 0.1))
 		if prev.has_range() and m.has_range():
 			var dt: float = maxf(m.timestamp - prev.timestamp, 0.0)
 			var s_rng: float = sqrt(
-				m.range_sigma_m * m.range_sigma_m
-				+ prev.range_sigma_m * prev.range_sigma_m
-				+ pow(RANGE_GATE_VEL_MS * dt, 2.0)
+				(
+					m.range_sigma_m * m.range_sigma_m
+					+ prev.range_sigma_m * prev.range_sigma_m
+					+ pow(RANGE_GATE_VEL_MS * dt, 2.0)
+				)
 			)
 			var d_rng: float = m.measured_range_m - prev.measured_range_m
 			score += (d_rng / maxf(s_rng, 1.0)) * (d_rng / maxf(s_rng, 1.0))

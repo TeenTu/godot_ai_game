@@ -152,9 +152,7 @@ func generate_active(
 			# τ 内目标位移的保守径向项并入 σ（R=cτ/2 仅对静止目标严格成立）。
 			var drift: float = 0.0
 			if range_ref_time_s > 0.0:
-				drift = (
-					absf(timestamp - range_ref_time_s) * NavUtils.kn_to_ms(target.speed_kn)
-				)
+				drift = (absf(timestamp - range_ref_time_s) * NavUtils.kn_to_ms(target.speed_kn))
 			range_sigma = sqrt(range_sigma * range_sigma + drift * drift)
 			m.measured_range_m = range_ref_m + _rng.randfn(0.0, range_sigma)
 		else:
