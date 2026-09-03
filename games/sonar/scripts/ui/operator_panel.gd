@@ -42,6 +42,7 @@ var _len_slider: HSlider = null
 var _lbl_tow: Label = null  # TOWED 状态/阵航向/长度显示
 var _active_card: ActiveSonarCard = null  # 主动声呐结构化卡片（S1-04C-REQ-01）
 var _last_row_count: int = -1
+var _last_array_id: String = ""  # S1-03B：切阵列时即使行数相同也强制刷新瀑布
 
 
 func _init() -> void:
@@ -254,9 +255,14 @@ func set_active_sonar(data: Dictionary) -> void:
 
 
 ## Operator 有新瀑布行时调用（只在行数变化时重建 UI 数据）。
+## S1-03B：阵列切换后即使行数相同也强制重建——各阵列缓冲独立，必须立即
+## 只显示当前阵列自己的历史（拖曳阵双峰不得残留到 BOW/FLANK 视图）。
 func refresh(op: OperatorSonar) -> void:
+	var aid: String = op.active_array_id
+	var force: bool = aid != _last_array_id
+	_last_array_id = aid
 	var n: int = op.bb_rows.size()
-	if n == _last_row_count:
+	if n == _last_row_count and not force:
 		return
 	_last_row_count = n
 	wf_bb.set_rows(op.bb_rows.slice(maxi(0, n - MAX_ROWS_SHOWN)))

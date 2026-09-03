@@ -491,3 +491,64 @@ static func latest_measurement(world: World) -> Measurement:
 	if world.measurements.is_empty():
 		return null
 	return world.measurements[world.measurements.size() - 1]
+
+
+# ------------------------------------------------------------------
+#  S1-03B：显示层歧义隔离（可无头单测）
+# ------------------------------------------------------------------
+
+
+## 该测量是否为拖曳阵 A/B 的"镜像支"（branch<0）。显示层对镜像支必须用
+## 细虚线/半透明表示，绝不与主支同等级实线；同 pair 的主支（branch>0）实线。
+static func measurement_is_mirror(m: Measurement) -> bool:
+	return m.has_ambiguity() and m.ambiguity_branch < 0
+
+
+## 把单条 Track 的测量历史转成海图 LOB 条目（含 mirror 标记），供 main_ui
+## 组装 _chart.lobs。显示层据此做到：同一 physical evidence（A/B 共享
+## evidence_id）只会产生一条同等级普通 LOB + 至多一条镜像（细虚线）——
+## 绝不把两个分支当两条普通实线。
+static func lob_entries(t: Track, col: Color, is_sel: bool, outlier_times: Dictionary) -> Array:
+	var out: Array = []
+	for m in t.measurement_history:
+		var inlier: bool = not outlier_times.has(m.timestamp)
+		var a: float = 1.0 if is_sel else 0.12
+		(
+			out
+			. append(
+				{
+					"origin": Vector2(m.observer_east_m, m.observer_north_m),
+					"bearing_deg": m.measured_bearing_deg,
+					"color": Color(col.r, col.g, col.b, a),
+					"id": t.track_id,
+					"track_id": t.track_id,
+					"time": m.timestamp,
+					"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
+					"inlier": inlier,
+					"mirror": measurement_is_mirror(m),
+				}
+			)
+		)
+	return out
+
+
+## 选中 Track 的测量索引条目（海图悬停/选中联动），带 mirror 标记。
+static func meas_index_entries(t: Track, outlier_times: Dictionary) -> Array:
+	var out: Array = []
+	for m in t.measurement_history:
+		var inlier: bool = not outlier_times.has(m.timestamp)
+		(
+			out
+			. append(
+				{
+					"time": m.timestamp,
+					"origin": Vector2(m.observer_east_m, m.observer_north_m),
+					"bearing_deg": m.measured_bearing_deg,
+					"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
+					"inlier": inlier,
+					"mirror": measurement_is_mirror(m),
+					"track_id": t.track_id,
+				}
+			)
+		)
+	return out

@@ -97,9 +97,16 @@ const ARRAY_DEFS: Dictionary = {
 }
 
 var active_array_id: String = "BOW"
-var bb_rows: Array = []  # [{t, values, peaks:[{bearing_deg, level_db, se_db, snr_db}]}]
-var nb_rows: Array = []  # [{t, values: PackedFloat32Array(dB), tonals: [{freq_hz, level_db}]}]
-var demon_rows: Array = []  # [{t, values: PackedFloat32Array(dB)}]
+# S1-03B：BB/NB/DEMON 每阵列独立历史缓冲。切换阵列绝不把其它阵列的历史行
+# 混进当前瀑布；rows_by_array[aid] = {bb:[], nb:[], demon:[]}。公开的
+# bb_rows/nb_rows/demon_rows 恒为"当前 active 阵列"缓冲的引用（保留公开名与
+# 既有调用方/测试兼容），set_array() 切换时重绑定。
+var rows_by_array: Dictionary = {}
+# 当前阵列行：{t, array_id, sensor_id, bearing_frame, course, array_heading,
+#   own_e, own_n, tow_center_m, tow_length_m, values, peaks}
+var bb_rows: Array = []
+var nb_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values, tonals}]
+var demon_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values}]
 var demon_estimate: Dictionary = {}  # {rpm_hz, rpm_sigma_hz, blades, speed_kn, speed_sigma_kn, ..}
 var classification: Dictionary = {}  # {CLASS: p} + "best"
 var detection_count: int = 0
@@ -114,6 +121,20 @@ var _own_ref: RefCounted = null
 var _bb_noise_tex: PackedFloat32Array = PackedFloat32Array()
 var _nb_noise_tex: PackedFloat32Array = PackedFloat32Array()
 var _demon_noise_tex: PackedFloat32Array = PackedFloat32Array()
+
+
+func _init() -> void:
+	for aid in ARRAY_DEFS:
+		rows_by_array[aid] = {"bb": [], "nb": [], "demon": []}
+	_bind_rows_to_active()
+
+
+## 把公开 bb/nb/demon_rows 引用绑定到当前阵列缓冲（切阵列后调用）。
+func _bind_rows_to_active() -> void:
+	var b: Dictionary = rows_by_array[active_array_id]
+	bb_rows = b["bb"]
+	nb_rows = b["nb"]
+	demon_rows = b["demon"]
 
 
 func setup(world_dict: Dictionary) -> void:
@@ -132,8 +153,13 @@ func setup(world_dict: Dictionary) -> void:
 
 
 func set_array(id: String) -> void:
-	if ARRAY_DEFS.has(id):
-		active_array_id = id
+	if not ARRAY_DEFS.has(id):
+		return
+	if id == active_array_id:
+		return
+	active_array_id = id
+	# S1-03B：切阵列 → 重绑定瀑布缓冲，只展示该阵列自己的历史
+	_bind_rows_to_active()
 
 
 func _array_def() -> Dictionary:
@@ -378,6 +404,9 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		. append(
 			{
 				"t": sim_time,
+				"array_id": active_array_id,
+				"sensor_id": "OP_" + active_array_id,
+				"bearing_frame": "bow_rel",  # 峰坐标恒为艇艏相对帧（TRUE 瀑布仅显示重排）
 				"values": bb,
 				"peaks": bb_peaks,
 				"course": own_course,
@@ -389,8 +418,26 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			}
 		)
 	)
-	nb_rows.append({"t": sim_time, "values": nb, "tonals": nb_tonals})
-	demon_rows.append({"t": sim_time, "values": demon})
+	(
+		nb_rows
+		. append(
+			{
+				"t": sim_time,
+				"array_id": active_array_id,
+				"sensor_id": "OP_" + active_array_id,
+				"values": nb,
+				"tonals": nb_tonals,
+			}
+		)
+	)
+	demon_rows.append(
+		{
+			"t": sim_time,
+			"array_id": active_array_id,
+			"sensor_id": "OP_" + active_array_id,
+			"values": demon
+		}
+	)
 	if bb_rows.size() > 600:
 		bb_rows.pop_front()
 		nb_rows.pop_front()
@@ -493,6 +540,9 @@ func latest_peaks() -> Array:
 ##   as_true=true（TRUE STABILIZED 瀑布）：输入已是真北方位，直接加噪声写入。
 ## row（S1-01/S1-03 历史行上下文）：点击瀑布时必须传入被点行——Measurement 的
 ##   时间/本艇站位/艏向/阵轴/拖曳阵心全部取自那一行，而不是当前仿真状态。
+## S1-03B：传感器/阵心/测向精度一律以"被点行自己的 array_id"为准，绝不使用
+##   点击时刻的 active_array_id（切阵列后点旧行不得生成"新阵列传感器 + 旧阵
+##   拖曳字段"的错配测量）。
 ## 峰匹配用 canonical frame（S1-01）：峰方位存的是显示 frame（相对该行艏向），
 ##   TRUE 输入先转成该行显示 frame 再比较，不得混用。
 ## 这是 Measurement 的合法来源之一（玩家手动）。
@@ -503,7 +553,11 @@ func create_mark(
 	as_true: bool = false,
 	row: Dictionary = {}
 ) -> Measurement:
-	var def := _array_def()
+	# S1-03B：行来源阵列优先；无行上下文（旧调用）才回退当前 active 阵列
+	var src_array: String = str(row.get("array_id", active_array_id))
+	if not ARRAY_DEFS.has(src_array):
+		src_array = active_array_id
+	var def: Dictionary = ARRAY_DEFS[src_array]
 	# ---- 行上下文（缺省回退当前状态，仅供旧测试兼容）----
 	var r_t: float = float(row.get("t", sim_time))
 	var own_course: float = float(row.get("course", float(_own_ref.course_deg)))
@@ -527,7 +581,7 @@ func create_mark(
 		sigma = maxf(sigma * pow(2.0, -se_db / 6.0), 0.2)
 	var m: Measurement = Measurement.new()
 	m.timestamp = r_t
-	m.sensor_id = "OP_" + active_array_id
+	m.sensor_id = "OP_" + src_array
 	m.target_id = target_id  # 仅测试统计；玩家流程不使用
 	# S1-00：操作员 Mark 是一次玩家确认的探测（detected=true），每次物理
 	# 到达发唯一 evidence_id（镜像对在 create_mark_group 中共享）。
@@ -537,7 +591,7 @@ func create_mark(
 	# TOWED：观察站位 = 测量时刻阵列声学中心（不是本艇中心，S1-03）
 	var tow_center_m: float = float(row.get("tow_center_m", 0.0))
 	var tow_len_m: float = float(row.get("tow_length_m", 0.0))
-	if active_array_id == "TOWED" and tow_center_m > 0.0:
+	if src_array == "TOWED" and tow_center_m > 0.0:
 		var rad: float = arr_hdg * NavUtils.DEG_TO_RAD
 		m.observer_east_m = own_e - tow_center_m * sin(rad)
 		m.observer_north_m = own_n - tow_center_m * cos(rad)
@@ -608,14 +662,29 @@ func create_mark_group(
 
 ## Autocrew（默认关闭）：对强检测自动 Mark。
 ## 返回本时刻自动产生的测量（调用方负责 feed tracker）。
+## S1-03B：①携带被点最新行上下文（阵心/时刻/阵轴，不再用无行缺省）；②拖曳
+## 阵 A/B 同 pair 只处理一次并走 create_mark_group（返回共享 evidence 的两支），
+## 调用方须把同 evidence 镜像支并入同一 Track（不双计、不建第二个目标）。
 func autocrew_step(sim_time: float) -> Array:
 	var out: Array = []
 	if sim_time - _last_autocrew_t < AUTOCREW_INTERVAL_S:
 		return out
 	_last_autocrew_t = sim_time
-	for pk in latest_peaks():
+	if bb_rows.is_empty():
+		return out
+	var latest: Dictionary = bb_rows[-1]
+	var seen_pairs := {}
+	for pk in latest.get("peaks", []):
+		var pid: String = str(pk.get("ambiguous_pair_id", ""))
+		if pid != "" and seen_pairs.has(pid):
+			continue  # 同一物理到达的镜像峰只 Mark 一次（S1-03B）
 		if float(pk.get("snr_db", 0.0)) >= 9.0:
 			var pd: float = clampf(float(pk["snr_db"]) / 12.0, 0.0, 1.0)
 			if pd >= AUTOCREW_PD_MIN:
-				out.append(create_mark(float(pk["bearing_deg"]), sim_time))
+				seen_pairs[pid] = true
+				var grp: Array = create_mark_group(
+					float(pk["bearing_deg"]), sim_time, "", false, latest
+				)
+				for gm in grp:
+					out.append(gm)
 	return out
