@@ -163,19 +163,38 @@ static func model_curve(
 
 ## 只取方位残差行（残差图按度显示；range 行是米量纲，不能混入同轴）。
 static func bearing_residuals(res: Array) -> Array:
+	return _kind_rows(res, "bearing")
+
+
+## 只取测距残差行（REQ-06：range 通道独立成图/独立 σ 参考，单位 m）。
+static func range_residuals(res: Array) -> Array:
+	return _kind_rows(res, "range")
+
+
+static func _kind_rows(res: Array, kind: String) -> Array:
 	var out: Array = []
 	for r in res:
-		if str(r.get("kind", "bearing")) == "range":
-			continue
-		out.append(r)
+		if str(r.get("kind", "bearing")) == kind:
+			out.append(r)
 	return out
 
 
-## 参考σ：由 inlier 方位残差对的 |deg/normalized| 中位数估计（跳过 range 行）。
+## 方位参考σ（deg）：由 inlier 方位残差对的 |raw/normalized| 中位数估计。
+## 输入可含 range 行（内部按 kind 过滤），兼容旧调用。
 static func mean_sigma(res: Array) -> float:
+	return _median_sigma_kind(res, "bearing")
+
+
+## 测距参考σ（m）：同上，但只取 range 行——区间带与真实测距波动对齐，
+## 不做"残差长度归一化传播"式的拟合尺度换算（REQ-06 单位分离）。
+static func mean_sigma_range(res: Array) -> float:
+	return _median_sigma_kind(res, "range")
+
+
+static func _median_sigma_kind(res: Array, kind: String) -> float:
 	var ratios: Array = []
 	for r in res:
-		if str(r.get("kind", "bearing")) == "range":
+		if str(r.get("kind", "bearing")) != kind:
 			continue
 		var n: float = absf(float(r.get("normalized", 0.0)))
 		if n > 1e-6:
@@ -186,8 +205,11 @@ static func mean_sigma(res: Array) -> float:
 	return ratios[ratios.size() / 2]
 
 
-## 拟合结果摘要（状态机全字段，不得只显示笼统置信度）。
-static func summary(r: Dictionary) -> String:
+## 拟合结果摘要（REQ-05/06：物理证据 + bearing/range/rejected 行计数分列）。
+## sel 传入时附"物理证据 N"（Track 去重 evidence_id）；纯结果路径可不传。
+## 计数口径：残差行 = TMA 展开后的观测量行（主动一条 = B+R 两行）；物理证据
+## = Track 去重后的真实探测数——两者分离展示，禁止混为一谈。
+static func summary(r: Dictionary, sel: Track = null) -> String:
 	var lines: Array = []
 	lines.append("Track %s  Status: %s" % [str(r.get("track_id", "?")), str(r.get("status", "?"))])
 	if bool(r.get("maneuver_suspected", false)):
@@ -195,21 +217,43 @@ static func summary(r: Dictionary) -> String:
 	if int(r.get("hypothesis_count", 0)) > 1:
 		var n_alt: int = mini(int(r.get("hypothesis_count", 1)) - 1, MAX_ALTS)
 		lines.append("Alternatives: %d (A/B/C on chart)" % n_alt)
+	var b_used: int = 0
+	var b_rej: int = 0
+	var r_used: int = 0
+	var r_rej: int = 0
+	for row in r.get("residuals", []):
+		if str(row.get("kind", "bearing")) == "range":
+			if bool(row.get("inlier", true)):
+				r_used += 1
+			else:
+				r_rej += 1
+		else:
+			if bool(row.get("inlier", true)):
+				b_used += 1
+			else:
+				b_rej += 1
 	(
 		lines
 		. append(
 			(
-				"Ref t=%.0fs stale=%.0fs meas=%d rej=%d legs=%d"
+				"Ref t=%.0fs stale=%.0fs legs=%d"
 				% [
 					float(r.get("reference_time", 0.0)),
 					float(r.get("stale_seconds", 0.0)),
-					int(r.get("measurements_used", 0)),
-					int(r.get("measurements_rejected", []).size()),
 					int(r.get("legs", 0)),
 				]
 			)
 		)
 	)
+	var ev_txt: String = ""
+	if sel != null:
+		ev_txt = "  Ev %d phys" % sel.evidence_count()
+	if r_used + r_rej > 0:
+		lines.append(
+			"Rows B used %d rej %d | R used %d rej %d%s" % [b_used, b_rej, r_used, r_rej, ev_txt]
+		)
+	else:
+		lines.append("Rows B used %d rej %d%s" % [b_used, b_rej, ev_txt])
 	var cond: float = float(r.get("condition_number", 0.0))
 	var cond_txt: String = "inf" if is_inf(cond) else "%.0f" % cond
 	(

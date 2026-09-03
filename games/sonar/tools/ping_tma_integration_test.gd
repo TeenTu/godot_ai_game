@@ -14,6 +14,8 @@ extends SceneTree
 ##   E2E  控制器（operator 模式）：request_ping→回波→喂 Tracker 建 P 接触
 ##        → on_echo_hits 回调携带 Track → 摘要含 range → 主 UI REFIT 语义
 ##        （RANGE AIDED 文本出现在 TmaUiData.summary）。
+##   C5-C REQ-06：残差行单位分离（bearing=deg / range=m）+ summary 分列计数
+##        （B/R used/rej + 物理证据）+ 残差图 deg/m/σ 三态视图过滤。
 ##
 ## 运行：godot --headless --path games/sonar --script res://tools/ping_tma_integration_test.gd
 
@@ -51,6 +53,7 @@ func _initialize() -> void:
 	_r03_truth_isolation(fails)
 	_r20_fixed_listen_window(fails)
 	_r22_emission_event(fails)
+	_c5c_residual_kind_rows(fails)
 	_e2e_controller_to_fit(fails)
 	if fails.is_empty():
 		print("PING_TMA_INTEGRATION result=PASS")
@@ -549,6 +552,115 @@ func _r22_emission_event(fails: Array) -> void:
 	_assert_close(
 		fails, "R22 second emit_time", float(w.active_emissions[1]["emit_time"]), 16.0, 1e-6
 	)
+
+
+# =====================================================================
+#  C5-C（REQ-06）：残差行单位分离 + summary 分列计数 + 残差图三态
+# =====================================================================
+
+
+func _c5c_residual_kind_rows(fails: Array) -> void:
+	var own := _own_at(Vector2.ZERO, 45.0, 8.0)
+	var tgt := _tgt_at(Vector2(8000.0, 6000.0), 200.0, 10.0)
+	var ms: Array = _collect_leg(own, tgt, 420.0, 60.0, 420.0, 0.0, 200.0, 200.0, 135.0)
+	ms.pop_back()
+	# 合成测量不带 evidence_id/measurement_id → 手工赋唯一物理证据号，使
+	# Track.evidence_count() 口径可断言（N 次物理到达，而非展开行数）。
+	var ev: int = 0
+	for m in ms:
+		ev += 1
+		m.evidence_id = "ev_%03d" % ev
+		m.measurement_id = ev
+	var track := Track.create("P", 1, ms[0])
+	for i in range(1, ms.size()):
+		track.add_measurement(ms[i])
+	var n_phys: int = ms.size()  # 7 被动 + 1 主动 = 8
+	_assert_eq(fails, "C5C evidence_count physical", str(track.evidence_count()), str(n_phys))
+	# 主动测距微偏 +120m（仍在 σ=200 门内）：保证 range 残差非零，使 σ_ref
+	# 的 |raw/normalized| 中位数口径可被实际求值（零残差会触发回退）。
+	var last_m: Measurement = ms[ms.size() - 1]
+	last_m.measured_range_m += 120.0
+	var meas: Array = []
+	for m in ms:
+		meas.append(TmaUiData.fit_meas_dict(m))
+	var r: Dictionary = TmaSolver.solve_auto(meas)
+	if not bool(r.get("success", false)):
+		fails.append("C5C solve failed: status=" + str(r.get("status", "?")))
+		return
+	var b_rows: int = 0
+	var r_rows: int = 0
+	for row in r["residuals"]:
+		if str(row.get("kind", "bearing")) == "range":
+			r_rows += 1
+		else:
+			b_rows += 1
+	_assert_eq(fails, "C5C rows = 8 bearing + 1 range", str(b_rows + r_rows), "9")
+	var txt: String = TmaUiData.summary(r, track)
+	_assert_true(fails, "C5C summary Rows B", txt.contains("Rows B used"))
+	_assert_true(fails, "C5C summary R used", txt.contains("R used"))
+	_assert_true(fails, "C5C summary RANGE AIDED", txt.contains("RANGE AIDED"))
+	_assert_true(
+		fails, "C5C summary B used %d rej 0" % b_rows, txt.contains("B used %d rej 0" % b_rows)
+	)
+	_assert_true(
+		fails, "C5C summary R used %d rej 0" % r_rows, txt.contains("R used %d rej 0" % r_rows)
+	)
+	_assert_true(fails, "C5C summary Ev %d phys" % n_phys, txt.contains("Ev %d phys" % n_phys))
+	# 单位分离：bearing 行 deg、range 行 m（不得混单位）。
+	for row in r["residuals"]:
+		if str(row.get("kind", "bearing")) == "range":
+			_assert_eq(fails, "C5C range row unit m", str(row.get("raw_unit", "?")), "m")
+		else:
+			_assert_eq(fails, "C5C bearing row unit deg", str(row.get("raw_unit", "?")), "deg")
+	# kind 过滤 helper 各自只回本通道。
+	var rrows: Array = TmaUiData.range_residuals(r["residuals"])
+	var brows: Array = TmaUiData.bearing_residuals(r["residuals"])
+	_assert_eq(fails, "C5C range_residuals size", str(rrows.size()), "1")
+	_assert_eq(fails, "C5C bearing_residuals size", str(brows.size()), str(b_rows))
+	# 测距参考 σ（m）≈ 合成 range_sigma=200；方位参考 σ 用 deg 通道。
+	var sr_m: float = TmaUiData.mean_sigma_range(r["residuals"])
+	_assert_close(fails, "C5C sigma_ref_m ~200m", sr_m, 200.0, 80.0)
+	var sd_deg: float = TmaUiData.mean_sigma(r["residuals"])
+	_assert_close(fails, "C5C sigma_ref_deg ~0.5deg", sd_deg, 0.5, 0.3)
+	# 纯方位路径：无 range 行 → sigma_ref_m 回退 1.0。
+	var meas_b: Array = []
+	for m in ms.slice(0, n_phys - 1):
+		meas_b.append(TmaUiData.fit_meas_dict(m))
+	var rb: Dictionary = TmaSolver.solve_auto(meas_b)
+	if bool(rb.get("success", false)):
+		_assert_close(
+			fails,
+			"C5C sigma_ref_m fallback 1.0",
+			TmaUiData.mean_sigma_range(rb["residuals"]),
+			1.0,
+			1e-6
+		)
+	# 残差图三态（deg→m→σ→deg）：每态只显示对应 kind / 全部。
+	var plot := ResidualPlot.new()
+	plot.residuals = r["residuals"]
+	plot.sigma_ref_deg = TmaUiData.mean_sigma(r["residuals"])
+	plot.sigma_ref_m = sr_m
+	_assert_eq(fails, "C5C plot starts deg", plot.mode, "deg")
+	_assert_eq(fails, "C5C deg view bearing only", str(plot._visible_rows().size()), str(b_rows))
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C m view after cycle", plot.mode, "m")
+	_assert_eq(fails, "C5C m view range only", str(plot._visible_rows().size()), "1")
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C sigma view after cycle", plot.mode, "sigma")
+	_assert_eq(
+		fails, "C5C sigma view all rows", str(plot._visible_rows().size()), str(b_rows + r_rows)
+	)
+	plot._cycle_mode()
+	_assert_eq(fails, "C5C cycles back to deg", plot.mode, "deg")
+	plot.free()
+	# 纯被动（无 range 行）时点击应跳过 m 直达 σ。
+	if bool(rb.get("success", false)):
+		var plot2 := ResidualPlot.new()
+		plot2.residuals = rb["residuals"]
+		plot2.sigma_ref_deg = TmaUiData.mean_sigma(rb["residuals"])
+		plot2._cycle_mode()
+		_assert_eq(fails, "C5C no-range skips m", plot2.mode, "sigma")
+		plot2.free()
 
 
 # =====================================================================

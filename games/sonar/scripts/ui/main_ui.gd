@@ -600,13 +600,15 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图（REQ-05：只喂方位残差行——range 行是米量纲，禁混进 deg 轴）
+	# 3) 残差图（REQ-06 单位分离：喂全量残差行，plot 内部 deg 视图只画
+	# bearing 行、m 视图只画 range 行、σ 视图共用归一化；σ 参考线按通道对齐）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
-		res = TmaUiData.bearing_residuals(last_fit.get("residuals", []))
+		res = last_fit.get("residuals", [])
 	_res_plot.residuals = res
 	_res_plot.track_id = selected_track_id
 	_res_plot.sigma_ref_deg = TmaUiData.mean_sigma(res)
+	_res_plot.sigma_ref_m = TmaUiData.mean_sigma_range(res)
 	_res_plot.set_time_window(
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
@@ -953,7 +955,7 @@ func _on_fit_tma() -> void:
 	trial.estimated_position_north_m = (best["p_ref"] as Vector2).y + v.y * dt_now
 
 	TmaUiData.dot_stack_compute(dot_stack, r, sel)
-	_lbl_tma.text = TmaUiData.summary(r)
+	_lbl_tma.text = TmaUiData.summary(r, sel)
 	_dirty = true
 	_rebuild_display_data()
 	_update_status(
