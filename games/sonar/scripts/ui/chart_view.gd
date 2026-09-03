@@ -54,6 +54,7 @@ var view_radius_m: float = 10000.0  # 可视半径（m），1~60 km
 # --- 注入数据 ---
 var own_pos: Vector2 = Vector2.ZERO
 var own_track: Array = []
+var own_course_deg: float = 0.0  # 本艇实际艏向（S1-01.4：本艇符号随实际艏向旋转）
 # lob: [{origin, bearing_deg, color, id, track_id, time, sigma_deg, inlier}]
 var lobs: Array = []
 var leg_boundary_times: Array = []  # 观测腿首末测量时刻
@@ -257,6 +258,7 @@ func _dist_label(m: float) -> String:
 	return "%.0f km" % [m / 1000.0] if m >= 1000.0 else "%.0f m" % m
 
 
+## 本艇符号：随实际艏向旋转的三角 + 艏向线（S1-01.4：不再固定朝上）。
 func _draw_own_track() -> void:
 	if own_track.size() >= 2:
 		var pts: PackedVector2Array = []
@@ -264,8 +266,16 @@ func _draw_own_track() -> void:
 			pts.append(world_to_screen(p))
 		draw_polyline(pts, Color(COL_OWN.r, COL_OWN.g, COL_OWN.b, 0.5), 2.0)
 	var s: Vector2 = world_to_screen(own_pos)
-	var tri := PackedVector2Array([s + Vector2(0, -11), s + Vector2(8, 7), s + Vector2(-8, 7)])
-	draw_colored_polygon(tri, COL_OWN)
+	# 屏幕坐标系 y 向下：世界北(+N)对应屏幕 -y
+	var rad: float = own_course_deg * PI / 180.0
+	var fwd := Vector2(sin(rad), -cos(rad))
+	var side := Vector2(-fwd.y, fwd.x)
+	var tip: Vector2 = s + fwd * 12.0
+	var left: Vector2 = s - fwd * 7.0 - side * 7.0
+	var right: Vector2 = s - fwd * 7.0 + side * 7.0
+	# 艏向线（明显伸出三角之外）+ 艉部缺口（三角尾部不闭合）
+	draw_line(s, s + fwd * 22.0, Color(COL_OWN.r, COL_OWN.g, COL_OWN.b, 0.9), 1.5)
+	draw_colored_polygon(PackedVector2Array([tip, right, s - fwd * 3.0, left]), COL_OWN)
 	_draw_label(s + Vector2(10, -10), "OWN", COL_OWN)
 
 

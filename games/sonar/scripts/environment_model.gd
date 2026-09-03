@@ -32,8 +32,42 @@ func propagation_loss(range_m: float, freq_hz: float) -> float:
 
 
 ## 环境噪声在某频率的声级（dB re 1uPa）。
+## S1-04：JSON 读入的键是字符串（如 "500"），必须正确匹配 float 频率，
+## 不得因键型不匹配长期回退到 60 dB 默认值；频率表点之间线性插值。
 func ambient_noise_db(freq_hz: float) -> float:
-	return float(ambient_noise_by_frequency.get(freq_hz, 60.0))
+	if ambient_noise_by_frequency.is_empty():
+		return 60.0
+	var direct: Variant = ambient_noise_by_frequency.get(freq_hz, null)
+	if direct != null:
+		return float(direct)
+	# 最近邻频率点线性插值
+	var freqs: Array = []
+	for k in ambient_noise_by_frequency.keys():
+		freqs.append(float(k))
+	freqs.sort()
+	if freq_hz <= float(freqs[0]):
+		return float(ambient_noise_by_frequency[ambient_key_at(freqs[0])])
+	if freq_hz >= float(freqs[-1]):
+		return float(ambient_noise_by_frequency[ambient_key_at(freqs[-1])])
+	for i in range(freqs.size() - 1):
+		var f0: float = float(freqs[i])
+		var f1: float = float(freqs[i + 1])
+		if freq_hz >= f0 and freq_hz <= f1:
+			var t: float = (freq_hz - f0) / maxf(f1 - f0, 1e-6)
+			var v0: float = float(ambient_noise_by_frequency[ambient_key_at(f0)])
+			var v1: float = float(ambient_noise_by_frequency[ambient_key_at(f1)])
+			return lerpf(v0, v1, t)
+	return 60.0
+
+
+## 取频率表中与 f 匹配的原始键（可能是 String 或 float，JSON 读入多为 String）。
+func ambient_key_at(f_hz: float) -> Variant:
+	if ambient_noise_by_frequency.has(f_hz):
+		return f_hz
+	for k in ambient_noise_by_frequency.keys():
+		if absf(float(k) - f_hz) < 1e-6:
+			return k
+	return null
 
 
 ## 本艇自噪（dB），随航速上升。
