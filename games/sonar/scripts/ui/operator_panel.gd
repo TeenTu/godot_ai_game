@@ -239,14 +239,35 @@ func update_towed_controls(t: TowedArray) -> void:
 			_len_slider.set_value_no_signal(t.commanded_tow_length_m / t.max_tow_length_m)
 
 
-## 更新主动 Ping 按钮状态与回波摘要（S1-04）。每帧由主 UI 调。
-func set_ping_state(ready: bool, cd_left: float, summary: String) -> void:
+## 更新主动声呐卡（S1-04C）：Ping 按钮硬禁 + 状态行 + 最近回波摘要。
+## state_name 由 World 权威给出：UNAVAILABLE / READY / LISTENING / RETURN /
+## NO_RETURN（PingSession 状态机）。UNAVAILABLE=平台未配主动阵，硬禁按钮
+## （REQ-20，绝不静默缺省）。ISSUE-06：不显示"还有 Xs 回波到达"等 Truth
+## 推导信息——只显示硬件状态与冷却（二者均为本艇事实，非目标 Truth）。
+func set_ping_state(state_name: String, cd_left: float, summary: String) -> void:
 	if _btn_ping == null or _lbl_ping == null:
 		return
+	var ready: bool = state_name == "READY"
+	var unavailable: bool = state_name == "UNAVAILABLE"
 	_btn_ping.disabled = not ready
-	var txt: String = "Ping: " + ("ready" if ready else "recharge %.0fs" % ceili(cd_left))
+	var tip: String = (
+		"Emit an active sonar pulse.\nReturns range to any echo — "
+		+ "but reveals your position to enemy passive sonar."
+	)
+	if unavailable:
+		tip = "No active sonar fitted on this platform."
+	elif not ready:
+		tip = "Single ping in flight / recharging — wait for it to return."
+	_btn_ping.tooltip_text = tip
+	var txt: String = ""
+	if unavailable:
+		txt = "Ping: UNAVAILABLE (no active sonar)"
+	elif ready:
+		txt = "Ping: ready"
+	else:
+		txt = "Ping: %s (recharge %.0fs)" % [state_name, ceili(cd_left)]
 	if summary != "":
-		txt += "  |  " + summary
+		txt += "\n  " + summary
 	_lbl_ping.text = txt
 
 

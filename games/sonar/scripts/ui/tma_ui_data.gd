@@ -149,18 +149,34 @@ static func model_curve(
 ) -> Dictionary:
 	var pts: Array = []
 	var pred: Array = hyp.get("pred_bearings", [])
-	var i: int = 0
+	# S1-04B-REQ-08：主动测量展开为 BEARING+RANGE 两残差行；pred_bearings 只含
+	# BEARING 行（range 行无独立方位预测），逐行配对时必须跳过 kind=="range"。
+	var bi: int = 0
 	for res in last_fit.get("residuals", []):
-		if i < pred.size():
-			pts.append({"time": float(res["time"]), "bearing_deg": float(pred[i])})
-		i += 1
+		if str(res.get("kind", "bearing")) == "range":
+			continue
+		if bi < pred.size():
+			pts.append({"time": float(res["time"]), "bearing_deg": float(pred[bi])})
+		bi += 1
 	return {"points": pts, "color": col, "best": is_best}
 
 
-## 参考σ：由 inlier 残差对的 |deg/normalized| 中位数估计。
+## 只取方位残差行（残差图按度显示；range 行是米量纲，不能混入同轴）。
+static func bearing_residuals(res: Array) -> Array:
+	var out: Array = []
+	for r in res:
+		if str(r.get("kind", "bearing")) == "range":
+			continue
+		out.append(r)
+	return out
+
+
+## 参考σ：由 inlier 方位残差对的 |deg/normalized| 中位数估计（跳过 range 行）。
 static func mean_sigma(res: Array) -> float:
 	var ratios: Array = []
 	for r in res:
+		if str(r.get("kind", "bearing")) == "range":
+			continue
 		var n: float = absf(float(r.get("normalized", 0.0)))
 		if n > 1e-6:
 			ratios.append(absf(float(r["residual_deg"])) / n)
@@ -209,6 +225,26 @@ static func summary(r: Dictionary) -> String:
 			)
 		)
 	)
+	# S1-04B-REQ-15：主动测距进入拟合时明确标注 RANGE AIDED 与采用的测距数。
+	if bool(r.get("has_range_measurements", false)):
+		var rng_rmse: String = (
+			"%.0fm" % float(r.get("range_rmse_m", 0.0))
+			if float(r.get("range_rmse_m", -1.0)) >= 0.0
+			else "n/a"
+		)
+		(
+			lines
+			. append(
+				(
+					"RANGE AIDED: active ranges used %d (rejected %d)  R_RMSE %s"
+					% [
+						int(r.get("active_range_rows_used", 0)),
+						int(r.get("active_range_rows_rejected", 0)),
+						rng_rmse,
+					]
+				)
+			)
+		)
 	var unc: float = float(r.get("position_uncertainty_m", -1.0))
 	if unc > 0.0:
 		(
@@ -241,6 +277,27 @@ static func outlier_times(last_fit: Dictionary, track_id: String) -> Dictionary:
 		if not bool(res.get("inlier", true)):
 			out[float(res["time"])] = true
 	return out
+
+
+## 单条 Measurement → TmaSolver.solve_auto 输入字典（主 UI / DotStack 共用）。
+## S1-04B-REQ-08：主动测距 range/range_sigma 成对有效才透传，解算器在
+## _validate/_expand_range 展开为距离残差行（REQ-06）；纯方位被动测量不带
+## range 键 → 零展开，行为与旧版一致。歧义支路标识随附（S1-03A/S1-06）。
+static func fit_meas_dict(m: Measurement) -> Dictionary:
+	var d: Dictionary = {
+		"time": m.timestamp,
+		"observer_e": m.observer_east_m,
+		"observer_n": m.observer_north_m,
+		"bearing": m.measured_bearing_deg,
+		"sigma": m.bearing_sigma_deg,
+	}
+	if m.has_range():
+		d["range_m"] = m.measured_range_m
+		d["range_sigma_m"] = m.range_sigma_m
+	if m.ambiguous_pair_id != "":
+		d["ambiguous_pair_id"] = m.ambiguous_pair_id
+		d["ambiguity_branch"] = m.ambiguity_branch
+	return d
 
 
 static func leg_boundary_times(meas: Array) -> Array:

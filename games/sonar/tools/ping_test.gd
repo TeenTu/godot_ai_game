@@ -1,18 +1,23 @@
 extends SceneTree
-## ping_test.gd — S1-04 主动声呐 Ping 交互无头验收（评审修正：声呐非光速）。
+## ping_test.gd — S1-04/S1-04B 主动声呐 Ping 无头验收（PingSession 模型）。
 ##
 ## 核心物理：ping 回波按往返传播延迟 τ=2R/c 到达（c≈1500m/s），到达时
 ## 才做检测/测距并进测量流；测距本质是测时 R=c·τ/2。
+## 硬件显式配置（S1-04B-REQ-20）：own_ship.active_sonar 块存在（或 sensors
+## 含 array_type=="active"）才可 Ping；无硬件 → UNAVAILABLE 并禁用。
+## 单在途（REQ-16/17）：会话未清时新 Ping 被拒，绝不清理未返回回波。
 ##
-##   P1  冷却逻辑：连发被拒，冷却结束恢复。
-##   P2  回波延迟到达：发射后 pending=1、next_echo_in≈2R/c≈10.7s；
-##       半途 take 为空；到点 take 得 detected 回波，range≈真距、SE>0。
+##   P1  冷却逻辑：连发被拒，冷却结束恢复 READY。
+##   P2  回波延迟到达：LISTENING→到点 RETURN；pending=1、next_echo_in≈2R/c≈10.7s；
+##       半途 take 为空、到点 take 得 detected 回波，range≈真距、SE>0。
 ##   P3  极远目标无回波：到点结算 SE 极负 → 不产 Measurement。
 ##   P4  回波到时才进测量流：发射瞬间不 append，到达后 append 带 range。
 ##   P5  摘要字段完整：target_id/detected/se_db/pd/bearing_deg/range_m。
 ##   P6  场景配置覆盖：ping_sl_db/cooldown_s/sound_speed_m_s（改声速→改 τ）。
-##   P7  无目标时 ping 发射成功但无在途回波；无硬件（无 active 传感器）也能 ping。
-##   P8  摘要方位与几何真方位一致（±6°）。
+##   P7  无目标：发射成功、无在途回波、诚实监听窗口→NO_RETURN→READY。
+##   P8  无硬件（无 active_sonar 且无 active 阵）：UNAVAILABLE，Ping 被拒。
+##   P9  摘要方位与几何真方位一致（±6°）。
+##   P10 单在途：冷却已过但回波未归 → 再 Ping 被拒、不清理旧回波。
 ##
 ## 运行：godot --headless --path games/sonar --script res://tools/ping_test.gd
 
@@ -40,28 +45,9 @@ const NEAR_RANGE_M: float = 8000.0  # 目标 (5656.85,5656.85) 到原点
 const ECHO_T_S: float = 2.0 * NEAR_RANGE_M / 1500.0  # ≈10.67s
 
 
-func _initialize() -> void:
-	var fails: Array = []
-	_p1_cooldown(fails)
-	_p2_delayed_echo(fails)
-	_p3_far_no_echo(fails)
-	_p4_echo_in_stream_on_arrival(fails)
-	_p5_summary_fields(fails)
-	_p6_config_override(fails)
-	_p7_no_targets_no_hardware(fails)
-	_p8_bearing_close(fails)
-	if fails.is_empty():
-		print("PING_TEST result=PASS")
-		quit(0)
-	else:
-		for f in fails:
-			print("  FAIL: " + str(f))
-		print("PING_TEST FAIL: %d problem(s)" % fails.size())
-		quit(1)
-
-
-func _mk_scenario(extra_own: Dictionary = {}, target_override: Array = []) -> Dictionary:
-	var own: Dictionary = {
+## 默认 own 配置（含显式艇首主动阵硬件，REQ-20）。
+func _base_own() -> Dictionary:
+	return {
 		"id": "own",
 		"class_id": "attack_sub",
 		"side": "blue",
@@ -73,35 +59,49 @@ func _mk_scenario(extra_own: Dictionary = {}, target_override: Array = []) -> Di
 		"speed_kn": 0.0,
 		"turn_rate_deg_s": 0.0,
 		"acceleration_kn_s": 0.0,
+		"active_sonar":
+		{
+			"ping_sl_db": 210.0,
+			"cooldown_s": 15.0,
+			"freq_min_hz": 2000.0,
+			"freq_max_hz": 4000.0,
+			"array_gain_db": 24.0,
+			"sound_speed_m_s": 1500.0,
+			"listen_window_s": 15.0,
+		},
 	}
+
+
+func _base_target(pos_east_m: float, pos_north_m: float, ts_db: float = 14.0) -> Dictionary:
+	return {
+		"id": "tgt",
+		"class_id": "frigate",
+		"side": "red",
+		"platform_type": "surface",
+		"position_east_m": pos_east_m,
+		"position_north_m": pos_north_m,
+		"depth_m": 0.0,
+		"course_deg": 180.0,
+		"speed_kn": 0.0,
+		"turn_rate_deg_s": 0.0,
+		"acceleration_kn_s": 0.0,
+		"acoustic":
+		{
+			"broadband_base_level_db": 150.0,
+			"speed_noise_a": 18.0,
+			"speed_noise_n": 2.5,
+			"speed_noise_vref_kn": 8.0,
+			"active_target_strength_db": ts_db,
+		},
+	}
+
+
+func _mk_scenario(extra_own: Dictionary = {}, target_override: Array = []) -> Dictionary:
+	var own: Dictionary = _base_own()
 	for k in extra_own:
 		own[k] = extra_own[k]
 	var tgts: Array = (
-		target_override
-		if not target_override.is_empty()
-		else [
-			{
-				"id": "tgt",
-				"class_id": "frigate",
-				"side": "red",
-				"platform_type": "surface",
-				"position_east_m": 5656.85,
-				"position_north_m": 5656.85,
-				"depth_m": 0.0,
-				"course_deg": 180.0,
-				"speed_kn": 0.0,
-				"turn_rate_deg_s": 0.0,
-				"acceleration_kn_s": 0.0,
-				"acoustic":
-				{
-					"broadband_base_level_db": 150.0,
-					"speed_noise_a": 18.0,
-					"speed_noise_n": 2.5,
-					"speed_noise_vref_kn": 8.0,
-					"active_target_strength_db": 14.0,
-				},
-			}
-		]
+		target_override if not target_override.is_empty() else [_base_target(5656.85, 5656.85)]
 	)
 	return {
 		"name": "ping_test",
@@ -129,9 +129,36 @@ func _mk_scenario(extra_own: Dictionary = {}, target_override: Array = []) -> Di
 	}
 
 
+func _initialize() -> void:
+	var fails: Array = []
+	_p1_cooldown(fails)
+	_p2_delayed_echo(fails)
+	_p3_far_no_echo(fails)
+	_p4_echo_in_stream_on_arrival(fails)
+	_p5_summary_fields(fails)
+	_p6_config_override(fails)
+	_p7_no_targets(fails)
+	_p8_no_hardware(fails)
+	_p9_bearing_close(fails)
+	_p10_single_in_flight(fails)
+	if fails.is_empty():
+		print("PING_TEST result=PASS")
+		quit(0)
+	else:
+		for f in fails:
+			print("  FAIL: " + str(f))
+		print("PING_TEST FAIL: %d problem(s)" % fails.size())
+		quit(1)
+
+
 func _assert_bool(fails: Array, name: String, got: bool, want: bool) -> void:
 	if got != want:
 		fails.append("%s: got=%s want=%s" % [name, str(got), str(want)])
+
+
+func _assert_eq(fails: Array, name: String, got: String, want: String) -> void:
+	if got != want:
+		fails.append("%s: got=%s want=%s" % [name, got, want])
 
 
 func _assert_close(fails: Array, name: String, got: float, want: float, tol: float) -> void:
@@ -148,11 +175,14 @@ func _p1_cooldown(fails: Array) -> void:
 	var w := World.new()
 	w.load_scenario(_mk_scenario())
 	_assert_bool(fails, "P1 initial can_ping", w.can_ping(), true)
+	_assert_eq(fails, "P1 initial state READY", w.ping_state_name(), "READY")
 	_assert_bool(fails, "P1 first ping ok", w.issue_ping(), true)
+	_assert_eq(fails, "P1 state LISTENING after issue", w.ping_state_name(), "LISTENING")
 	_assert_bool(fails, "P1 cannot re-ping immediately", w.can_ping(), false)
 	_assert_close(fails, "P1 cd remaining ~15s", w.ping_cooldown_remaining(), 15.0, 0.01)
 	_assert_bool(fails, "P1 second ping blocked", w.issue_ping(), false)
 	w.run_steps(30)  # 30 × 0.5s = 15s
+	_assert_eq(fails, "P1 state READY after cooldown", w.ping_state_name(), "READY")
 	_assert_bool(fails, "P1 can_ping after cooldown", w.can_ping(), true)
 
 
@@ -166,10 +196,12 @@ func _p2_delayed_echo(fails: Array) -> void:
 	# 半途（5s）回波尚未到达
 	w.run_steps(_steps_until(5.0))
 	_assert_bool(fails, "P2 no echo at 5s", w.take_arrived_echoes().is_empty(), true)
+	_assert_eq(fails, "P2 still LISTENING at 5s", w.ping_state_name(), "LISTENING")
 	# 到点（11s > 10.67s）回波到达
 	w.run_steps(_steps_until(ECHO_T_S) - _steps_until(5.0))
 	var echoes: Array = w.take_arrived_echoes()
 	_assert_bool(fails, "P2 echo arrived", echoes.size() == 1, true)
+	_assert_eq(fails, "P2 state RETURN after echo", w.ping_state_name(), "RETURN")
 	if echoes.is_empty():
 		return
 	var e: Dictionary = echoes[0]
@@ -180,22 +212,8 @@ func _p2_delayed_echo(fails: Array) -> void:
 
 
 func _p3_far_no_echo(fails: Array) -> void:
-	var tgt: Dictionary = {
-		"id": "far",
-		"class_id": "frigate",
-		"side": "red",
-		"platform_type": "surface",
-		"position_east_m": 200000.0,
-		"position_north_m": 0.0,
-		"depth_m": 0.0,
-		"course_deg": 180.0,
-		"speed_kn": 0.0,
-		"turn_rate_deg_s": 0.0,
-		"acceleration_kn_s": 0.0,
-		"acoustic": {"active_target_strength_db": 14.0},
-	}
 	var w := World.new()
-	w.load_scenario(_mk_scenario({}, [tgt]))
+	w.load_scenario(_mk_scenario({}, [_base_target(200000.0, 0.0)]))
 	_assert_bool(fails, "P3 ping transmitted", w.issue_ping(), true)
 	w.run_steps(_steps_until(2.0 * 200000.0 / 1500.0) + 1)  # 到 τ 之后
 	var echoes: Array = w.take_arrived_echoes()
@@ -225,6 +243,13 @@ func _p4_echo_in_stream_on_arrival(fails: Array) -> void:
 		var m: Measurement = w.measurements[n0]
 		_assert_bool(fails, "P4 appended has range", m.has_range(), true)
 		_assert_bool(fails, "P4 appended target_id", str(m.target_id) == "tgt", true)
+		_assert_bool(fails, "P4 appended ping_id", m.ping_id > 0, true)
+		_assert_bool(
+			fails,
+			"P4 appended is ACTIVE type",
+			m.measurement_type == "ACTIVE_RANGE_BEARING",
+			true,
+		)
 
 
 func _p5_summary_fields(fails: Array) -> void:
@@ -237,7 +262,17 @@ func _p5_summary_fields(fails: Array) -> void:
 		fails.append("P5 no echoes")
 		return
 	var e: Dictionary = echoes[0]
-	for key in ["target_id", "detected", "se_db", "pd", "bearing_deg", "range_m"]:
+	var keys: Array = [
+		"target_id",
+		"ping_id",
+		"detected",
+		"se_db",
+		"pd",
+		"bearing_deg",
+		"range_m",
+		"range_sigma_m",
+	]
+	for key in keys:
 		if not e.has(key):
 			fails.append("P5 missing field: " + key)
 
@@ -259,26 +294,65 @@ func _p6_config_override(fails: Array) -> void:
 	)
 
 
-func _p7_no_targets_no_hardware(fails: Array) -> void:
+func _p7_no_targets(fails: Array) -> void:
 	var w := World.new()
 	var sc: Dictionary = _mk_scenario()
-	sc["targets"] = []  # 显式空目标列表
+	sc["targets"] = []  # 显式空目标列表（仍带主动阵硬件）
 	w.load_scenario(sc)
 	_assert_bool(fails, "P7 ping transmitted", w.issue_ping(), true)
 	_assert_bool(fails, "P7 no echo in flight", w.pending_echo_count() == 0, true)
-	_assert_bool(fails, "P7 ping still consumed", w.can_ping(), false)
-	# 主场景只有 passive_broadband 传感器：P2 已隐式验证缺省主动阵可用
+	# 无登记回波 → 诚实监听整个窗口（Truth 隔离：UI 看不到"无目标"提示）
+	_assert_eq(fails, "P7 state LISTENING (window)", w.ping_state_name(), "LISTENING")
+	_assert_bool(fails, "P7 ping consumed (single in-flight)", w.can_ping(), false)
+	# 窗口+冷却结束（15s）→ NO_RETURN → READY
+	w.run_steps(31)  # 31 × 0.5s = 15.5s
+	_assert_bool(fails, "P7 no echo ever", w.take_arrived_echoes().is_empty(), true)
+	_assert_eq(fails, "P7 back to READY", w.ping_state_name(), "READY")
+	_assert_bool(fails, "P7 can ping again", w.can_ping(), true)
 
 
-func _p8_bearing_close(fails: Array) -> void:
+func _p8_no_hardware(fails: Array) -> void:
+	var w := World.new()
+	# 无 own_ship.active_sonar（空块=未声明硬件）且 sensors 无 active 阵
+	w.load_scenario(_mk_scenario({"active_sonar": {}}))
+	_assert_bool(fails, "P8 ping not available", w.ping_available(), false)
+	_assert_bool(fails, "P8 can_ping false", w.can_ping(), false)
+	_assert_eq(fails, "P8 state UNAVAILABLE", w.ping_state_name(), "UNAVAILABLE")
+	_assert_bool(fails, "P8 issue rejected", w.issue_ping(), false)
+	_assert_bool(fails, "P8 no session created", w.ping_session_id() == -1, true)
+
+
+func _p9_bearing_close(fails: Array) -> void:
 	var w := World.new()
 	w.load_scenario(_mk_scenario())
 	w.issue_ping()
 	w.run_steps(_steps_until(ECHO_T_S))
 	var echoes: Array = w.take_arrived_echoes()
 	if echoes.is_empty():
-		fails.append("P8 no echoes")
+		fails.append("P9 no echoes")
 		return
 	var e: Dictionary = echoes[0]
 	# 目标在 (5656.85, 5656.85)，本艇原点 → 真方位 45°
-	_assert_close(fails, "P8 bearing ~45deg", float(e["bearing_deg"]), 45.0, 6.0)
+	_assert_close(fails, "P9 bearing ~45deg", float(e["bearing_deg"]), 45.0, 6.0)
+
+
+func _p10_single_in_flight(fails: Array) -> void:
+	# REQ-16/17：回波未归（远目标 τ=80s）即使冷却已过也不能再 Ping，
+	# 且旧回波绝不被清理。60km 目标 τ=2*60000/1500=80s >> cooldown 15s。
+	var w := World.new()
+	w.load_scenario(_mk_scenario({}, [_base_target(60000.0, 0.0)]))
+	_assert_bool(fails, "P10 ping ok", w.issue_ping(), true)
+	_assert_bool(fails, "P10 one echo registered", w.pending_echo_count() == 1, true)
+	# 冷却 15s 已过（16s），但回波仍在途 → 单在途禁止再发
+	w.run_steps(_steps_until(16.0))
+	_assert_bool(fails, "P10 can_ping false (in-flight)", w.can_ping(), false)
+	_assert_bool(fails, "P10 re-ping rejected", w.issue_ping(), false)
+	_assert_bool(fails, "P10 old echo NOT cleared", w.pending_echo_count() == 1, true)
+	_assert_eq(fails, "P10 still LISTENING", w.ping_state_name(), "LISTENING")
+	# 到 τ=80s 回波结算 → 会话结束 → 可再 Ping
+	w.run_steps(_steps_until(80.5) - _steps_until(16.0))
+	var echoes: Array = w.take_arrived_echoes()
+	_assert_bool(fails, "P10 far echo settled", echoes.size() == 1, true)
+	_assert_bool(fails, "P10 no echo pending", w.pending_echo_count() == 0, true)
+	_assert_eq(fails, "P10 back to READY", w.ping_state_name(), "READY")
+	_assert_bool(fails, "P10 can ping again", w.can_ping(), true)

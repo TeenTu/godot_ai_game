@@ -106,6 +106,8 @@ func _ready() -> void:
 	_ping_ctrl.tracker = tracker
 	_ping_ctrl.on_status = _update_status
 	_ping_ctrl.on_dirty = func(): _dirty = true
+	# S1-04B：回波命中已喂 Tracker → 自动选中该接触并 REFIT（range 进 TMA）
+	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
 
 	# Operator Layer：关闭自动测量，Truth 只能经声场/阵列采样进入操作员视图
 	world.auto_measurements = false
@@ -919,6 +921,7 @@ func _on_mark() -> void:
 
 
 ## Auto Fit：只拟合 selected_track_id（验收 6：多接触下 Fit 只作用选中接触）。
+## 也由主动回波 REFIT 复用（_on_ping_echo_hits 先选中命中接触再调本函数）。
 func _on_fit_tma() -> void:
 	var sel: Track = _selected_track()
 	if sel == null:
@@ -930,7 +933,7 @@ func _on_fit_tma() -> void:
 
 	var meas: Array = []
 	for m in sel.measurement_history:
-		meas.append(_meas_to_dict(m))
+		meas.append(TmaUiData.fit_meas_dict(m))
 
 	var opts: Dictionary = {"now_time": world.sim_time}
 	# DEMON 航速仅作为带 sigma 的软约束，不替代 bearing-only 拟合
@@ -991,7 +994,7 @@ func dot_stack_compute(r: Dictionary, sel: Track) -> void:
 	var inlier_meas: Array = []
 	for m in sel.measurement_history:
 		if inlier_set.has(m.timestamp):
-			inlier_meas.append(_meas_to_dict(m))
+			inlier_meas.append(TmaUiData.fit_meas_dict(m))
 	if inlier_meas.is_empty():
 		return
 	dot_stack.compute(
@@ -1002,21 +1005,6 @@ func dot_stack_compute(r: Dictionary, sel: Track) -> void:
 		(best["v_ms"] as Vector2).y,
 		float(best["t_ref"])
 	)
-
-
-func _meas_to_dict(m: Measurement) -> Dictionary:
-	var d: Dictionary = {
-		"time": m.timestamp,
-		"observer_e": m.observer_east_m,
-		"observer_n": m.observer_north_m,
-		"bearing": m.measured_bearing_deg,
-		"sigma": m.bearing_sigma_deg,
-	}
-	# S1-03A/S1-06：歧义支路标识透传给 TMA 分支消歧
-	if m.ambiguous_pair_id != "":
-		d["ambiguous_pair_id"] = m.ambiguous_pair_id
-		d["ambiguity_branch"] = m.ambiguity_branch
-	return d
 
 
 func _on_enter_solution() -> void:
@@ -1164,6 +1152,19 @@ func _on_ping_requested() -> void:
 
 func _refresh_ping_status() -> void:
 	_ping_ctrl.refresh_panel(_op_panel)
+
+
+## 主动回波命中回调（S1-04B）：命中测量已由控制器喂 Tracker，自动选中该接触
+## 并 REFIT——单腿+range 可锚定（REQ-10），命中即 RANGE AIDED。
+func _on_ping_echo_hits(fed: Array) -> void:
+	if fed.is_empty():
+		return
+	var tr: Track = fed[0].get("track")
+	if tr == null:
+		return
+	selected_track_id = tr.track_id
+	_dirty = true
+	_on_fit_tma()
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。

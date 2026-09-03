@@ -114,15 +114,28 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   D7 弱目标概率探测间歇出现（无 SE<=0 硬门限）/
   D8 谱图背景 AR(1) 时间相关噪声 texture（非固定纯色，行间均差<2dB）。
   运行：`godot --headless --path games/sonar --script res://tools/dynamics_test.gd`
-- 主动声呐 Ping 无头验收（S1-04 交互）：`tools/ping_test.gd` ——
-  P1 冷却（连发被拒、冷却后恢复）/ P2 **回波按 τ=2R/c 延迟到达**（声速
-  1500m/s，8km 目标 next_echo_in≈10.7s；半途 take 为空、到点才 detected+
-  range≈真距）/ P3 极远目标无回波（SE 极负不产 Measurement）/ P4 回波到点
-  才 append 测量流（发射瞬间不 append）/ P5 摘要字段完整 / P6 场景
-  active_sonar 配置覆盖（含 sound_speed_m_s → τ 变）/ P7 无目标+无 active
-  传感器也能 ping（缺省艇首阵）/ P8 摘要方位≈几何真方位。运行：
+- 主动声呐 Ping 无头验收（S1-04B PingSession 单在途状态机）：
+  `tools/ping_test.gd` —— P1 冷却（连发被拒、冷却后恢复）/ P2 **回波按
+  τ=2R/c 延迟到达**（声速 1500m/s，8km 目标 next_echo_in≈10.7s；半途 take
+  为空、到点才 detected+range≈真距）/ P3 极远目标无回波（SE 极负不产
+  Measurement）/ P4 回波到点才 append 测量流（发射瞬间不 append）/ P5 摘要
+  字段完整 / P6 场景 active_sonar 配置覆盖（含 sound_speed_m_s → τ 变）/
+  P7 无目标诚实监听窗口→NO_RETURN / P8 无硬件（无 active_sonar 且无 active
+  阵）→ UNAVAILABLE，Ping 被拒（REQ-20）/ P9 摘要方位≈几何真方位 /
+  P10 冷却已过但回波未归 → 再 Ping 被拒（单在途 REQ-16/17）。运行：
   `godot --headless --path games/sonar --script res://tools/ping_test.gd`
-- 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
+- 主动 range 进 TMA 数据链无头验收（S1-04B 评审 TEST-S1-04B）：
+  `tools/ping_tma_integration_test.gd` —— R08 fit_meas_dict 透传
+  range/range_sigma / R08b 解算器把带 range 测量展开为 RANGE 残差行且残差
+  行数与测量严格配对 / R10 单腿纯方位 → INSUFFICIENT_GEOMETRY，同几何 +
+  尾部主动 range → 可锚定（误差 <800m）/ R11 Tracker 方位+距离双门控 /
+  R19 往返测距同源（measured_range 以发射时刻 range_ref 为基准，τ 内位移进
+  range_sigma）/ R03 Measurement.to_dict() 无 Truth id / E2E 控制器
+  request_ping→回波喂 Tracker 建 P 接触→on_echo_hits 携带 Track→REFIT 后
+  摘要含 RANGE AIDED。运行：
+  `godot --headless --path games/sonar --script res://tools/ping_tma_integration_test.gd`
+- 注意：main_ui 默认 `world.auto_measurements = false`（operator 模式，主动
+  回波由 ActivePingController 喂 Tracker）；旧冒烟/回归工具
   （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 
 ---
