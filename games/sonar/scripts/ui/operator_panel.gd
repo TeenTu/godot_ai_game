@@ -18,7 +18,10 @@ signal towed_hold_requested
 signal towed_length_commanded(frac: float)  # 0..1 × max_tow_length_m（S1-03）
 signal ping_requested  # S1-04：玩家按下主动声呐 Ping
 signal active_return_selected(return_index: int)  # S1-04C：点 Latest Returns 行
-signal active_undo_requested  # S1-04C：撤销最近一次自动关联
+signal active_undo_requested  # S1-04C：撤销最近一次自动关联（改绑/Reject）
+signal active_fit_mode_requested(mode: String)  # S1-04C-REQ-02：TMA 拟合模式
+signal active_take_control_requested  # S1-04C-REQ-02：Take Control（→MANUAL）
+signal active_apply_requested  # S1-04C-REQ-02：ASSISTED 应用 range 到 Trial
 
 const MAX_ROWS_SHOWN: int = 80
 
@@ -123,6 +126,9 @@ func _init() -> void:
 	_active_card.ping_requested.connect(func(): ping_requested.emit())
 	_active_card.return_selected.connect(func(i: int): active_return_selected.emit(i))
 	_active_card.undo_requested.connect(func(): active_undo_requested.emit())
+	_active_card.fit_mode_requested.connect(func(m: String): active_fit_mode_requested.emit(m))
+	_active_card.take_control_requested.connect(func(): active_take_control_requested.emit())
+	_active_card.apply_requested.connect(func(): active_apply_requested.emit())
 	_active_card.set_data(
 		{
 			"state": "UNAVAILABLE",

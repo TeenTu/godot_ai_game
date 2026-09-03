@@ -363,6 +363,26 @@ static func collect_truth(world: World) -> Array:
 	return out
 
 
+## Dot Stack 等价计算（从 main_ui 拆出，控行数）：只用 inlier 测量 + 最优解。
+static func dot_stack_compute(ds: DotStack, r: Dictionary, sel: Track) -> void:
+	var best: Dictionary = r.get("best", {})
+	if best.is_empty():
+		return
+	var inlier_set: Dictionary = {}
+	for res in r.get("residuals", []):
+		if bool(res.get("inlier", true)):
+			inlier_set[float(res["time"])] = true
+	var inlier_meas: Array = []
+	for m in sel.measurement_history:
+		if inlier_set.has(m.timestamp):
+			inlier_meas.append(fit_meas_dict(m))
+	if inlier_meas.is_empty():
+		return
+	var p0: Vector2 = best["p_ref"] as Vector2
+	var v0: Vector2 = best["v_ms"] as Vector2
+	ds.compute(inlier_meas, p0.x, p0.y, v0.x, v0.y, float(best.get("t_ref", 0.0)))
+
+
 ## 最近一次测量。
 static func latest_measurement(world: World) -> Measurement:
 	if world.measurements.is_empty():
