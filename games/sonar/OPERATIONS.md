@@ -270,15 +270,37 @@ UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Tubes 标签 / 鱼雷日
 
 ## 5. 自动化验证
 
-仓库自带无头测试，本地跑：
+仓库自带无头测试。**主门禁清单**见 `tools/ci_tests.txt`（S1-00-REQ-06），
+本地按 CI 同口径跑（先 `--import` 注册全局类，逐项要求退出码 0）：
 ```bash
-godot --headless --path games/sonar --script res://tools/stage1_test.gd
-godot --headless --path games/sonar --script res://tools/stage2_test.gd
-godot --headless --path games/sonar --script res://tools/play_test.gd
+godot --headless --path games/sonar --import
+while read -r t; do
+  [ -n "$t" ] && [ "${t#\#}" != "$t" ] || continue
+  godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
+done < games/sonar/tools/ci_tests.txt
 ```
-均需输出 `PASS`。其中 play_test 包含 TMA 自动拟合验收测试 7 项
-（两腿精确恢复 / 单腿不可观测 / 0-360 跨越 / 圆弧机动 / 目标机动检测 /
-STALE 时限 / Truth 隔离），输出 `TMA_ACCEPT tN ok` 共 7/7。
+清单覆盖 10 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
+`stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
+`ping_test`、`ping_tma_integration_test`、`weapon_test`、
+`s100_integrity_test`（S1-00 信息链完整性验收 D1-D8）。
+
+### S1-00 信息链热修状态（2026-09）
+
+- ① detected/evidence_id 证据契约（GAP-DATA-01/03）：miss 永不进玩家链
+  （World/UI 三层过滤）；一次物理到达 = 一个 evidence_id，A/B 镜像共享，
+  Track 按去重 evidence_id 计数（`evidence_count()` / `detection_count()`）。
+- ② 删主动自动旁路（REQ-03）+ TMA robust refit 统一口径（REQ-04，r2 插回
+  候选集首位、全候选在 inlier 子集重精化、剔除计罚进 weighted_cost）+
+  残差行 schema（REQ-05，`{measurement_id, evidence_id, component, raw_value,
+  raw_unit(deg|m), normalized, inlier, timestamp}`，废除 `residual_deg`）。
+- ③ CI 主门禁（REQ-06）：deploy.yml 新增 `test` job，按 `tools/ci_tests.txt`
+  显式执行全部测试并以非零退出码为准，`export-web` 依赖它。
+
+### play_test 的 TMA 验收细节
+
+`play_test` 输出 `TMA_ACCEPT tN ok` 共 7/7（两腿精确恢复 / 单腿不可观测 /
+0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）。
 
 UI 截图验证（窗口模式，输出 `tools/ui_preview.png`）：
 ```bash
@@ -286,4 +308,4 @@ godot --path games/sonar --script res://tools/ui_snapshot.gd
 ```
 预期 fit 状态 `CONVERGED`、`legs=2`（场景中本艇在 240s 处 +70° 转向）。
 
-CI（GitHub Actions）每次 push 自动跑 lint + 冒烟 + Web 导出。
+CI（GitHub Actions）每次 push 自动跑 lint + 全量测试门禁 + Web 导出。
