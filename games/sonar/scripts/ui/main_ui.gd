@@ -67,6 +67,7 @@ var _spin_own_course: SpinBox = null
 var _spin_own_speed: SpinBox = null
 var _contact_rows: Dictionary = {}  # track_id -> Button
 var _chk_layers: Dictionary = {}  # layer key -> CheckButton
+var _lbl_own_cmd: Label = null  # S1-02：ACT→CMD 航向/航速显示
 
 var _time_scale: float = 2.0
 var _sim_accum: float = 0.0
@@ -269,6 +270,9 @@ func _build_panel() -> void:
 	_panel.add_child(own_title)
 	_spin_own_course = _add_spin("Own Course (°)", 0, 359, 1, 0)
 	_spin_own_speed = _add_spin("Own Speed (kn)", 0, 30, 0.5, 0)
+	_lbl_own_cmd = Label.new()
+	_lbl_own_cmd.add_theme_font_size_override("font_size", 13)
+	_panel.add_child(_lbl_own_cmd)
 	_spin_own_course.value_changed.connect(_on_own_course)
 	_spin_own_speed.value_changed.connect(_on_own_speed)
 	var row_turn := HBoxContainer.new()
@@ -647,6 +651,7 @@ func _selected_track() -> Track:
 func _update_displays_light() -> void:
 	var own: TruthEntity = world.world["own"]
 	_chart.own_pos = Vector2(own.position_east_m, own.position_north_m)
+	_chart.own_course_deg = own.course_deg  # S1-01.4：本艇符号随实际艏向旋转
 	_chart.own_track = _own_track_cache()
 	_chart.trial_pos = Vector2(trial.estimated_position_east_m, trial.estimated_position_north_m)
 	_chart.trial_active = trial.range_m > 0.0
@@ -744,6 +749,19 @@ func _update_panel() -> void:
 		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
 	if _spin_own_speed != null and not _spin_own_speed.has_focus():
 		_spin_own_speed.set_value_no_signal(world.world["own"].speed_kn)
+	# S1-02：CMD/ACT 显示（实际值 → 命令值，含预计稳定时间）
+	if _lbl_own_cmd != null:
+		var o: TruthEntity = world.world["own"]
+		var cmd_txt: String = "ACT %.0f° %.1fkn" % [o.course_deg, o.speed_kn]
+		if o.has_course_command():
+			var err: float = absf(NavUtils.wrap180(o.commanded_course_deg - o.course_deg))
+			var rate: float = maxf(o.turn_rate_deg_s, TruthEntity.DEFAULT_TURN_RATE_DEG_S)
+			cmd_txt += " → CMD %.0f° (%.0fs)" % [o.commanded_course_deg, err / rate]
+		if o.has_speed_command():
+			var dv: float = absf(o.commanded_speed_kn - o.speed_kn)
+			var acc: float = maxf(o.acceleration_kn_s, TruthEntity.DEFAULT_ACCEL_KN_S)
+			cmd_txt += " → CMD %.1fkn (%.0fs)" % [o.commanded_speed_kn, dv / acc]
+		_lbl_own_cmd.text = cmd_txt
 
 
 ## 接触列表（可点击按钮，选中高亮）。集合变化时才重建按钮。
@@ -829,13 +847,14 @@ func _on_pause() -> void:
 func _on_own_course(deg: float) -> void:
 	if world == null:
 		return
-	world.world["own"].course_deg = NavUtils.wrap360(deg)
+	# S1-02/G-05：UI 只写命令值，实际艏向按转向率逼近
+	world.world["own"].command_course(NavUtils.wrap360(deg))
 
 
 func _on_own_speed(kn: float) -> void:
 	if world == null:
 		return
-	world.world["own"].speed_kn = maxf(kn, 0.0)
+	world.world["own"].command_speed(maxf(kn, 0.0))
 
 
 func _on_turn_left() -> void:
@@ -851,7 +870,7 @@ func _change_own_course(delta_deg: float) -> void:
 		return
 	var new_deg: float = NavUtils.wrap360(_spin_own_course.value + delta_deg)
 	_spin_own_course.set_value_no_signal(new_deg)
-	world.world["own"].course_deg = new_deg
+	world.world["own"].command_course(new_deg)
 
 
 func _on_speed_up() -> void:
@@ -867,7 +886,7 @@ func _change_own_speed(delta_kn: float) -> void:
 		return
 	var new_kn: float = clampf(_spin_own_speed.value + delta_kn, 0.0, 30.0)
 	_spin_own_speed.set_value_no_signal(new_kn)
-	world.world["own"].speed_kn = new_kn
+	world.world["own"].command_speed(new_kn)
 
 
 func _on_speed(index: int) -> void:

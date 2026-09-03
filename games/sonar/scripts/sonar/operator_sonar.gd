@@ -25,6 +25,10 @@ const NB_FMAX_HZ: float = 500.0
 const DEMON_BINS: int = 128  # 0..32 Hz 包络谱
 const DEMON_FMAX_HZ: float = 32.0
 const NOISE_FLOOR_DB: float = -28.0
+# S1-04.4：谱图背景噪声 texture——每帧每 bin 有时间相关（AR(1)）的随机起伏，
+# 不再用固定纯色噪声底代替声学噪声（G-04：噪声始终存在，确定性种子可复现）。
+const NOISE_TEXTURE_DB: float = 2.5  # 背景起伏幅度（dB）
+const NOISE_TEXTURE_RHO: float = 0.75  # 帧间相关系数
 const ROW_INTERVAL_S: float = 2.0
 const AUTOCREW_INTERVAL_S: float = 10.0
 const AUTOCREW_PD_MIN: float = 0.85
@@ -105,6 +109,10 @@ var _ambiguity_counter: int = 0
 var _rng: RandomNumberGenerator = null
 var _env: RefCounted = null
 var _own_ref: RefCounted = null
+# 背景 noise texture 状态（AR(1)，S1-04.4）
+var _bb_noise_tex: PackedFloat32Array = PackedFloat32Array()
+var _nb_noise_tex: PackedFloat32Array = PackedFloat32Array()
+var _demon_noise_tex: PackedFloat32Array = PackedFloat32Array()
 
 
 func setup(world_dict: Dictionary) -> void:
@@ -114,6 +122,12 @@ func setup(world_dict: Dictionary) -> void:
 	if _rng == null:
 		_rng = RandomNumberGenerator.new()
 		_rng.seed = 12345
+	_bb_noise_tex.resize(BB_BINS)
+	_bb_noise_tex.fill(0.0)
+	_nb_noise_tex.resize(NB_BINS)
+	_nb_noise_tex.fill(0.0)
+	_demon_noise_tex.resize(DEMON_BINS)
+	_demon_noise_tex.fill(0.0)
 
 
 func set_array(id: String) -> void:
@@ -188,6 +202,17 @@ func _randn() -> float:
 	return sqrt(-2.0 * log(u1)) * cos(TAU * u2)
 
 
+## 推进背景噪声 texture（AR(1) 时间相关，S1-04.4）。
+func _advance_noise_tex(tex: PackedFloat32Array) -> void:
+	for i in range(tex.size()):
+		tex[i] = NOISE_TEXTURE_RHO * tex[i] + (1.0 - NOISE_TEXTURE_RHO) * _randn()
+
+
+## 某 bin 的背景声级（噪声底 + texture 起伏）。
+func _noise_floor_at(tex: PackedFloat32Array, i: int) -> float:
+	return NOISE_FLOOR_DB + NOISE_TEXTURE_DB * tex[i]
+
+
 ## 推进一行操作员数据（main_ui 按 ROW_INTERVAL_S 调用）。
 ## targets: Truth 目标数组；acs: 目标声学画像字典（id -> AcousticProfile）。
 func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
@@ -205,13 +230,20 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 
 	var bb: PackedFloat32Array = PackedFloat32Array()
 	bb.resize(BB_BINS)
-	bb.fill(NOISE_FLOOR_DB)
 	var nb: PackedFloat32Array = PackedFloat32Array()
 	nb.resize(NB_BINS)
-	nb.fill(NOISE_FLOOR_DB)
 	var demon: PackedFloat32Array = PackedFloat32Array()
 	demon.resize(DEMON_BINS)
-	demon.fill(NOISE_FLOOR_DB)
+	# 背景：噪声底 + 时间相关随机起伏（非固定纯色，G-04/S1-04.4）
+	_advance_noise_tex(_bb_noise_tex)
+	_advance_noise_tex(_nb_noise_tex)
+	_advance_noise_tex(_demon_noise_tex)
+	for i in range(BB_BINS):
+		bb[i] = _noise_floor_at(_bb_noise_tex, i)
+	for i in range(NB_BINS):
+		nb[i] = _noise_floor_at(_nb_noise_tex, i)
+	for i in range(DEMON_BINS):
+		demon[i] = _noise_floor_at(_demon_noise_tex, i)
 	var bb_peaks: Array = []
 	var nb_tonals: Array = []
 	var tonal_count: int = 0
@@ -244,12 +276,16 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		if tow != null:
 			dir_gain += tow.bend_speed_loss_db()
 		var speed_kn: float = float(tgt.speed_kn)
-		var tl: float = maxf(0.0, 20.0 * log(maxf(rng_m, 1.0)) / log(10.0) * 1.2)
+		# S1-04/G-03 统一声学模型：TL 走 EnvironmentModel（含频率吸收），
+		# 不得散落 20log10*1.2 之类简化公式
+		var tl: float = AcousticService.propagation_loss(rng_m, 500.0, _env)
 		var noise: float = _env.effective_noise_db(500.0, own_speed)
 		var level_db: float = ac.broadband_sl_db(speed_kn, float(tgt.depth_m)) - tl
 		var se_db: float = level_db + gain + dir_gain - noise
 		total_se = maxf(total_se, se_db)
-		if se_db <= 0.0:
+		# 概率探测 P_d（S1-04）：不再用 SE<=0 硬门限，弱目标间歇出现
+		var pd: float = AcousticService.detection_probability(se_db)
+		if _rng.randf() >= pd:
 			continue
 		detection_count += 1
 		# BB 行：高斯波束峰（幅度∝SE），叠加每行随机方位噪声
@@ -303,13 +339,17 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				"ambiguity_branch": int(pb["branch"]),
 			}
 			bb_peaks.append(peak)
-		# NB 行：目标音线（只显示 SE>0 的）
+		# NB 行：目标音线（每条谱线用自身频率算 TL/N_eff，S1-04.2 不得全按 500 Hz；
+		# 可见度随 SNR 概率变化，不再 lvl<=0 硬切）
 		for line_v in ac.tonal_lines:
 			var f_hz: float = float(line_v["freq_hz"])
 			if f_hz <= 0.0 or f_hz >= NB_FMAX_HZ:
 				continue
-			var lvl: float = float(line_v["level_db"]) + gain - tl - noise
-			if lvl <= 0.0:
+			var tl_f: float = AcousticService.propagation_loss(rng_m, f_hz, _env)
+			var noise_f: float = _env.effective_noise_db(f_hz, own_speed)
+			var lvl: float = float(line_v["level_db"]) + gain - tl_f - noise_f
+			var p_line: float = AcousticService.detection_probability(lvl)
+			if _rng.randf() >= p_line:
 				continue
 			var bi: int = clampi(int(f_hz / NB_FMAX_HZ * NB_BINS), 0, NB_BINS - 1)
 			nb[bi] = maxf(nb[bi], NOISE_FLOOR_DB + minf(lvl * 0.5, 28.0))

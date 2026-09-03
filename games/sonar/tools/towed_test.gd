@@ -322,8 +322,11 @@ func _t7_mirror_pair(fails: Array) -> void:
 		true
 	)
 	# create_mark_group：点其中一支 → 主测量 + 镜像测量（θ_B = 2ψa − θ_A）
+	# 点击方位取实际峰的显示方位（本艇航向 0° 时 display==true），
+	# 不依赖阵心/本艇视角的几何差（2000m 处约差 6°，贴近匹配容差）。
+	var click_brg: float = float(peaks[0]["bearing_deg"])
 	var row: Dictionary = op.bb_rows[-1]
-	var group: Array = op.create_mark_group(60.0, 0.0, "", true, row)
+	var group: Array = op.create_mark_group(click_brg, 0.0, "", true, row)
 	_assert_bool(fails, "T7 mark_group returns pair", group.size() == 2, true)
 	if group.size() != 2:
 		return
@@ -395,7 +398,8 @@ func _t8_tracker_no_double_count(fails: Array) -> void:
 	op.setup({"env": env, "own": own, "rng": rng})
 	op.set_array("TOWED")
 	op.update(0.0, [tgt], {"T1": ac})
-	var group: Array = op.create_mark_group(60.0, 0.0, "", true, op.bb_rows[-1])
+	var click_brg8: float = float(op.bb_rows[-1]["peaks"][0]["bearing_deg"])
+	var group: Array = op.create_mark_group(click_brg8, 0.0, "", true, op.bb_rows[-1])
 	if group.size() != 2:
 		fails.append("T8 expected mirror pair from mark_group")
 		return

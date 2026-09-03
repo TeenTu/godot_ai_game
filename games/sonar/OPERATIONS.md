@@ -105,6 +105,15 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 - 0.2 六条回归（S1-01）无头验收：`tools/fix_batch1b_test.gd` R1 多扇区增益 maxf /
   R2 TRUE 瀑布源列恒 -180..180 / R3 历史行 Mark 携带该行时间·艏向·站位 /
   R4 create_mark 峰匹配 canonical frame（TRUE 输入先转显示 frame 再比峰）。
+- 统一声学引擎 + 命令动力学无头验收（G-03/S1-04/S1-02/G-05）：
+  `tools/dynamics_test.gd` —— D1 命令转向速率限制+完成清命令+跨 0/360 /
+  D2 命令加减速限制 / D3 无命令直写 actual 兼容（AI 目标/旧测试）/
+  D4 SensorArray↔AcousticService 公式逐位等价（G-03 单一实现）/
+  D5 环境噪声表字符串键匹配+频率线性插值（不恒回退 60dB）/
+  D6 OperatorSonar 用 EnvironmentModel TL（含吸收项）解析对照 /
+  D7 弱目标概率探测间歇出现（无 SE<=0 硬门限）/
+  D8 谱图背景 AR(1) 时间相关噪声 texture（非固定纯色，行间均差<2dB）。
+  运行：`godot --headless --path games/sonar --script res://tools/dynamics_test.gd`
 - 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
   （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 
@@ -184,6 +193,9 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   - TRIAL 绿点位置 / 速度箭头随参数实时变化。
 - 修改本艇航向/航速，观察：
   - 海图三角、方位盘艏向、状态栏即时更新。
+  - S1-02/G-05 命令值/实际值分离：输入航向/航速只写命令值，实际值按最大
+    转向率/加速度渐变逼近（状态栏显示 `ACT x° y.ykn → CMD z° (预计 ns)`），
+    海图 OWN 三角随实际艏向旋转；到达命令值自动恢复稳态显示。
 
 ### 步骤 8：暂停与倍速（验证控制）
 - **Pause**：仿真冻结（Time 停止增长），再点恢复。

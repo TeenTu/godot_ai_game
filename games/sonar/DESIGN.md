@@ -119,9 +119,17 @@ games/sonar/
 id, class_id, side
 position_east_m, position_north_m, depth_m
 course_deg, speed_kn, turn_rate_deg_s, acceleration
+commanded_course_deg, commanded_speed_kn   # S1-02/G-05：命令值/实际值分离（<0=无命令）
 platform_type, damage_state
 ```
 运动学更新按 §1 公式，支持匀速 / 转向 / 变速。
+
+**S1-02 / G-05 命令值与实际值分离**：UI/决策层只能通过 `command_course(deg)` /
+`command_speed(kn)` 下令，实际航向/航速按最大转向率/加速度限制渐变逼近
+（`clamp(wrap180(cmd−act), ±turn_rate·dt)` / `clamp(dv, ±accel·dt)`；场景未配速率时
+兜底 1.5°/s、0.25kn/s）。到达命令值（<0.05° / <0.01kn）自动清命令。
+一旦下达过命令，旧常率转向/常加速路径退役（命令与旧 AI 机动互斥；未下命令的
+AI 目标/旧测试仍可直接写 actual）。
 
 ### 3.2 AcousticProfile
 ```
@@ -203,6 +211,11 @@ actual_tow_length_m            # 测量时刻实际缆长
 
 ## 4. 统一声呐模型（阶段一实现）
 
+> **G-03 / S1-04 单一实现点**：全部公式收敛在 `scripts/acoustic_service.gd`
+> （AcousticService，全静态）。SensorArray 的公共 API 与 OperatorSonar 一律委托它，
+> 严禁散落 `20log10*1.2` 之类简化公式。传播损失/有效噪声委托 EnvironmentModel
+> （TL 含扩展+吸收+环境项；N_eff 多源线性合成）。
+
 ### 4.1 被动声呐信号余量
 ```
 SE_passive = SL - TL - N_eff + AG - DT
@@ -223,6 +236,14 @@ P_d = 1 / (1 + exp(-SE / k_d))
 ```
 SE 高 → P_d 高 / 瀑布亮 / 方位稳 / 谱线全 / 分类快；
 接近门限 → 间歇接触、谱线中断、短暂误报、忽隐忽现。
+OperatorSonar 对每个候选峰按 P_d 掷骰（S1-04）：无 SE>0 硬切，弱目标间歇出现。
+
+### 4.3.1 背景噪声 texture（S1-04.4 / G-04）
+瀑布每 bin 背景为时间相关随机噪声，替代固定纯色底：
+```
+state_{t+1} = ρ·state_t + (1−ρ)·randn     # AR(1)，ρ=0.75，幅度≈2.5dB
+```
+相邻行均匀相关（肉眼可辨纹理），行间均差 <2dB；宽带/窄带/DEMON 各自独立状态。
 
 ### 4.4 方位误差（随 SE 变化）
 ```

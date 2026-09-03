@@ -40,14 +40,14 @@ func _randn() -> float:
 	return sqrt(-2.0 * log(u1)) * cos(TAU * u2)
 
 
-## 被动声呐 SE = SL - TL - N_eff + AG - DT。
+## 被动声呐 SE = SL - TL - N_eff + AG - DT（S1-04：公式统一在 AcousticService）。
 ## target_sl_db 是目标当前宽带声源级，freq 取探测频段中心。
 func passive_signal_excess(
 	target_sl_db: float, range_m: float, freq_hz: float, env: RefCounted, own_speed_kn: float
 ) -> float:
-	var tl: float = env.propagation_loss(range_m, freq_hz)
-	var n_eff: float = env.effective_noise_db(freq_hz, own_speed_kn)
-	return target_sl_db - tl - n_eff + array_gain_db - detection_threshold_db
+	return AcousticService.passive_se(
+		target_sl_db, range_m, freq_hz, env, own_speed_kn, array_gain_db, detection_threshold_db
+	)
 
 
 ## 主动声呐 SE = SL_ping - 2*TL + TS - N_eff + AG - DT（两次传播损失）。
@@ -59,24 +59,27 @@ func active_signal_excess(
 	env: RefCounted,
 	own_speed_kn: float
 ) -> float:
-	var tl: float = env.propagation_loss(range_m, freq_hz)
-	var n_eff: float = env.effective_noise_db(freq_hz, own_speed_kn)
-	return ping_sl_db - 2.0 * tl + target_ts_db - n_eff + array_gain_db - detection_threshold_db
+	return AcousticService.active_se(
+		ping_sl_db,
+		target_ts_db,
+		range_m,
+		freq_hz,
+		env,
+		own_speed_kn,
+		array_gain_db,
+		detection_threshold_db
+	)
 
 
-## 概率探测 P_d = 1 / (1 + exp(-SE/k_d))。连续、非硬门限。
+## 概率探测 P_d = 1 / (1 + exp(-SE/k_d))。连续、非硬门限（S1-04 统一公式）。
 func detection_probability(se_db: float) -> float:
-	return 1.0 / (1.0 + exp(-se_db / detection_k_d))
+	return AcousticService.detection_probability(se_db, detection_k_d)
 
 
 ## 方位标准差随 SE 下降（弱接触抖动大，强接触稳定）。
 func bearing_sigma_deg(se_db: float) -> float:
-	return (
-		bearing_sigma_min_deg
-		+ (
-			(bearing_sigma_max_deg - bearing_sigma_min_deg)
-			/ (1.0 + exp((se_db - bearing_se0_db) / bearing_k_sigma_db))
-		)
+	return AcousticService.bearing_sigma_deg(
+		se_db, bearing_sigma_min_deg, bearing_sigma_max_deg, bearing_se0_db, bearing_k_sigma_db
 	)
 
 
