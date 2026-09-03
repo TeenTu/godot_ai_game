@@ -127,6 +127,8 @@ func _advance_only() -> void:
 
 
 ## 为某个传感器生成一次测量（针对所有目标）。
+## S1-00（GAP-DATA-01）：未探测样本（detected=false）绝不 append 进
+## measurements——miss 不携带未加噪真方位进入玩家链。
 func _emit_for_sensor(sensor: RefCounted) -> void:
 	var gen: RefCounted = world["generator"]
 	for t in world["targets"]:
@@ -136,7 +138,8 @@ func _emit_for_sensor(sensor: RefCounted) -> void:
 			m = gen.generate_active(world["own"], t, ac, sensor, ping_sl_db, sim_time)
 		else:
 			m = gen.generate_passive(world["own"], t, ac, sensor, sim_time)
-		measurements.append(m)
+		if m.detected:
+			measurements.append(m)
 
 
 ## 推进 n 个固定步长。
@@ -372,7 +375,7 @@ func _settle_due_echoes() -> void:
 				float(e["range_ref_time_s"]),
 			)
 		)
-		var detected: bool = m.has_range()
+		var detected: bool = m.detected
 		e["detected"] = detected
 		e["se_db"] = m.signal_excess_db
 		e["pd"] = m.detection_probability

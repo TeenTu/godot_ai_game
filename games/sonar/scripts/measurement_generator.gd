@@ -15,11 +15,18 @@ var _rng: RandomNumberGenerator = null
 var _env: RefCounted = null  # EnvironmentModel
 var _own_profile: RefCounted = null  # 本艇 AcousticProfile（用于自噪由传感器侧自理，这里无需）
 var _measurement_counter: int = 0
+var _evidence_counter: int = 0  # S1-00：每次物理到达发唯一 evidence_id
 
 
 func setup(rng: RandomNumberGenerator, env: RefCounted) -> void:
 	_rng = rng
 	_env = env
+
+
+## S1-00：为一次物理到达铸造唯一证据 id（A/B 镜像由调用方共享）。
+func _next_evidence_id() -> String:
+	_evidence_counter += 1
+	return "ev_%05d" % _evidence_counter
 
 
 ## 生成对某目标的被动观测（无测距，纯 LOB）。
@@ -64,7 +71,8 @@ func generate_passive(
 	var pd: float = sensor.detection_probability(se)
 	var detected: bool = _rng.randf() < pd
 
-	# 生成观测（即使未探测到，也生成一条空测量供 UI 做"间歇"表现）
+	# 生成观测（未探测到时 detected=false——这是"miss"，必须由 World/UI/
+	# Tracker 三层过滤，绝不携带未加噪的真方位进入玩家链，GAP-DATA-01）。
 	m.measurement_id = _measurement_counter
 	_measurement_counter += 1
 	m.timestamp = timestamp
@@ -72,6 +80,8 @@ func generate_passive(
 	m.target_id = target.id
 	m.measurement_type = "PASSIVE_BEARING"
 	m.available_time = timestamp
+	m.detected = detected
+	m.evidence_id = _next_evidence_id()
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing
@@ -134,6 +144,8 @@ func generate_active(
 	m.measurement_type = "ACTIVE_RANGE_BEARING"
 	m.ping_id = ping_id
 	m.available_time = timestamp
+	m.detected = detected
+	m.evidence_id = _next_evidence_id()
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing
