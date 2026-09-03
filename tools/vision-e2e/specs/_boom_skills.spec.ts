@@ -57,6 +57,22 @@ test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown
     }, { t: type, x, y, id });
   };
   const num = (s: Record<string, unknown>, k: string) => Number(s[k] ?? 0);
+  // 3D 模型上线后首帧材质编译有抖动，技能生效可能比固定 sleep 晚一拍——
+  // 统一轮询等待 sk_* 进入 CD（以实际状态为准，不依赖固定读数窗口）。
+  const waitForSkillCD = async (
+    page: import("@playwright/test").Page,
+    key: string,
+    timeoutMs = 6000
+  ): Promise<Record<string, unknown>> => {
+    const deadline = Date.now() + timeoutMs;
+    let s = await getState(page);
+    while (Date.now() < deadline) {
+      s = await getState(page);
+      if (num(s, key) > 0) return s;
+      await page.waitForTimeout(200);
+    }
+    return s;
+  };
   const ZONE_X = 0.65; // SKILL_ZONE_X
   const right = (frac: number) => 720 * ZONE_X + frac * (720 - 720 * ZONE_X); // x 落右区
   const y_mid = 700;
@@ -70,8 +86,7 @@ test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown
   await dispatch("touchstart", rx, ry, 1);
   await page.waitForTimeout(50); // < TAP_MAX_TIME(0.2s)
   await dispatch("touchend", rx + 1, ry, 1); // 位移≈1px -> tap
-  await page.waitForTimeout(220);
-  s = await getState(page);
+  s = await waitForSkillCD(page, "sk_fan");
   console.log("TAP(→fan) state:", JSON.stringify(s));
   expect(num(s, "sk_fan"), "tap 后 fan 进入 CD (sk_fan>0)").toBeGreaterThan(0.0);
   expect(num(s, "bullets"), "fan 施放后有子弹").toBeGreaterThanOrEqual(0);
@@ -94,8 +109,7 @@ test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown
   }
   await page.waitForTimeout(120);
   await dispatch("touchend", cEndX, y_mid, 2);
-  await page.waitForTimeout(250);
-  s = await getState(page);
+  s = await waitForSkillCD(page, "sk_chain");
   console.log("SWIPE_LEFT(→chain) state:", JSON.stringify(s));
   expect(num(s, "sk_chain"), "←swipe 后 chain 进入 CD (sk_chain>0)").toBeGreaterThan(0.0);
   await page.screenshot({ path: "test-results/_boom_skills_2_chain.png" });
@@ -113,8 +127,7 @@ test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown
   }
   await page.waitForTimeout(120);
   await dispatch("touchend", nEndX, y_mid, 3);
-  await page.waitForTimeout(300);
-  s = await getState(page);
+  s = await waitForSkillCD(page, "sk_nuke");
   console.log("SWIPE_RIGHT(→nuke) state:", JSON.stringify(s));
   expect(num(s, "sk_nuke"), "→swipe 后 nuke 进入 CD (sk_nuke>0)").toBeGreaterThan(0.0);
   await page.screenshot({ path: "test-results/_boom_skills_3_nuke.png" });
