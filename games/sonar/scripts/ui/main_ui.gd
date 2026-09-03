@@ -1,23 +1,10 @@
 class_name SonarUI
 extends Control
 ## main_ui.gd — 主 UI 装配与仿真驱动（TMA 可视化重构版）。
-##
-## 布局（1280x720 全部可见，无需滚动看关键信息）：
-##   ┌────────┬────────────────────────────┬──────────────┐
-##   │ 方位盘  │      海图（相机可缩放平移）     │  控制面板     │
-##   ├────────┴────────────────────────────┴──────────────┤
-##   │            底部诊断区（BT/残差，可切换/关闭）          │
-##   └────────────────────────────────────────────────────┘
-##
-## 诊断区显示模式（需求§一.1）：CLOSED / BT(默认) / RESIDUAL / SPLIT。
-## 关闭整个诊断区时 _diag_box.visible=false 释放空间，主海图自动扩展；
-## 重新打开保留数据（数据在 _rebuild_display_data 维护，不随可见性丢失）。
-## 要点：
-##   - selected_track_id：Auto Fit 只拟合选中接触，禁止自动取第一个
-##   - 数据只在「新测量 / 新拟合 / 选择或图层变化」时重建（脏标记）
-##   - BT 悬停 ↔ 海图 o_i/LOB/p_i/残差数值 ↔ 残差图高亮 三方联动
-##
-## Truth 隔离：只有 Show Truth 开发开关打开时，才把 Truth 位置传给海图。
+## 布局：左方位盘 | 中海图 | 右控制面板(280px) | 底部诊断区 BT/残差可切换
+##   （CLOSED/BT/RESIDUAL/SPLIT，关闭释放空间、重开保留数据）。
+## 要点：selected_track_id 只拟合选中接触；脏标记驱动重建；BT↔海图↔残差
+##   三方悬停联动；Truth 仅 Show Truth 开发开关打开时才进海图。
 
 const SCENARIO_NAME: String = "stage1_basic_passive"
 const PANEL_W: float = 280.0
@@ -108,6 +95,10 @@ func _ready() -> void:
 	_ping_ctrl.on_dirty = func(): _dirty = true
 	# S1-04B：回波命中已喂 Tracker → 自动选中该接触并 REFIT（range 进 TMA）
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
+	# S1-04C：撤销一次自动关联后刷新视图（REFIT REQUIRED 语义）。
+	_ping_ctrl.on_assoc_undone = func(_tid: String):
+		_dirty = true
+		_update_status("Active echo association undone — REFIT REQUIRED")
 
 	# Operator Layer：关闭自动测量，Truth 只能经声场/阵列采样进入操作员视图
 	world.auto_measurements = false
@@ -138,9 +129,7 @@ func _on_self_resized() -> void:
 	pass
 
 
-# ------------------------------------------------------------------
-#  UI 构建
-# ------------------------------------------------------------------
+# ---- UI 构建 ----
 
 
 func _build_ui() -> void:
@@ -227,6 +216,8 @@ func _build_panel() -> void:
 	_op_panel.towed_hold_requested.connect(_on_towed_hold)
 	_op_panel.towed_length_commanded.connect(_on_towed_length_commanded)
 	_op_panel.ping_requested.connect(_on_ping_requested)
+	_op_panel.active_undo_requested.connect(_on_active_undo)
+	_op_panel.active_return_selected.connect(_on_active_return_selected)
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
 
@@ -409,10 +400,7 @@ func _build_bottom(root: VBoxContainer) -> void:
 	_apply_diag_mode()
 
 
-## 按 _diag_mode 应用底部诊断区的可见性。
-## - 数据/缩放/悬停状态保存在两个 plot 内，不随可见性改变而丢失（需求§一.1：
-##   重新打开后保留数据、缩放和悬停状态）。
-## - CLOSED：整个诊断容器隐藏，空出的垂直空间被主海图(main_row expand)自动吸收。
+## 按 _diag_mode 应用底部诊断区可见性（plot 内数据不随隐藏丢失）。
 func _apply_diag_mode() -> void:
 	if _diag_box == null or _bt_plot == null or _res_plot == null:
 		return
@@ -440,7 +428,6 @@ func _set_diag_mode(mode: int) -> void:
 	_apply_diag_mode()
 
 
-## 渲染入口
 func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.06, 0.08, 1.0))
 
@@ -463,9 +450,7 @@ func _add_spin(title: String, min_v: float, max_v: float, step: float, val: floa
 	return sp
 
 
-# ------------------------------------------------------------------
-#  仿真推进
-# ------------------------------------------------------------------
+# ---- 仿真推进 ----
 
 
 func _process(delta: float) -> void:
@@ -508,14 +493,11 @@ func _feed_new_measurements() -> void:
 				var t: Track = tracker.feed(m)
 				if t == null:
 					tracker.mark(m, "S")
-		# Operator 模式：测量已在 Mark/Autocrew 时喂给 tracker，
-		# 这里只推进消费游标。
+		# Operator 模式：测量已在 Mark/Autocrew 时喂 Tracker，这里只推游标。
 		_processed_meas += 1
 
 
-# ------------------------------------------------------------------
-#  数据重建（脏标记触发，不每帧重建）
-# ------------------------------------------------------------------
+# ---- 数据重建（脏标记触发） ----
 
 
 ## 重建 LOB / meas_index / BT 点列 / 残差数组。
@@ -623,8 +605,7 @@ func _rebuild_display_data() -> void:
 	)
 
 
-## 海图假设：最优 + 权重最高的 ≤3 个备选（A/B/C 编号）。
-## 可折叠区块：标题按钮 + 内容容器；再次点击标题折叠/展开。
+## 可折叠区块：标题按钮 + 内容容器，再次点击标题折叠/展开。
 func _make_section(title_text: String) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	var head := Button.new()
@@ -644,7 +625,6 @@ func _make_section(title_text: String) -> VBoxContainer:
 	return box
 
 
-## 从可折叠区块取内容容器（_make_section 返回外层 box 时用）。
 func _section_body(box: VBoxContainer) -> VBoxContainer:
 	return box.get_meta("body") as VBoxContainer
 
@@ -658,9 +638,7 @@ func _selected_track() -> Track:
 	return null
 
 
-# ------------------------------------------------------------------
-#  轻量每帧更新（不重建数组）
-# ------------------------------------------------------------------
+# ---- 轻量每帧更新（不重建数组） ----
 
 
 func _update_displays_light() -> void:
@@ -726,9 +704,7 @@ func _color_for_track(id: String) -> Color:
 	return c
 
 
-# ------------------------------------------------------------------
-#  面板
-# ------------------------------------------------------------------
+# ---- 面板 ----
 
 
 func _update_panel() -> void:
@@ -828,9 +804,7 @@ func _on_contact_selected(track_id: String) -> void:
 	_update_status("Selected " + track_id + " — Auto Fit will use this contact")
 
 
-# ------------------------------------------------------------------
-#  交互回调
-# ------------------------------------------------------------------
+# ---- 交互回调 ----
 
 
 func _on_layer_toggle(on: bool, key: String) -> void:
@@ -924,8 +898,7 @@ func _on_mark() -> void:
 	_update_status("Manual Mark: new contact")
 
 
-## Auto Fit：只拟合 selected_track_id（验收 6：多接触下 Fit 只作用选中接触）。
-## 也由主动回波 REFIT 复用（_on_ping_echo_hits 先选中命中接触再调本函数）。
+## Auto Fit：只拟合 selected_track_id；也由主动回波 REFIT 复用。
 func _on_fit_tma() -> void:
 	var sel: Track = _selected_track()
 	if sel == null:
@@ -1070,19 +1043,15 @@ func _op_step() -> void:
 	_op_panel.refresh(op)
 
 
-# ------------------------------------------------------------------
-#  TOWED 拖曳阵（批次2+）：部署/回收 + 状态显示
-# ------------------------------------------------------------------
+# ---- TOWED 拖曳阵：部署/回收 + 状态显示 ----
 
 
-## 取本艇拖曳阵（可能为 null）。TOWED 相关控制都只作用于它。
 func _towed_ref() -> TowedArray:
 	if world == null:
 		return null
 	return world.world.get("own", null).get("towed")
 
 
-## S1-03：STREAM——放缆（缺省放到全长，可指定目标长度）。
 func _on_towed_deploy() -> void:
 	var t: TowedArray = _towed_ref()
 	if t == null:
@@ -1091,7 +1060,6 @@ func _on_towed_deploy() -> void:
 	_update_status("Towed array streaming to %.0f m..." % t.commanded_tow_length_m)
 
 
-## S1-03：RETRIEVE——收缆（回到 STOWED）。
 func _on_towed_retract() -> void:
 	var t: TowedArray = _towed_ref()
 	if t == null:
@@ -1100,7 +1068,6 @@ func _on_towed_retract() -> void:
 	_update_status("Retrieving towed array...")
 
 
-## S1-03：HOLD——冻结缆长命令，保持当前实际缆长。
 func _on_towed_hold() -> void:
 	var t: TowedArray = _towed_ref()
 	if t == null:
@@ -1142,9 +1109,7 @@ func _refresh_towed_status() -> void:
 	_op_panel.update_towed_controls(t)
 
 
-# ------------------------------------------------------------------
-#  主动声呐 Ping（S1-04）：薄接线，逻辑在 ActivePingController
-# ------------------------------------------------------------------
+# ---- 主动声呐 Ping：薄接线，逻辑在 ActivePingController ----
 
 
 func _on_ping_requested() -> void:
@@ -1156,6 +1121,25 @@ func _on_ping_requested() -> void:
 
 func _refresh_ping_status() -> void:
 	_ping_ctrl.refresh_panel(_op_panel)
+
+
+## 撤销最近一次主动回波关联（REQ-03 DoD：改绑/拒绝后视图同步刷新）。
+func _on_active_undo() -> void:
+	if _ping_ctrl == null:
+		return
+	if _ping_ctrl.undo_last_association():
+		_dirty = true
+		_rebuild_display_data()
+
+
+## 点击 Latest Returns 行 → 选中该返回关联的 Track（不自动 Fit）。
+func _on_active_return_selected(i: int) -> void:
+	if _ping_ctrl == null or i < 0 or i >= _ping_ctrl.return_rows.size():
+		return
+	var tid: String = str(_ping_ctrl.return_rows[i].get("track_id", ""))
+	if tid == "" or tid == "-":
+		return
+	_on_contact_selected(tid)
 
 
 ## 主动回波命中回调（S1-04B）：命中测量已由控制器喂 Tracker，自动选中该接触

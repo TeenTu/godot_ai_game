@@ -10,14 +10,16 @@ extends SceneTree
 ##   P1  冷却逻辑：连发被拒，冷却结束恢复 READY。
 ##   P2  回波延迟到达：LISTENING→到点 RETURN；pending=1、next_echo_in≈2R/c≈10.7s；
 ##       半途 take 为空、到点 take 得 detected 回波，range≈真距、SE>0。
-##   P3  极远目标无回波：到点结算 SE 极负 → 不产 Measurement。
+##   P3  超窗极远目标无回波（REQ-04）：固定监听窗到期丢弃超窗回波 →
+##       无 echo entry、不产 Measurement；NO_RETURN→冷却→READY。
 ##   P4  回波到时才进测量流：发射瞬间不 append，到达后 append 带 range。
 ##   P5  摘要字段完整：target_id/detected/se_db/pd/bearing_deg/range_m。
 ##   P6  场景配置覆盖：ping_sl_db/cooldown_s/sound_speed_m_s（改声速→改 τ）。
 ##   P7  无目标：发射成功、无在途回波、诚实监听窗口→NO_RETURN→READY。
 ##   P8  无硬件（无 active_sonar 且无 active 阵）：UNAVAILABLE，Ping 被拒。
 ##   P9  摘要方位与几何真方位一致（±6°）。
-##   P10 单在途：冷却已过但回波未归 → 再 Ping 被拒、不清理旧回波。
+##   P10 单在途（REQ-16/17，固定窗内）：冷却已过但回波仍在监听窗内 →
+##       再 Ping 被拒、旧回波不清理；到点结算后会话结束 → READY 可再发。
 ##
 ## 运行：godot --headless --path games/sonar --script res://tools/ping_test.gd
 
@@ -212,17 +214,25 @@ func _p2_delayed_echo(fails: Array) -> void:
 
 
 func _p3_far_no_echo(fails: Array) -> void:
+	# REQ-04 固定监听窗：200km 目标 τ=2R/c≈266.7s 远超 15s 窗（最大可测距
+	# 11.25km），窗口到期即被丢弃（不可接收）→ 绝不产 echo entry / Measurement。
+	# 冷却 40s > 窗 15s：让 NO_RETURN 停留可观测（不被冷却瞬间清空）。
+	var own_override: Dictionary = _base_own()
+	own_override["active_sonar"]["cooldown_s"] = 40.0
+	var sc: Dictionary = _mk_scenario(own_override, [_base_target(200000.0, 0.0)])
 	var w := World.new()
-	w.load_scenario(_mk_scenario({}, [_base_target(200000.0, 0.0)]))
+	w.load_scenario(sc)
 	_assert_bool(fails, "P3 ping transmitted", w.issue_ping(), true)
-	w.run_steps(_steps_until(2.0 * 200000.0 / 1500.0) + 1)  # 到 τ 之后
-	var echoes: Array = w.take_arrived_echoes()
-	_assert_bool(fails, "P3 far got echo entry", echoes.size() == 1, true)
-	if echoes.is_empty():
-		return
-	var e: Dictionary = echoes[0]
-	_assert_bool(fails, "P3 far SE very low", float(e["se_db"]) < -20.0, true)
-	_assert_bool(fails, "P3 far not detected", bool(e["detected"]), false)
+	_assert_bool(fails, "P3 one echo registered", w.pending_echo_count() == 1, true)
+	# 窗口到期（t=15s）→ 超窗回波丢弃 → NO_RETURN；无 echo entry、无 pending
+	w.run_steps(_steps_until(16.0))  # t=16.0
+	_assert_eq(fails, "P3 NO_RETURN at window expiry", w.ping_state_name(), "NO_RETURN")
+	_assert_bool(fails, "P3 no echo pending after drop", w.pending_echo_count() == 0, true)
+	_assert_bool(fails, "P3 no echo entry ever", w.take_arrived_echoes().is_empty(), true)
+	# 冷却结束（40s）→ READY 可再发
+	w.run_steps(_steps_until(41.0) - _steps_until(16.0))
+	_assert_eq(fails, "P3 back to READY", w.ping_state_name(), "READY")
+	_assert_bool(fails, "P3 can ping again", w.can_ping(), true)
 
 
 func _p4_echo_in_stream_on_arrival(fails: Array) -> void:
@@ -337,20 +347,24 @@ func _p9_bearing_close(fails: Array) -> void:
 
 
 func _p10_single_in_flight(fails: Array) -> void:
-	# REQ-16/17：回波未归（远目标 τ=80s）即使冷却已过也不能再 Ping，
-	# 且旧回波绝不被清理。60km 目标 τ=2*60000/1500=80s >> cooldown 15s。
+	# REQ-16/17（固定窗内）：回波仍在监听窗内在途时，即使冷却已过也不能再
+	# Ping，且旧回波绝不被清理。配置 窗 30s > 冷却 15s、目标 15km
+	# （τ=2*15000/1500=20s）→ 冷却在 15s 结束而回波 20s 才到，窗口不因最远
+	# 目标延长（REQ-04）但仍诚实覆盖 20s 回波，形成"冷却过、回波未归"窗口期。
+	var own_override: Dictionary = _base_own()
+	own_override["active_sonar"]["listen_window_s"] = 30.0
 	var w := World.new()
-	w.load_scenario(_mk_scenario({}, [_base_target(60000.0, 0.0)]))
+	w.load_scenario(_mk_scenario(own_override, [_base_target(0.0, 15000.0)]))
 	_assert_bool(fails, "P10 ping ok", w.issue_ping(), true)
 	_assert_bool(fails, "P10 one echo registered", w.pending_echo_count() == 1, true)
-	# 冷却 15s 已过（16s），但回波仍在途 → 单在途禁止再发
+	# 冷却 15s 已过（16s），但回波（20s 才到）仍在监听窗内在途 → 单在途禁止再发
 	w.run_steps(_steps_until(16.0))
 	_assert_bool(fails, "P10 can_ping false (in-flight)", w.can_ping(), false)
 	_assert_bool(fails, "P10 re-ping rejected", w.issue_ping(), false)
 	_assert_bool(fails, "P10 old echo NOT cleared", w.pending_echo_count() == 1, true)
 	_assert_eq(fails, "P10 still LISTENING", w.ping_state_name(), "LISTENING")
-	# 到 τ=80s 回波结算 → 会话结束 → 可再 Ping
-	w.run_steps(_steps_until(80.5) - _steps_until(16.0))
+	# 到 τ=20s 回波结算（echo entry 必有，detected 与否不影响）→ 会话结束可再发
+	w.run_steps(_steps_until(21.0) - _steps_until(16.0))
 	var echoes: Array = w.take_arrived_echoes()
 	_assert_bool(fails, "P10 far echo settled", echoes.size() == 1, true)
 	_assert_bool(fails, "P10 no echo pending", w.pending_echo_count() == 0, true)
