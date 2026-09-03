@@ -522,38 +522,11 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		for m in t.measurement_history:
-			var inlier: bool = not outlier_times.has(m.timestamp)
-			var a: float = 1.0 if is_sel else 0.12
-			(
-				all_lobs
-				. append(
-					{
-						"origin": Vector2(m.observer_east_m, m.observer_north_m),
-						"bearing_deg": m.measured_bearing_deg,
-						"color": Color(col.r, col.g, col.b, a),
-						"id": t.track_id,
-						"track_id": t.track_id,
-						"time": m.timestamp,
-						"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
-						"inlier": inlier,
-					}
-				)
-			)
-			if is_sel:
-				(
-					meas_index
-					. append(
-						{
-							"time": m.timestamp,
-							"origin": Vector2(m.observer_east_m, m.observer_north_m),
-							"bearing_deg": m.measured_bearing_deg,
-							"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
-							"inlier": inlier,
-							"track_id": t.track_id,
-						}
-					)
-				)
+		# S1-03B：条目由 TmaUiData 组装并给 A/B 镜像支打 mirror 标记——海图侧
+		# 对镜像只画细虚线/半透明（LR AMBIGUOUS），绝不出现两条同等级普通 LOB。
+		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
+		if is_sel:
+			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
 	_chart.lobs = all_lobs
 	_chart.meas_index = meas_index
 	_chart.leg_boundary_times = leg_bounds
@@ -1029,11 +1002,27 @@ func _op_step() -> void:
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		for m in op.autocrew_step(world.sim_time):
-			world.measurements.append(m)
-			var t: Track = tracker.feed(m)
-			if t == null:
-				tracker.mark(m, "M")
+		# S1-03B：autocrew 可能返回 A/B 镜像组（共享 evidence）；同 evidence 的
+		# 镜像支并入同一 Track——一次物理到达 = 一个 Track，不双计、不建第二目标。
+		var auto_ms: Array = op.autocrew_step(world.sim_time)
+		var i2: int = 0
+		while i2 < auto_ms.size():
+			var pm: Measurement = auto_ms[i2]
+			world.measurements.append(pm)
+			_processed_meas += 1
+			var tt: Track = tracker.feed(pm)
+			if tt == null:
+				tt = tracker.mark(pm, "M")
+			i2 += 1
+			while (
+				i2 < auto_ms.size()
+				and auto_ms[i2].evidence_id == pm.evidence_id
+				and auto_ms[i2].has_ambiguity()
+			):
+				world.measurements.append(auto_ms[i2])
+				_processed_meas += 1
+				tt.add_measurement(auto_ms[i2])
+				i2 += 1
 			_dirty = true
 			_update_status("Autocrew marked a new detection")
 	_op_panel.refresh(op)
@@ -1173,6 +1162,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 	var group: Array = op.create_mark_group(brg, world.sim_time, "", as_true, row)
 	var m: Measurement = group[0] as Measurement
 	world.measurements.append(m)
+	_processed_meas += 1  # S1-03B：手动 Mark 已直接喂 Tracker，跳过 _feed 重喂
 	var t: Track = null
 	if selected_track_id != "":
 		for tr in tracker.all_tracks():
@@ -1185,6 +1175,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 	if group.size() > 1:
 		var sib: Measurement = group[1] as Measurement
 		world.measurements.append(sib)
+		_processed_meas += 1
 		t.add_measurement(sib)
 	selected_track_id = t.track_id
 	_dirty = true

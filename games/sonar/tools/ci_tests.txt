@@ -14,6 +14,7 @@
 #   ping_tma_integration_test  主动测距进 TMA 数据链（R 系列 + E2E）
 #   weapon_test          武器系统（System Solution 门禁）
 #   s100_integrity_test  S1-00 信息链完整性验收（D1-D8）
+#   s1_03b_scope_test    S1-03B 阵列缓冲作用域 + 拖曳歧义呈现隔离
 play_test
 stage1_test
 stage2_test
@@ -24,3 +25,4 @@ ping_test
 ping_tma_integration_test
 weapon_test
 s100_integrity_test
+s1_03b_scope_test
