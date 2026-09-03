@@ -39,6 +39,7 @@ var last_fit: Dictionary = {}  # 最近一次 TmaFitResult（含 track_id）
 var selected_track_id: String = ""
 var op: OperatorSonar = null  # Sonar Operator Layer（Truth 只进这里）
 var _op_panel: OperatorPanel = null
+var _ping_ctrl: ActivePingController = null  # S1-04 主动 Ping 接线（拆出，控行数）
 
 var _chart: ChartView = null
 var _bearing: BearingDisplay = null
@@ -98,6 +99,13 @@ func _ready() -> void:
 		tracker.set_rng(rng)
 	tracker.set_capacity(8)
 	tracker.set_auto_interval(5.0)
+
+	# 主动 Ping 控制器（S1-04）：接线 World.issue_ping → Tracker → 面板/状态摘要
+	_ping_ctrl = ActivePingController.new()
+	_ping_ctrl.world = world
+	_ping_ctrl.tracker = tracker
+	_ping_ctrl.on_status = _update_status
+	_ping_ctrl.on_dirty = func(): _dirty = true
 
 	# Operator Layer：关闭自动测量，Truth 只能经声场/阵列采样进入操作员视图
 	world.auto_measurements = false
@@ -216,6 +224,7 @@ func _build_panel() -> void:
 	_op_panel.towed_retract_requested.connect(_on_towed_retract)
 	_op_panel.towed_hold_requested.connect(_on_towed_hold)
 	_op_panel.towed_length_commanded.connect(_on_towed_length_commanded)
+	_op_panel.ping_requested.connect(_on_ping_requested)
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
 
@@ -1057,6 +1066,7 @@ func _op_step() -> void:
 		return
 	op.update(world.sim_time, world.world["targets"], world.world["target_acs"])
 	_refresh_towed_status()
+	_refresh_ping_status()
 	if _op_panel.autocrew_on():
 		for m in op.autocrew_step(world.sim_time):
 			world.measurements.append(m)
@@ -1138,6 +1148,22 @@ func _refresh_towed_status() -> void:
 	)
 	_op_panel.set_towed_status(line, true)
 	_op_panel.update_towed_controls(t)
+
+
+# ------------------------------------------------------------------
+#  主动声呐 Ping（S1-04）：薄接线，逻辑在 ActivePingController
+# ------------------------------------------------------------------
+
+
+func _on_ping_requested() -> void:
+	if _ping_ctrl == null:
+		return
+	_ping_ctrl.request_ping()
+	_last_meas_count = world.measurements.size()
+
+
+func _refresh_ping_status() -> void:
+	_ping_ctrl.refresh_panel(_op_panel)
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。

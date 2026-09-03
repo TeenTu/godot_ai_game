@@ -230,6 +230,17 @@ N_eff = 10*log10( Σ 10^(Ni/10) )
 SE_active = SL_ping - 2*TL + TS - N_eff + AG - DT   # 两段路径损失
 ```
 
+**S1-04 主动 Ping 指令模型**：主动探测是**玩家主动指令**（不是每 tick 自动
+传感器）。`World.issue_ping()` 对全部目标跑上式生成回波——detected 的回波
+Measurement 带测距（`measured_range_m`，误差随 SE 增大），append 进
+measurements 并由 UI 喂 Tracker（等价一次玩家触发的自动 Mark）。默认艇首
+主动阵缺省 2-4kHz / AG 24dB / SL_ping 210dB / 冷却 15s；场景可用
+`own_ship.active_sonar`（ping_sl_db / cooldown_s / freq_min_hz / freq_max_hz /
+array_gain_db）覆盖；场景配了 `array_type=="active"` 传感器则复用之。
+主动工作频率须权衡吸收（`alpha(f_khz)r_km` 随频率涨）——远距主动探测要低频。
+**隐蔽性代价**：发 ping 即暴露（面板橙字提示 + 世界记录 `_last_ping_t` 供
+敌方被动截获逻辑读取；AI 联动归武器批次）。
+
 ### 4.3 概率探测（不硬门限）
 ```
 P_d = 1 / (1 + exp(-SE / k_d))
