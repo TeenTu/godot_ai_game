@@ -23,18 +23,21 @@ var auto_measurements: bool = true
 var weapons: WeaponSystem = null  # 阶段四：发射管与在水鱼雷
 
 # ---- 主动声呐 Ping（S1-04 交互）----
-# 玩家主动发一次脉冲 → 对全部目标算主动回波（带测距），冷却期不可连发。
+# 玩家主动发一次脉冲 → 回波按往返传播延迟 τ=2R/c 到达（声速约 1500m/s，
+# 非光速！），到达时算主动 SE/检测并带测距进测量流。冷却期不可连发。
 # 场景可用 own_ship.active_sonar 覆盖；未配 active 传感器时用艇首主动阵缺省。
 var ping_sl_db: float = 210.0
 var ping_cooldown_s: float = 15.0
 var ping_freq_min_hz: float = 2000.0
 var ping_freq_max_hz: float = 4000.0
 var ping_array_gain_db: float = 24.0
+var ping_sound_speed_m_s: float = AcousticService.SOUND_SPEED_M_S
 
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
 var _paused: bool = false
 var _time_scale: float = 1.0
 var _last_ping_t: float = -INF
+var _pending_echoes: Array = []  # 在途回波 {target_id, arrive_t}，τ=2R/c 后结算
 
 
 ## 从场景 JSON 构建并初始化世界。
@@ -53,7 +56,9 @@ func load_scenario(scenario: Dictionary) -> void:
 	ping_freq_min_hz = float(as_cfg.get("freq_min_hz", ping_freq_min_hz))
 	ping_freq_max_hz = float(as_cfg.get("freq_max_hz", ping_freq_max_hz))
 	ping_array_gain_db = float(as_cfg.get("array_gain_db", ping_array_gain_db))
+	ping_sound_speed_m_s = float(as_cfg.get("sound_speed_m_s", ping_sound_speed_m_s))
 	_last_ping_t = -INF
+	_pending_echoes.clear()
 
 
 ## 推进内部仿真时间 dt（秒）。dt 已由上层按 time_scale 折算。
@@ -149,38 +154,91 @@ func ping_cooldown_remaining() -> float:
 	return maxf(0.0, _last_ping_t + ping_cooldown_s - sim_time)
 
 
-## 玩家发起一次主动脉冲（S1-04）：对所有目标用主动 SE 公式算回波。
-## 返回回波摘要数组 [{target_id, detected, se_db, pd, bearing_deg, range_m}]，
-## 其中 detected 的回波 Measurement 会 append 进 measurements（供 Tracker/UI）。
-## 冷却中返回空数组（不发脉冲、不推进冷却）。
-func issue_ping() -> Array:
+## 玩家发起一次主动脉冲（S1-04）：发射瞬间按各目标当前距离登记在途回波，
+## 预计到达时刻 arrive_t = now + 2R/c（声速 ~1500m/s，非光速）。回波本身
+## 由 take_arrived_echoes() 在到达时刻结算（检测 + 测距 + 进测量流）。
+## 冷却中返回 false（不发脉冲、不推进冷却）。
+func issue_ping() -> bool:
 	if not can_ping():
-		return []
+		return false
 	_last_ping_t = sim_time
+	_pending_echoes.clear()
+	var own: TruthEntity = world["own"]
+	for t in world["targets"]:
+		var rng_m: float = NavUtils.distance(
+			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
+		)
+		(
+			_pending_echoes
+			. append(
+				{
+					"target_id": str(t.id),
+					"arrive_t":
+					sim_time + AcousticService.echo_travel_time_s(rng_m, ping_sound_speed_m_s),
+				}
+			)
+		)
+	return true
+
+
+## 在途（未到达）回波数。
+func pending_echo_count() -> int:
+	return _pending_echoes.size()
+
+
+## 距最早回波到达的剩余秒数；无在途回波返回 INF。
+func next_echo_in() -> float:
+	if _pending_echoes.is_empty():
+		return INF
+	var earliest: float = INF
+	for p in _pending_echoes:
+		earliest = minf(earliest, float(p["arrive_t"]))
+	return maxf(earliest - sim_time, 0.0)
+
+
+## 结算所有已到达的在途回波（sim_time >= arrive_t），返回摘要数组
+## [{target_id, detected, se_db, pd, bearing_deg, range_m, measurement}]。
+## detected 回波的 Measurement 在到达时刻生成并 append 进 measurements
+## （测量时刻 = 回波到达时刻；几何取当下，τ 级延迟内目标位移可忽略）。
+## UI 控制器每帧轮询即可，无需信号。
+func take_arrived_echoes() -> Array:
 	var sensor: SensorArray = _ping_sensor()
 	var gen: MeasurementGenerator = world["generator"]
 	var own: TruthEntity = world["own"]
-	var echoes: Array = []
-	for t in world["targets"]:
-		var ac: AcousticProfile = world["target_acs"][t.id]
-		var m: Measurement = gen.generate_active(own, t, ac, sensor, ping_sl_db, sim_time)
+	var arrived: Array = []
+	var still: Array = []
+	for p in _pending_echoes:
+		if sim_time < float(p["arrive_t"]) - 1e-9:
+			still.append(p)
+			continue
+		var target: TruthEntity = null
+		for t in world["targets"]:
+			if str(t.id) == str(p["target_id"]):
+				target = t
+				break
+		if target == null:
+			continue
+		var ac: AcousticProfile = world["target_acs"][target.id]
+		var m: Measurement = gen.generate_active(own, target, ac, sensor, ping_sl_db, sim_time)
 		var detected: bool = m.measured_range_m >= 0.0
 		(
-			echoes
+			arrived
 			. append(
 				{
-					"target_id": t.id,
+					"target_id": target.id,
 					"detected": detected,
 					"se_db": m.signal_excess_db,
 					"pd": m.detection_probability,
 					"bearing_deg": m.measured_bearing_deg,
 					"range_m": m.measured_range_m,
+					"measurement": m,
 				}
 			)
 		)
 		if detected:
 			measurements.append(m)
-	return echoes
+	_pending_echoes = still
+	return arrived
 
 
 ## 本次 ping 使用的主动阵：场景配了 array_type=="active" 的传感器则复用它，

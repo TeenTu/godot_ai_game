@@ -231,12 +231,20 @@ SE_active = SL_ping - 2*TL + TS - N_eff + AG - DT   # 两段路径损失
 ```
 
 **S1-04 主动 Ping 指令模型**：主动探测是**玩家主动指令**（不是每 tick 自动
-传感器）。`World.issue_ping()` 对全部目标跑上式生成回波——detected 的回波
-Measurement 带测距（`measured_range_m`，误差随 SE 增大），append 进
-measurements 并由 UI 喂 Tracker（等价一次玩家触发的自动 Mark）。默认艇首
-主动阵缺省 2-4kHz / AG 24dB / SL_ping 210dB / 冷却 15s；场景可用
-`own_ship.active_sonar`（ping_sl_db / cooldown_s / freq_min_hz / freq_max_hz /
-array_gain_db）覆盖；场景配了 `array_type=="active"` 传感器则复用之。
+传感器）。`World.issue_ping()` 发射脉冲——**回波按往返传播延迟到达，声呐不是
+光速**：
+```
+τ = 2R/c          # 一去一回传播时间；c = 声速 ≈ 1500m/s
+R = c·τ/2         # 测距即测时（AcousticService.echo_travel_time_s / range_from_echo_time_s）
+```
+发射瞬间只登记各目标的在途回波（`arrive_t = now + 2R/c`）；`take_arrived_echoes()`
+在到达时刻（`sim_time >= arrive_t`）才结算：跑主动 SE 检测、带测距
+（`measured_range_m`，误差随 SE 增大）、append 进 measurements 并由 UI 喂
+Tracker（等价一次玩家触发的自动 Mark）。冷却从发射时刻起算；等待期 UI 显示
+"echo in ~Xs"。默认艇首主动阵缺省 2-4kHz / AG 24dB / SL_ping 210dB / 冷却
+15s / 声速 1500m/s；场景可用 `own_ship.active_sonar`（ping_sl_db / cooldown_s /
+freq_min_hz / freq_max_hz / array_gain_db / sound_speed_m_s）覆盖；场景配了
+`array_type=="active"` 传感器则复用之。
 主动工作频率须权衡吸收（`alpha(f_khz)r_km` 随频率涨）——远距主动探测要低频。
 **隐蔽性代价**：发 ping 即暴露（面板橙字提示 + 世界记录 `_last_ping_t` 供
 敌方被动截获逻辑读取；AI 联动归武器批次）。

@@ -23,6 +23,21 @@ const DEFAULT_SIGMA_MAX_DEG: float = 5.0
 const DEFAULT_SE0_DB: float = 6.0
 const DEFAULT_K_SIGMA_DB: float = 4.0
 
+## 海水声速（m/s，约 1500）——主动声呐不是光速！
+## 测距的本质是测往返时间：R = c·τ/2。回波在 ping 发出后 τ=2R/c 才到达。
+const SOUND_SPEED_M_S: float = 1500.0
+
+
+## 声波往返传播时间 τ = 2R/c（ping 发出 → 回波到达）。S1-04 评审修正：
+## 主动声呐回波必须按此延迟到达，不得瞬时返回。
+static func echo_travel_time_s(range_m: float, sound_speed_m_s: float = SOUND_SPEED_M_S) -> float:
+	return 2.0 * maxf(range_m, 0.0) / maxf(sound_speed_m_s, 1.0)
+
+
+## 由往返时间反推距离 R = c·τ/2（测距即测时，与 echo_travel_time_s 互逆）。
+static func range_from_echo_time_s(tau_s: float, sound_speed_m_s: float = SOUND_SPEED_M_S) -> float:
+	return 0.5 * maxf(sound_speed_m_s, 1.0) * maxf(tau_s, 0.0)
+
 
 ## 传播损失（委托 EnvironmentModel 单一实现）。
 static func propagation_loss(range_m: float, freq_hz: float, env: RefCounted) -> float:
