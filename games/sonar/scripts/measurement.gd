@@ -24,7 +24,24 @@ var detection_probability: float = 0.0
 
 var detected_frequencies: Array = []  # [{freq_hz, level_db, snr_db}]
 var classification_features: Dictionary = {}
+
+# ---- 拖曳线阵左右舷镜像歧义（S1-03A）----
+# 同一次声学到达产生 A/B 两个候选方位（共享证据），pair_id 相同：
+#   ambiguity_branch: 0=无歧义；+1=A 支；-1=B 支（关于阵轴镜像）
+#   array_heading_at_measurement_deg / array_center_* / actual_tow_length_m:
+#   测量时刻的阵轴/阵列声学中心/实际缆长——TMA 不得用当前阵位回填历史。
 var ambiguous_pair_id: String = ""
+var ambiguity_branch: int = 0
+var ambiguity_resolved: bool = false
+var array_heading_at_measurement_deg: float = 0.0
+var array_center_east_m: float = 0.0
+var array_center_north_m: float = 0.0
+var actual_tow_length_m: float = 0.0
+
+
+## 是否属于拖曳阵镜像歧义组（A/B 共享证据）。
+func has_ambiguity() -> bool:
+	return ambiguous_pair_id != "" and ambiguity_branch != 0
 
 
 ## 是否带有测距信息（主动声呐或有源目标）。
@@ -48,4 +65,11 @@ func to_dict() -> Dictionary:
 		"snr_db": snr_db,
 		"pd": detection_probability,
 		"frequencies": detected_frequencies,
+		"ambiguous_pair_id": ambiguous_pair_id,
+		"ambiguity_branch": ambiguity_branch,
+		"ambiguity_resolved": ambiguity_resolved,
+		"array_heading_deg": array_heading_at_measurement_deg,
+		"array_center_e": array_center_east_m,
+		"array_center_n": array_center_north_m,
+		"tow_length_m": actual_tow_length_m,
 	}

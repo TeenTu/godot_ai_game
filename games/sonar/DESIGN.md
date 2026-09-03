@@ -152,16 +152,33 @@ array_gain_db(AG), detection_threshold_db(DT)
 bearing_error_model            # sigma_min/max, SE0, k_sigma
 coverage_sector, baffle_sector
 update_interval_s, tracker_capacity, deployed
-deployment_progress, array_heading_deg, tow_length_m, settling_time_s
+# TOWED 物理见下方 S1-03 状态机（towed_array.gd）：STOWED/STREAMING/HOLD_PARTIAL/
+# RETRIEVING + actual/commanded_tow_length_m + array_heading_deg（滞后阵轴）
 ```
 
-> **TOWED 拖曳阵物理（批次2+，`scripts/towed_array.gd`）**：操作员层的 TOWED 阵列
-> 不再把 `array_heading` 恒等于本艇航向，而是由独立状态机表达物理生命周期：
-> 状态 `RETRACTED → DEPLOYING → DEPLOYED →(RETRIEVING→RETRACTED)`；
-> `deployment_progress` 按时间推进；全展后阵航向对本艇转向做一阶滞后收敛
-> （短缆滞后小、长缆滞后大），收敛前 `usable_fraction<1`、有效增益被压低。
-> 该状态机挂在 own(`TruthEntity.towed`)，随 `advance` 每步推进，纯逻辑可无头测。
-> 未配置 `own_ship.tow` 时本艇无拖曳阵，TOWED 退化为 follow own.course（兼容旧场景）。
+> **TOWED 可控长度拖曳阵（S1-03，`scripts/towed_array.gd`）**：操作员层的 TOWED
+> 不再把 `array_heading` 恒等于本艇航向，而是独立状态机 + 可控缆长：
+> 状态 `STOWED ↔ STREAMING ↔ HOLD_PARTIAL ↔ RETRIEVING`，实际缆长 ACT 与命令
+> 缆长 CMD 分离，`set_length_command/stream/hold/retrieve` 在任意长度可停可反向，
+> 缆长按固定收放速率（stream/retrieve_rate_m_s）逼近命令（不是百分比动画）。
+> 部分长度真实参与声学：有效孔径 `q_L=clamp((L−L_dead)/(L_full−L_dead),0,1)`，
+> `AG_eff = AG_full + 10log10(q_L) + L_bend + L_speed`（孔径/弯曲/高速三项独立），
+> 回收第一帧起性能连续下降，绝不"开始回收即静音"；`L≤L_dead` 或 STOWED 时
+> `is_acoustically_active()=false`，严格无 TOWED 测量。阵轴对本艇转向做一阶滞后
+> 收敛，tau 随 q_L 在 short/full_length_heading_tau_s 间插值，并按本艇实际航速标定
+> （`speed_scale=clamp(ref/spd,0.5,2.5)`，慢速更飘、快速拖直）。阵列声学中心
+> `p_array = p_own − 0.5(L_dead+L)·[sin ψa, cos ψa]` 作为 TOWED 观察站位。
+> 状态机挂在 own(`TruthEntity.towed`)，`advance` 每步注入实际航速推进，纯逻辑可无头测。
+> 未配置 `own_ship.tow` 时本艇无拖曳阵：TOWED 选项禁用、可用度=0、无任何
+> TOWED 测量（无"跟艇+满可用"的虚构回退）。
+>
+> **TOWED 左右舷镜像歧义（S1-03A/S1-06）**：单线阵对阵轴两侧等角响应，OperatorSonar
+> 为每次到达生成共享 pair_id/SE/噪声的 A/B 候选峰（`θ_A=ψa+β`、`θ_B=ψa−β`，
+> 消歧前对玩家等价）；`create_mark_group` 产出一组两个 Measurement 进同一 Track。
+> TmaSolver.solve_auto 按 branch 过滤（A=branch≥0，B=branch≤0，非歧义两边保留）
+> 分别拟合，softmax 分支权重 `w_A=1/(1+exp(−(J_B−J_A)/2))`；可观测性合格
+> （rank≥4 且 legs≥2）且最佳权重≥门限（默认 0.9）才 `mirror_resolved=true`，
+> 否则 `AMBIGUOUS_LR`（落选分支保留在 alternatives）。
 
 ### 3.5 Measurement
 ```
@@ -171,7 +188,12 @@ measured_bearing_deg, bearing_sigma_deg
 measured_range_m(可选), range_sigma_m(可选)
 signal_excess_db(SE), snr_db
 detected_frequencies, classification_features
-ambiguous_pair_id(可选)
+ambiguous_pair_id(可选)        # TOWED 镜像对共享 ID（S1-03A）
+ambiguity_branch(可选)         # +1=A 支 / -1=B 支（S1-03A）
+ambiguity_resolved             # TMA 消歧结果（S1-06）
+array_heading_at_measurement_deg  # 测量时刻阵轴（镜像 θ_B=2ψa−θ_A 依据）
+array_center_east_m/north_m    # 测量时刻阵心（观察站位，S1-03）
+actual_tow_length_m            # 测量时刻实际缆长
 ```
 
 ### 3.6 Track / TrialSolution / SystemSolution

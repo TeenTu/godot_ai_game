@@ -13,7 +13,10 @@ extends Control
 ## 交互：鼠标悬停显示游标（与其它视图联动），点击 → mark_requested。
 
 signal cursor_moved(x_value: float)
-signal mark_requested(x_value: float, time_s: float)
+## 点击某行某列：x_value 为显示轴坐标，row 为被点行的完整上下文
+## （t/course/array_heading/own_e/own_n/tow_center_m/tow_length_m/peaks）。
+## S1-01：历史行点击必须携带那一行的时刻/艏向/站位，不得用 rows[-1]。
+signal mark_requested(x_value: float, time_s: float, row: Dictionary)
 
 const COLORMAP_HOT: Array = [
 	Color(0.05, 0.05, 0.12),
@@ -83,18 +86,15 @@ func _rebuild_image() -> void:
 	for r in range(rows.size()):
 		var vals: PackedFloat32Array = rows[r]["values"]
 		if true_mode:
-			# TRUE STABILIZED：该行存储为艇艏相对(-180..180,每格2°)。
-			# 转真北稳定：真角 θt = wrap360(course + rel)，搬移到真方位桶(0..360)。
+			# TRUE STABILIZED 重排（S1-01）：源列恒为 -180..180（每格 2°，
+			# 与显示轴 x_min/x_max 无关！），目标列才是 0..360 真北方位。
+			# 不得用已切换的 x_min=0 反推源相对方位（0.2 回归 #2）。
 			var course: float = float(rows[r].get("course", 0.0))
-			var deg_per_col: float = (x_max - x_min) / float(w)  # 期望 360/w
+			var src_deg_per_col: float = 360.0 / float(w)
 			for c in range(vals.size()):
-				var rel: float = x_min + float(c) * deg_per_col  # 该列的相对角度
+				var rel: float = -180.0 + float(c) * src_deg_per_col
 				var true_deg: float = fposmod(course + rel, 360.0)
-				var tc: int = clampi(
-					int(floor((true_deg - x_min) / (x_max - x_min) * float(w))),
-					0,
-					w - 1,
-				)
+				var tc: int = clampi(int(floor(true_deg / 360.0 * float(w))), 0, w - 1)
 				var db: float = float(vals[c])
 				var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
 				_img.set_pixel(tc, h - 1 - r, _cmap(t))
@@ -175,6 +175,15 @@ func _draw_axis_labels() -> void:
 		draw_string(_font, Vector2(px + 2, size.y - 2), txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 11, col)
 
 
+## 由鼠标 y 反算被点行索引（最新行在底部）。可无头单测（0.2 回归 #3）。
+func row_index_from_y(y_px: float) -> int:
+	if rows.is_empty():
+		return -1
+	var h: float = maxf(size.y, 1.0)
+	var idx: int = rows.size() - 1 - int(floor(y_px / h * float(rows.size())))
+	return clampi(idx, 0, rows.size() - 1)
+
+
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var v: float = _px_to_x(event.position.x)
@@ -185,6 +194,9 @@ func _gui_input(event: InputEvent) -> void:
 		event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT
 	):
 		var v2: float = _px_to_x(event.position.x)
-		var t: float = rows[-1]["t"] if not rows.is_empty() else 0.0
-		mark_requested.emit(v2, t)
+		# 按鼠标 y 选择实际行，携带那一行的完整上下文（S1-01 回归 #3）
+		var ri: int = row_index_from_y(event.position.y)
+		var row: Dictionary = rows[ri] if ri >= 0 and ri < rows.size() else {}
+		var t: float = float(row.get("t", rows[-1]["t"])) if not rows.is_empty() else 0.0
+		mark_requested.emit(v2, t, row)
 		accept_event()

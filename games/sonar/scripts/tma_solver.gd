@@ -52,14 +52,93 @@ const CLUSTER_COURSE_DEG: float = 15.0
 # =====================================================================
 
 
-## 完整自动拟合。返回 TmaFitResult（Dictionary），字段见 _empty_result()。
-## options（全部可选）：
-##   min_range_m / max_range_m / min_speed_kn / max_speed_kn
-##   top_k / stale_threshold_s / robust (bool) / huber_k
-##   demon_speed_kn (-1=无) / demon_sigma_kn
-##   now_time (当前仿真时间，用于 staleness；默认用最后测量时间)
-##   exclude_indices (Array[int]，人工排除的测量)
+## 完整自动拟合（对外主入口，含拖曳阵镜像分支处理，S1-03A/S1-06）：
+##   无歧义输入 → 直接走 _solve_core（mirror_resolved=true）。
+##   存在 ambiguous_pair_id 输入 → 按 branch 过滤为 A/B 两套观测
+##   （非歧义测量两边都保留），分别拟合整体假设 H_A/H_B，按稳健代价
+##   softmax 出分支权重；只有可观测性合格且最佳分支权重超过门限
+##   （默认 0.9，可配 mirror_resolve_threshold）才置 mirror_resolved=true，
+##   否则状态为 AMBIGUOUS_LR/MULTIMODAL。绝不在同一拟合里双计镜像对。
 static func solve_auto(measurements: Array, options: Dictionary = {}) -> Dictionary:
+	var has_amb: bool = false
+	for m in measurements:
+		if str(m.get("ambiguous_pair_id", "")) != "" and int(m.get("ambiguity_branch", 0)) != 0:
+			has_amb = true
+			break
+	if not has_amb:
+		var r0: Dictionary = _solve_core(measurements, options)
+		r0["mirror_resolved"] = true  # 无镜像输入：不存在未决歧义
+		r0["ambiguity_present"] = false
+		return r0
+
+	# ---- 分支过滤：A 支 = branch>=0；B 支 = branch<=0（镜像对每时刻只进一套）----
+	var set_a: Array = []
+	var set_b: Array = []
+	for m in measurements:
+		var br: int = int(m.get("ambiguity_branch", 0))
+		if br >= 0:
+			set_a.append(m)
+		if br <= 0:
+			set_b.append(m)
+	var res_a: Dictionary = _solve_core(set_a, options)
+	var res_b: Dictionary = _solve_core(set_b, options)
+
+	var res: Dictionary = _empty_result()
+	res["ambiguity_present"] = true
+	var ok_a: bool = bool(res_a.get("success", false))
+	var ok_b: bool = bool(res_b.get("success", false))
+	if not ok_a and not ok_b:
+		res["status"] = str(res_a.get("status", "NO_DATA"))
+		res["mirror_resolved"] = false
+		res["mirror_weights"] = {"A": 0.5, "B": 0.5}
+		return res
+	if not ok_b:
+		res = res_a
+		res["mirror_resolved"] = false
+		res["mirror_weights"] = {"A": 1.0, "B": 0.0}
+	elif not ok_a:
+		res = res_b
+		res["mirror_resolved"] = false
+		res["mirror_weights"] = {"A": 0.0, "B": 1.0}
+	else:
+		var j_a: float = float(res_a.get("weighted_cost", INF))
+		var j_b: float = float(res_b.get("weighted_cost", INF))
+		var w_a: float = 1.0 / (1.0 + exp(-0.5 * (j_b - j_a)))
+		var w_b: float = 1.0 - w_a
+		res = res_a.duplicate(true) if w_a >= w_b else res_b.duplicate(true)
+		var loser: Dictionary = res_b if w_a >= w_b else res_a
+		res["mirror_weights"] = {"A": w_a, "B": w_b}
+		# 落选分支的最优假设保留为备选（可回看，不静默删除）
+		var alts: Array = res.get("alternatives", []).duplicate()
+		var lb: Dictionary = loser.get("best", {}).duplicate(true)
+		if not lb.is_empty():
+			lb["mirror_branch"] = "B" if w_a >= w_b else "A"
+			lb["weight"] = minf(w_b if w_a >= w_b else w_a, 1.0)
+			alts.append(lb)
+		res["alternatives"] = alts
+
+	# ---- 消歧判定：可观测性合格 + 最佳分支权重 ≥ 门限才允许 ----
+	var thr: float = float(options.get("mirror_resolve_threshold", 0.9))
+	var w: Dictionary = res.get("mirror_weights", {})
+	var w_max: float = maxf(float(w.get("A", 0.0)), float(w.get("B", 0.0)))
+	var obs_ok: bool = int(res.get("jacobian_rank", 0)) >= 4 and int(res.get("legs", 0)) >= 2
+	var ok_status: bool = (
+		str(res.get("status", ""))
+		in [
+			"CONVERGED",
+			"PROVISIONAL",
+			"BOUNDARY_HIT",
+		]
+	)
+	res["mirror_resolved"] = obs_ok and ok_status and w_max >= thr
+	if not res["mirror_resolved"] and str(res.get("status", "")) in ["CONVERGED", "PROVISIONAL"]:
+		res["status"] = "AMBIGUOUS_LR"
+	return res
+
+
+## 核心拟合流水线（单套观测，不含分支处理）。输入不得同时含同一
+## ambiguous_pair_id 的两支（调用方先按 branch 过滤）。
+static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictionary:
 	var res: Dictionary = _empty_result()
 
 	# ---------- 1. 输入预处理 ----------
@@ -241,7 +320,8 @@ static func solve_auto(measurements: Array, options: Dictionary = {}) -> Diction
 	res["position_uncertainty_m"] = pos_unc
 	res["velocity_uncertainty_ms"] = vel_unc
 	res["maneuver_suspected"] = maneuver
-	res["mirror_resolved"] = true  # 拖曳阵镜像属于阶段4，此处无镜像输入
+	res["mirror_resolved"] = true  # 核心输入无镜像对（分支已在 solve_auto 过滤）
+	res["ambiguity_present"] = false
 	res["boundary_hit"] = any_boundary
 	res["stale_seconds"] = stale
 	res["legs"] = legs
@@ -835,7 +915,8 @@ static func _empty_result() -> Dictionary:
 		"position_uncertainty_m": -1.0,
 		"velocity_uncertainty_ms": -1.0,
 		"maneuver_suspected": false,
-		"mirror_resolved": true,
+		"mirror_resolved": false,
+		"ambiguity_present": false,
 		"boundary_hit": false,
 		"stale_seconds": 0.0,
 		"legs": 0,

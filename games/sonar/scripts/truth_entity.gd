@@ -22,13 +22,14 @@ var acceleration_kn_s: float = 0.0
 
 var damage_state: String = "ok"
 
-# 拖曳阵（批次2+）：own 平台可挂一条物理拖曳声学阵（含部署生命周期与转向航向滞后）。
-# 为 null 时表示本艇未配置/未部署拖曳阵，OperatorSonar 的 TOWED 退化为 follow own.course。
+# 拖曳阵（批次2+ / S1-03）：own 平台可挂一条物理拖曳声学阵（可控长度状态机
+# 与转向航向滞后）。为 null 表示本艇未配置拖曳硬件，此时 TOWED 不可用
+# （OperatorSonar 禁用，不提供"跟艇+满可用"的虚构回退）。
 var towed: TowedArray = null
 
 
-## 拖曳阵物理航向(deg, 从北顺时针)。未挂阵时等于本艇航向（TOWED 退化为跟艇）。
-## OperatorSonar 在 TOWED 模式下读它做覆盖/方向增益，而非永远用 own.course。
+## 拖曳阵物理航向(deg, 从北顺时针)。未挂阵时返回本艇航向，但此时 TOWED
+## 阵列本身不可用（towed==null）。
 func get_array_heading_deg() -> float:
 	if towed != null:
 		return towed.array_heading_deg
@@ -56,9 +57,10 @@ func advance(dt: float) -> bool:
 	position_east_m = next["x"]
 	position_north_m = next["y"]
 
-	# 推进拖曳阵（若存在）：布放进度 + 阵航向随本艇转向滞后收敛。
+	# 推进拖曳阵（若存在）：缆长收放 + 阵航向随本艇转向滞后收敛
+	# （S1-03：tau 必须与实际缆长和本艇实际航速相关 → 注入实际速度）。
 	if towed != null:
-		towed.step(dt, course_deg)
+		towed.step(dt, course_deg, v_ms)
 	return true
 
 
