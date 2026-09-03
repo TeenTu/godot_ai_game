@@ -20,6 +20,7 @@ var bob_t: float = 0.0
 var _body: MeshInstance3D
 var _body_mat: StandardMaterial3D
 var _art: Sprite3D
+var _model: Node3D
 var _flicker_t: float = 0.0
 var _flash_energy: float = 0.0
 
@@ -90,7 +91,18 @@ func _build_visuals() -> void:
 
 
 func _add_character_art() -> void:
-	var path := "res://assets/images/characters/bubble_captain.png"
+	var model_path := "res://scenes/player/milk_frog_3d.tscn"
+	if ResourceLoader.exists(model_path):
+		var scene := load(model_path) as PackedScene
+		_model = scene.instantiate() as Node3D
+		_model.scale = Vector3.ONE * 1.3
+		add_child(_model)
+		muzzle.position = Vector3(0.0, 1.18, 0.72)
+		for child in get_children():
+			if child is MeshInstance3D:
+				(child as MeshInstance3D).visible = false
+		return
+	var path := "res://assets/images/characters/milk_frog_hero.png"
 	if not ResourceLoader.exists(path):
 		return
 	_art = Sprite3D.new()
@@ -147,10 +159,14 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 			_body.visible = not _body.visible
 			if _art != null:
 				_art.visible = not _art.visible
+			if _model != null:
+				_model.visible = not _model.visible
 	else:
-		_body.visible = _art == null
+		_body.visible = _art == null and _model == null
 		if _art != null:
 			_art.visible = true
+		if _model != null:
+			_model.visible = true
 
 	# 受击闪白能量衰减回常态。
 	if _flash_energy > 0.0:
@@ -161,6 +177,8 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 	_body.position.y = 0.52 + sin(bob_t) * 0.03
 	if _art != null:
 		_art.position.y = 0.78 + sin(bob_t) * 0.04
+	if _model != null and _model.has_method("animate_model"):
+		_model.call("animate_model", delta, move_vec.length(), _flash_energy)
 
 
 ## 让枪口朝向某方向（XZ 平面，用于自动瞄准的可视反馈）。
