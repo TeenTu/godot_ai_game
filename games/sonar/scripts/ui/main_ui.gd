@@ -611,10 +611,10 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图
+	# 3) 残差图（REQ-05：只喂方位残差行——range 行是米量纲，禁混进 deg 轴）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
-		res = last_fit.get("residuals", [])
+		res = TmaUiData.bearing_residuals(last_fit.get("residuals", []))
 	_res_plot.residuals = res
 	_res_plot.track_id = selected_track_id
 	_res_plot.sigma_ref_deg = TmaUiData.mean_sigma(res)

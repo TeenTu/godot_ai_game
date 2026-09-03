@@ -37,6 +37,7 @@ const DEF_MANEUVER_COUNT: int = 3  # 连续同号超限测量数 → MANEUVER_SU
 const POS_SCALE_M: float = 1000.0  # 雅可比尺度归一化（位置）
 const VEL_SCALE_MS: float = 5.0  # 雅可比尺度归一化（速度）
 const MULTIMODAL_WEIGHT_RATIO: float = 0.25  # 次优/最优权重 ≥ 此值 → MULTIMODAL
+const REJECT_COST_PENALTY: float = 9.0  # 剔除一条测量的代价 = DEF_OUTLIER_U²
 const CLUSTER_POS_M: float = 800.0
 const CLUSTER_SPEED_KN: float = 3.0
 const CLUSTER_COURSE_DEG: float = 15.0
@@ -216,15 +217,34 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 			for i in range(n):
 				if inlier_mask[i]:
 					sub.append(valid[i])
+			# S1-00-REQ-04：在 inlier 子集上精化的 r2 假设必须作为新候选插回
+			# 候选集首位（refit 钩子，验收可断言 final best = r2 或更优）。
 			var r2: Dictionary = _refine(
 				sub, t_ref, best["x"], min_v, max_v, robust, huber_k, demon_kn, demon_sigma
 			)
-			best = _make_hypothesis(valid, t_ref, r2["x"], float(r2["cost"]), 0.0)
-			# 重新对全部测量算代价（保持可比性），聚类与权重基于 inlier 代价
-			for h in hyps:
-				h["cost"] = _robust_cost(
-					valid, t_ref, h["x"], robust, huber_k, demon_kn, demon_sigma
+			var r2_hyp: Dictionary = _make_hypothesis(valid, t_ref, r2["x"], float(r2["cost"]), 0.0)
+			r2_hyp["converged"] = bool(r2.get("converged", true))
+			r2_hyp["refit"] = true  # 验收钩子：final best 可断言 = r2 或更优
+			var unified: Array = [r2_hyp]
+			unified.append_array(hyps)
+			# 统一口径：离群剔除后，全部候选（含 r2）都必须在 inlier 干净子集上
+			# 重精化并重建派生字段——旧实现只给 r2 精化、其余候选停留在"含离群
+			# 全集"的旧局部最优上，仅重算 cost 不重优化，陈旧备选会以虚高权重
+			# 伪装成第二峰（假 MULTIMODAL）。重精化后再聚类合并重复解。
+			var rebuilt: Array = []
+			for h in unified:
+				var hr: Dictionary = _refine(
+					sub, t_ref, h["x"], min_v, max_v, robust, huber_k, demon_kn, demon_sigma
 				)
+				var nh: Dictionary = _make_hypothesis(valid, t_ref, hr["x"], float(hr["cost"]), 0.0)
+				nh["converged"] = bool(hr.get("converged", true))
+				if bool(h.get("refit", false)):
+					nh["refit"] = true
+				rebuilt.append(nh)
+			hyps = _cluster(rebuilt)
+			# 同口径比较：全部候选只对 inlier 子集算 robust cost
+			for h in hyps:
+				h["cost"] = _robust_cost(sub, t_ref, h["x"], robust, huber_k, demon_kn, demon_sigma)
 			hyps.sort_custom(func(a, b): return a["cost"] < b["cost"])
 			best = hyps[0]
 
@@ -248,17 +268,24 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	for i in range(n):
 		var is_rng: bool = bool(valid[i].get("_is_range", false))
 		var sigma: float = maxf(float(valid[i].get("sigma", 1.0)), 0.1)
-		var r_deg: float = _single_residual(valid[i], t_ref, best["x"])
+		var r_raw: float = _single_residual(valid[i], t_ref, best["x"])
 		(
 			residuals
 			. append(
 				{
 					"index": int(valid[i].get("_orig_index", i)),
 					"time": float(valid[i]["time"]),
-					"residual_deg": r_deg,
+					"timestamp": float(valid[i]["time"]),
+					"measurement_id": str(valid[i].get("measurement_id", "")),
+					"evidence_id": str(valid[i].get("evidence_id", "")),
+					"component": "range" if is_rng else "bearing",
+					"kind": "range" if is_rng else "bearing",
+					# S1-00-REQ-05：原始残差必须带单位（deg/m），禁止把米叫
+					# residual_deg 混进方位轴（GAP-TMA-02）。
+					"raw_value": r_raw,
+					"raw_unit": "m" if is_rng else "deg",
 					"normalized": float(us2[i]),
 					"inlier": inlier_mask[i],
-					"kind": "range" if is_rng else "bearing",
 				}
 			)
 		)
@@ -267,10 +294,10 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 			sq_sum_w += float(us2[i]) * float(us2[i])
 			if is_rng:
 				used_range += 1
-				sq_sum_rng += r_deg * r_deg
+				sq_sum_rng += r_raw * r_raw
 			else:
 				used_bearing += 1
-				sq_sum_deg += r_deg * r_deg
+				sq_sum_deg += r_raw * r_raw
 	var angular_rmse: float = sqrt(sq_sum_deg / maxf(used_bearing, 1))
 	var weighted_rmse: float = sqrt(sq_sum_w / maxf(used_count, 1))
 	var range_rmse_m: float = -1.0
@@ -332,7 +359,13 @@ static func _solve_core(measurements: Array, options: Dictionary = {}) -> Dictio
 	res["measurements_used"] = used_count
 	res["measurements_rejected"] = rejected
 	res["residuals"] = residuals
-	res["weighted_cost"] = j_min
+	# S1-00-REQ-04：剔除测量不是免费的。分支消歧（A/B 镜像权重）用
+	# weighted_cost 比较两套观测的解释力——若只按 inlier 子集代价计，
+	# 错误分支可把大片异见数据整批"剔除"后以近零代价伪装成好解（幽灵
+	# 支丢 48% 数据仍 cost≈0，与真支并列）。每条剔除按离群边界最小代价
+	# OUTLIER_U²=9 计罚，纳入对外报告的 weighted_cost。候选排序不受影响
+	# （同一剔除掩码 → 常数偏移在比较中抵消）。
+	res["weighted_cost"] = j_min + float(rejected.size()) * REJECT_COST_PENALTY
 	res["angular_rmse"] = angular_rmse
 	res["weighted_rmse"] = weighted_rmse
 	res["range_rmse_m"] = range_rmse_m
@@ -1017,6 +1050,7 @@ static func solve(measurements: Array, start: Dictionary = {}) -> Dictionary:
 
 
 ## 计算每个测量时刻的方位残差（度，已 wrap180）。供 Dot Stack / UI 使用。
+## S1-00-REQ-05：条目带 component/raw_unit（本函数只产 bearing 残差，度）。
 static func residuals_at(
 	measurements: Array, t0: float, p0_e: float, p0_n: float, v_e_ms: float, v_n_ms: float
 ) -> Array:
@@ -1030,7 +1064,12 @@ static func residuals_at(
 			. append(
 				{
 					"time": float(measurements[i]["time"]),
-					"residual_deg": r[i],
+					"timestamp": float(measurements[i]["time"]),
+					"measurement_id": str(measurements[i].get("measurement_id", "")),
+					"evidence_id": str(measurements[i].get("evidence_id", "")),
+					"component": "bearing",
+					"raw_value": r[i],
+					"raw_unit": "deg",
 					"normalized": r[i] / sigma,
 				}
 			)

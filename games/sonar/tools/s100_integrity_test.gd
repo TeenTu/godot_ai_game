@@ -9,6 +9,12 @@ extends SceneTree
 ##       measurement_history 有 2 条）；detected=false 样本不计入。
 ##   D4  主动 bearing+range 单条 Measurement 是一个物理证据（evidence_count=1）。
 ##   D5  to_dict() 携带 detected/evidence_id，且不含 target_id（Truth 隔离）。
+##   D6  TMA robust refit：注入大离群方位后，final best = inlier 二次拟合假设
+##       （best.refit==true），恰一条残差被判离群，位置误差小（GAP-TMA-01）。
+##   D7  残差行 schema：component/raw_value/raw_unit/measurement_id/evidence_id/
+##       timestamp 齐全；range 行 raw_unit=="m"；不再有 residual_deg（REQ-05）。
+##   D8  自动主动旁路已删：传感器列表含 active 阵也不自动产 ACTIVE_RANGE_BEARING
+##       （唯一玩家路径 issue_ping，REQ-03/GAP-DATA-02）。
 ##
 ## 运行：godot --headless --path games/sonar --script res://tools/s100_integrity_test.gd
 
@@ -109,6 +115,9 @@ func _initialize() -> void:
 	_d3_ab_shared_evidence(fails)
 	_d4_active_single_evidence(fails)
 	_d5_to_dict_truth_isolation(fails)
+	_d6_robust_refit_wins(fails)
+	_d7_residual_schema(fails)
+	_d8_no_auto_active_bypass(fails)
 	if fails.is_empty():
 		print("S100_INTEGRITY result=PASS")
 		quit(0)
@@ -246,3 +255,188 @@ func _d5_to_dict_truth_isolation(fails: Array) -> void:
 	_assert_eq(fails, "D5 to_dict.evidence_id", str(d.get("evidence_id", "?")), "ev_D501")
 	_assert_eq(fails, "D5 to_dict.detected", str(d.get("detected", "?")), "false")
 	_assert_bool(fails, "D5 to_dict hides target_id", d.has("target_id"), false)
+
+
+## D6：大离群方位注入后，TMA robust refit 的 inlier 二次拟合假设必须胜出
+## （best.refit==true），恰一条残差离群，解位置误差 <1000m（REQ-04/GAP-TMA-01）。
+## 几何选型：目标 (6000,4500) 以 8kn@60° 匀速运动；本艇 15m/s 走 L 形双长腿
+## （E 4500m → N 3000m，总位移 ~5.4km，对比目标斜距 ~6-8km），每 20s 采样共
+## 26 条——教科书级可观测机动，弱可观测"假多峰"不会与离群剔除混淆。
+## inlier 注入固定种子 σ=1° 噪声（真实传感器特征；种子 24 无 >3σ 偶发 inlier）。
+## 离群 +25° 放在 E 腿中段（t=100，idx=5）：与所有合理轨迹都矛盾，稳健剔除
+## 干净利落。状态断言 {CONVERGED, PROVISIONAL}：Huber kink + 噪声让 LM 的严格
+## 收敛认证（λ 阻尼上限退出）常报 PROVISIONAL——产品层两者同属可用解（UI 仅
+## MULTIMODAL/INSUFFICIENT_GEOMETRY/STALE 判低置信，operator_test 同口径）。
+func _d6_robust_refit_wins(fails: Array) -> void:
+	var meas: Array = []
+	var tgt0_e: float = 6000.0
+	var tgt0_n: float = 4500.0
+	var tgt_speed_kn: float = 8.0
+	var tgt_v_ms: float = NavUtils.kn_to_ms(tgt_speed_kn)
+	var v_e: float = tgt_v_ms * sin(deg_to_rad(60.0))
+	var v_n: float = tgt_v_ms * cos(deg_to_rad(60.0))
+	var o_spd: float = 15.0  # 本艇 15 m/s
+	var t_leg_a_end: float = 300.0  # E 腿：0→4500m
+	var t_end: float = 500.0  # N 腿：+3000m
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 24  # 探针 1..30：仅 seed24 无 >3σ 偶发 inlier 且误差最小（21m）
+	var t_ref_t: float = t_end
+	var tgt_ref_e: float = tgt0_e + v_e * t_ref_t
+	var tgt_ref_n: float = tgt0_n + v_n * t_ref_t
+	var idx: int = 0
+	var t: float = 0.0
+	while t <= t_end + 0.001:
+		var oe: float = o_spd * minf(t, t_leg_a_end)
+		var on: float = o_spd * maxf(t - t_leg_a_end, 0.0)
+		var te: float = tgt0_e + v_e * t
+		var tn: float = tgt0_n + v_n * t
+		var brg: float = NavUtils.wrap360(rad_to_deg(atan2(te - oe, tn - on)))
+		if absf(t - 100.0) < 0.001:
+			# +25° 大离群（无噪声，必 >3σ）。不放末样本：末样本离群若恰好落在
+			# 幽灵轨迹方位射线上，稳健代价会合法偏爱幽灵解，refit 无从分辨。
+			brg = NavUtils.wrap360(brg + 25.0)
+		else:
+			brg = NavUtils.wrap360(brg + rng.randfn(0.0, 1.0))  # σ=1° 传感器噪声
+		(
+			meas
+			. append(
+				{
+					"time": t,
+					"observer_e": oe,
+					"observer_n": on,
+					"bearing": brg,
+					"sigma": 1.0,
+					"measurement_id": idx,
+					"evidence_id": "ev_t6_%d" % idx,
+				}
+			)
+		)
+		idx += 1
+		t += 20.0
+	var r: Dictionary = TmaSolver.solve_auto(meas)
+	var st: String = str(r.get("status", "?"))
+	if not (st in ["CONVERGED", "PROVISIONAL"]):
+		fails.append("D6 status usable (CONVERGED/PROVISIONAL): got=%s" % st)
+	var rej: int = 0
+	var rej_idx: int = -1
+	for rr in r.get("residuals", []):
+		if not bool(rr.get("inlier", true)):
+			rej += 1
+			rej_idx = int(rr.get("index", -1))
+	if rej != 1 or rej_idx != 5:
+		fails.append(
+			(
+				"D6 exactly the injected sample rejected: got rej=%s idx=%s want rej=1 idx=5"
+				% [str(rej), str(rej_idx)]
+			)
+		)
+	_assert_bool(
+		fails, "D6 final best is inlier refit", bool(r.get("best", {}).get("refit", false)), true
+	)
+	var best: Dictionary = r.get("best", {})
+	if not best.is_empty():
+		var pr: Vector2 = best["p_ref"] as Vector2
+		var err: float = Vector2(pr.x - tgt_ref_e, pr.y - tgt_ref_n).length()
+		if err > 1000.0:
+			fails.append("D6 position error %.0fm > 1000m" % err)
+
+
+## D7：残差行 schema（REQ-05）。混合输入（1 被动 + 1 主动 bearing+range）：
+## 主动展开成 range 行，其 raw_unit=="m"、component=="range"；所有行都有
+## measurement_id/evidence_id/timestamp；禁止再出现 residual_deg 字段。
+func _d7_residual_schema(fails: Array) -> void:
+	var meas: Array = [
+		{
+			"time": 0.0,
+			"observer_e": 0.0,
+			"observer_n": 0.0,
+			"bearing": 50.0,
+			"sigma": 1.0,
+			"measurement_id": 1,
+			"evidence_id": "ev_p1",
+		},
+		{
+			"time": 10.0,
+			"observer_e": 0.0,
+			"observer_n": 0.0,
+			"bearing": 55.0,
+			"sigma": 1.0,
+			"range_m": 5000.0,
+			"range_sigma_m": 100.0,
+			"measurement_id": 2,
+			"evidence_id": "ev_a1",
+		},
+	]
+	var r: Dictionary = TmaSolver.solve_auto(meas)
+	var rows: Array = r.get("residuals", [])
+	_assert_bool(fails, "D7 residuals produced", rows.size() >= 3, true)
+	var saw_range: bool = false
+	var no_old_key: bool = true
+	for rr in rows:
+		if rr.has("residual_deg"):
+			no_old_key = false
+		_assert_bool(
+			fails,
+			"D7 row has raw_value/raw_unit/component/timestamp",
+			(
+				rr.has("raw_value")
+				and rr.has("raw_unit")
+				and rr.has("component")
+				and rr.has("timestamp")
+			),
+			true,
+		)
+		if str(rr.get("component", "")) == "range":
+			saw_range = true
+			_assert_eq(fails, "D7 range row unit is m", str(rr.get("raw_unit", "?")), "m")
+			_assert_eq(
+				fails, "D7 range row evidence_id kept", str(rr.get("evidence_id", "?")), "ev_a1"
+			)
+	_assert_bool(fails, "D7 saw a range residual row", saw_range, true)
+	_assert_bool(fails, "D7 no residual_deg field anywhere", no_old_key, true)
+
+
+## D8：删除自动主动旁路（REQ-03）——场景传感器列表含 active 阵、auto 模式跑
+## 30s，也不得出现任何 ACTIVE_RANGE_BEARING（未 Ping 不产主动测量）。
+func _d8_no_auto_active_bypass(fails: Array) -> void:
+	var scen: Dictionary = _mk_scenario()
+	var sensors: Array = scen["sensors"]
+	(
+		sensors
+		. append(
+			{
+				"sensor_id": "hull_active",
+				"array_type": "active",
+				"owner_id": "own",
+				"freq_min_hz": 2000.0,
+				"freq_max_hz": 4000.0,
+				"array_gain_db": 24.0,
+				"detection_threshold_db": 3.0,
+				"update_interval_s": 1.0,
+				"deployed": true,
+			}
+		)
+	)
+	scen["own_ship"]["active_sonar"] = {
+		"ping_sl_db": 210.0,
+		"cooldown_s": 15.0,
+		"freq_min_hz": 2000.0,
+		"freq_max_hz": 4000.0,
+		"array_gain_db": 24.0,
+		"sound_speed_m_s": 1500.0,
+		"listen_window_s": 15.0,
+	}
+	var w := World.new()
+	w.load_scenario(scen)
+	w.auto_measurements = true
+	w.run_steps(30)
+	var active_seen: int = 0
+	for m in w.measurements:
+		if m.measurement_type == "ACTIVE_RANGE_BEARING":
+			active_seen += 1
+	_assert_eq(
+		fails,
+		"D8 no auto active measurements without Ping",
+		str(active_seen),
+		"0",
+	)

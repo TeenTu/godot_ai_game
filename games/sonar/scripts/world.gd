@@ -127,17 +127,19 @@ func _advance_only() -> void:
 
 
 ## 为某个传感器生成一次测量（针对所有目标）。
-## S1-00（GAP-DATA-01）：未探测样本（detected=false）绝不 append 进
-## measurements——miss 不携带未加噪真方位进入玩家链。
+## S1-00（GAP-DATA-01/02）：
+##   - 主动阵（array_type=="active"）绝不在本函数自动产测量——唯一玩家路径是
+##     issue_ping() → PingSession → 回波到达 → generate_active（REQ-03）；否则
+##     同一项目同时存在"显式 Ping"与"自动主动测量"两套矛盾链路。
+##   - 未探测样本（detected=false）绝不 append 进 measurements——miss 不携带
+##     未加噪真方位进入玩家链。
 func _emit_for_sensor(sensor: RefCounted) -> void:
+	if str(sensor.array_type) == "active":
+		return  # 主动阵只由 PingSession 驱动（REQ-03），跳过自动旁路
 	var gen: RefCounted = world["generator"]
 	for t in world["targets"]:
 		var ac: RefCounted = world["target_acs"][t.id]
-		var m: Measurement
-		if sensor.array_type == "active":
-			m = gen.generate_active(world["own"], t, ac, sensor, ping_sl_db, sim_time)
-		else:
-			m = gen.generate_passive(world["own"], t, ac, sensor, sim_time)
+		var m: Measurement = gen.generate_passive(world["own"], t, ac, sensor, sim_time)
 		if m.detected:
 			measurements.append(m)
 
