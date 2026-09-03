@@ -117,12 +117,18 @@ func _test_smoke() -> void:
 		return
 	var sim := _main.get("sim") as BoomGame
 	_check(sim.player != null, "sim.player 存在")
+	var frog_model := sim.player.find_child("MilkFrog3D", true, false)
+	_check(frog_model != null, "原生 3D 奶蛙场景已实例化")
+	_check(
+		frog_model != null and frog_model.find_child("Body", true, false) is MeshInstance3D,
+		"原生 3D 奶蛙包含真实网格身体",
+	)
 	_check(sim.player.hp == sim.player.max_hp, "开局满血 hp=5")
 	_check(sim.wave == 1, "初始波次 1")
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
 	for asset_path in [
-		"res://assets/images/characters/bubble_captain.png",
+		"res://assets/images/characters/milk_frog_hero.png",
 		"res://assets/images/characters/jelly_scout.png",
 		"res://assets/images/characters/water_gunner.png",
 		"res://assets/images/floors/carnival_tiles.png",
