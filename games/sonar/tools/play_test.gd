@@ -388,11 +388,13 @@ func _accept_test4() -> bool:
 		print("TMA_ACCEPT FAIL t4: solve failed")
 		return false
 	for res in r["residuals"]:
-		if absf(float(res["residual_deg"])) > 5.0:
+		if str(res.get("component", "bearing")) != "bearing":
+			continue  # range 行是米量纲，不进方位残差校验
+		if absf(float(res["raw_value"])) > 5.0:
 			print(
 				(
 					"TMA_ACCEPT FAIL t4: wrap residual %.1fdeg at t=%.0f"
-					% [float(res["residual_deg"]), float(res["time"])]
+					% [float(res["raw_value"]), float(res["time"])]
 				)
 			)
 			return false

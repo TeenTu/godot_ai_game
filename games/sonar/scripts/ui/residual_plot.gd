@@ -14,7 +14,7 @@ const PAD_R: float = 10.0
 const PAD_T: float = 8.0
 const PAD_B: float = 20.0
 
-var residuals: Array = []  # [{time, residual_deg, normalized, inlier}]
+var residuals: Array = []  # [{time, raw_value, raw_unit, normalized, inlier}]（方位行）
 var sigma_ref_deg: float = 1.0  # ±Nσ 带的参考 σ（被使用测量的平均 σ）
 var t_min: float = 0.0
 var t_max: float = 1.0
@@ -43,7 +43,7 @@ func _plot_rect() -> Rect2:
 
 
 func _val(r: Dictionary) -> float:
-	return float(r["normalized"]) if use_sigma else float(r["residual_deg"])
+	return float(r["normalized"]) if use_sigma else float(r["raw_value"])
 
 
 func _band_val(n_sigma: float) -> float:
@@ -155,7 +155,7 @@ func _draw_stats(pr: Rect2) -> void:
 	var sm: float = 0.0
 	var mx: float = 0.0
 	for r in used:
-		var v: float = float(r["residual_deg"])
+		var v: float = float(r["raw_value"])
 		sq += v * v
 		sm += v
 		mx = maxf(mx, absf(v))

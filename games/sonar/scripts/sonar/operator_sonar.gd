@@ -106,6 +106,7 @@ var detection_count: int = 0
 var _last_row_t: float = -1e9
 var _last_autocrew_t: float = -1e9
 var _ambiguity_counter: int = 0
+var _evidence_counter: int = 0  # S1-00：玩家/自动 Mark 的物理证据唯一 id
 var _rng: RandomNumberGenerator = null
 var _env: RefCounted = null
 var _own_ref: RefCounted = null
@@ -528,6 +529,11 @@ func create_mark(
 	m.timestamp = r_t
 	m.sensor_id = "OP_" + active_array_id
 	m.target_id = target_id  # 仅测试统计；玩家流程不使用
+	# S1-00：操作员 Mark 是一次玩家确认的探测（detected=true），每次物理
+	# 到达发唯一 evidence_id（镜像对在 create_mark_group 中共享）。
+	m.detected = true
+	_evidence_counter += 1
+	m.evidence_id = "ev_%05d" % _evidence_counter
 	# TOWED：观察站位 = 测量时刻阵列声学中心（不是本艇中心，S1-03）
 	var tow_center_m: float = float(row.get("tow_center_m", 0.0))
 	var tow_len_m: float = float(row.get("tow_length_m", 0.0))
@@ -593,6 +599,9 @@ func create_mark_group(
 	sibling.array_center_east_m = primary.array_center_east_m
 	sibling.array_center_north_m = primary.array_center_north_m
 	sibling.actual_tow_length_m = primary.actual_tow_length_m
+	# S1-00：镜像支与主支共享同一 evidence_id（同一物理到达，只计一次证据）。
+	sibling.detected = primary.detected
+	sibling.evidence_id = primary.evidence_id
 	out.append(sibling)
 	return out
 

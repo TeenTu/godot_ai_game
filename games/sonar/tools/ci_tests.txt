@@ -1,0 +1,26 @@
+# S1-00-REQ-06 CI 主门禁清单（sonar）。
+# 每行 = 一个无头测试脚本名（不含 .gd 后缀），deploy.yml 的 test job 会逐个
+# 执行并以非零退出码为准（Godot quit(1) = 测试失败 → 门禁红）。
+# 空行 / 以 # 开头的行被忽略。新增测试时在此追加一行即可。
+#
+# 清单覆盖 S1-00 信息链全链路回归：
+#   play_test            验收 1/2/4/5（TMA 收敛/几何/残差/镜像）
+#   stage1_test          Stage1 传感生成链
+#   stage2_test          Stage2 跟踪/TMA 流水线
+#   operator_test        操作员 Mark/镜像证据（含 evidence_count）
+#   dynamics_test        目标/本艇动力学
+#   towed_test           拖曳阵 + A/B 分支消歧
+#   ping_test            主动声呐 Ping 生命周期
+#   ping_tma_integration_test  主动测距进 TMA 数据链（R 系列 + E2E）
+#   weapon_test          武器系统（System Solution 门禁）
+#   s100_integrity_test  S1-00 信息链完整性验收（D1-D8）
+play_test
+stage1_test
+stage2_test
+operator_test
+dynamics_test
+towed_test
+ping_test
+ping_tma_integration_test
+weapon_test
+s100_integrity_test

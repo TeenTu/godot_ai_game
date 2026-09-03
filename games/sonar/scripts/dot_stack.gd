@@ -12,7 +12,7 @@ extends RefCounted
 ## 本类只负责计算残差数据，渲染交给 UI 层。
 
 var measurements: Array = []  # 解算输入（同 TmaSolver 的格式）
-var residual_entries: Array = []  # [{time, residual_deg, normalized, age_rank}]
+var residual_entries: Array = []  # [{time, raw_value, raw_unit, normalized, age_rank}]
 
 
 ## 基于一组测量 + 一个 TMA 解（参数）计算残差序列。
@@ -41,10 +41,10 @@ func latest() -> Dictionary:
 	return residual_entries[residual_entries.size() - 1]
 
 
-## 所有点是否都接近中线（|残差| < tol_deg）。
+## 所有点是否都接近中线（|残差| < tol_deg，本类只收 bearing 残差）。
 func all_centered(tol_deg: float = 0.5) -> bool:
 	for e in residual_entries:
-		if absf(e["residual_deg"]) > tol_deg:
+		if absf(float(e["raw_value"])) > tol_deg:
 			return false
 	return true
 
@@ -55,5 +55,5 @@ func rms_residual_deg() -> float:
 		return 0.0
 	var s: float = 0.0
 	for e in residual_entries:
-		s += e["residual_deg"] * e["residual_deg"]
+		s += float(e["raw_value"]) * float(e["raw_value"])
 	return sqrt(s / float(residual_entries.size()))

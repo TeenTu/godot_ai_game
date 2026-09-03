@@ -179,7 +179,7 @@ static func mean_sigma(res: Array) -> float:
 			continue
 		var n: float = absf(float(r.get("normalized", 0.0)))
 		if n > 1e-6:
-			ratios.append(absf(float(r["residual_deg"])) / n)
+			ratios.append(absf(float(r["raw_value"])) / n)
 	if ratios.is_empty():
 		return 1.0
 	ratios.sort()
@@ -290,6 +290,8 @@ static func fit_meas_dict(m: Measurement) -> Dictionary:
 		"observer_n": m.observer_north_m,
 		"bearing": m.measured_bearing_deg,
 		"sigma": m.bearing_sigma_deg,
+		"measurement_id": m.measurement_id,
+		"evidence_id": m.evidence_id,
 	}
 	if m.has_range():
 		d["range_m"] = m.measured_range_m

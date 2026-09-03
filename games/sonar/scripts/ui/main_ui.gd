@@ -496,6 +496,10 @@ func _feed_new_measurements() -> void:
 	var ms: Array = world.measurements
 	while _processed_meas < ms.size():
 		var m: Measurement = ms[_processed_meas]
+		# S1-00（GAP-DATA-01）第三层过滤：miss 样本绝不吃进 Tracker/TMA。
+		if not m.detected:
+			_processed_meas += 1
+			continue
 		if world.auto_measurements:
 			# 旧模式：自动关联/建 Track
 			if _processed_meas == 0:
@@ -607,10 +611,10 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图
+	# 3) 残差图（REQ-05：只喂方位残差行——range 行是米量纲，禁混进 deg 轴）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
-		res = last_fit.get("residuals", [])
+		res = TmaUiData.bearing_residuals(last_fit.get("residuals", []))
 	_res_plot.residuals = res
 	_res_plot.track_id = selected_track_id
 	_res_plot.sigma_ref_deg = TmaUiData.mean_sigma(res)
@@ -1168,14 +1172,11 @@ func _on_ping_echo_hits(fed: Array) -> void:
 
 
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
-## x_value 为当前瀑布显示基准下的方位；create_mark 内部处理。
-##   as_true=false（RELATIVE 瀑布）：x 为艇艏相对方位(-180..180，艇艏=0)，
-##     create_mark 内部反算真方位。
-##   as_true=true（TRUE STABILIZED 瀑布）：x 为真北方位(0..360)，直接加噪声。
+## x_value 为当前显示基准方位：as_true=false 是艇艏相对方位(-180..180)，
+## as_true=true 是真北方位(0..360)；create_mark 内部处理。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
-	# S1-01/S1-03：携带被点瀑布行的上下文（时间/站位/阵轴/峰表取自历史行）
-	# S1-03A：组版本——镜像峰自动生成 A/B 两个共享证据的候选测量
+	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
 	var group: Array = op.create_mark_group(brg, world.sim_time, "", as_true, row)
 	var m: Measurement = group[0] as Measurement
 	world.measurements.append(m)

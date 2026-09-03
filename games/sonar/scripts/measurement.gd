@@ -12,6 +12,16 @@ var measurement_type: String = "PASSIVE_BEARING"  # PASSIVE_BEARING / ACTIVE_RAN
 var ping_id: int = -1  # 主动回波所属 PingSession（被动为 -1）
 var available_time: float = -1.0  # 对接收机"可用"时刻（主动回波=到达时刻；被动=timestamp）
 
+# ---- S1-00 证据契约（GAP-DATA-01/03）----
+# detected：本次概率抽样是否真的探测到。false = miss（未探测样本），禁止
+#   append 进 World.measurements / 喂 Tracker / 进 TMA（Truth 泄漏源头）。
+# evidence_id：一次物理到达的唯一证据 id。拖曳阵 A/B 镜像（同一 physical
+#   到达的两个候选）共享同一 evidence_id；主动 bearing+range 单条 Measurement
+#   也是一个 evidence（TMA 内部展开成两行 residual component）。计数/统计
+#   一律按去重 evidence_id，绝不用"测量对象数"或 Pd>0 近似。
+var detected: bool = true
+var evidence_id: String = ""
+
 var observer_east_m: float = 0.0  # 测量时刻本艇位置
 var observer_north_m: float = 0.0
 
@@ -63,6 +73,8 @@ func to_dict() -> Dictionary:
 		"measurement_type": measurement_type,
 		"ping_id": ping_id,
 		"available_time": available_time,
+		"detected": detected,
+		"evidence_id": evidence_id,
 		"observer_east_m": observer_east_m,
 		"observer_north_m": observer_north_m,
 		"bearing_deg": measured_bearing_deg,

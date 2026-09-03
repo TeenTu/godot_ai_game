@@ -3,6 +3,12 @@
 > 目标引擎：Godot 4.5 (GDScript) / Web 导出，复用现有多游戏 CI/CD 流水线。
 > 核心原则：**Truth（后台真实状态）与 Measurement（传感器观测）严格分离**。
 > 正常游戏界面绝不读取 / 显示 Truth，Truth 仅通过调试模式 "Show Truth" 呈现。
+>
+> **S1-00 信息链热修状态（2026-09）：已完成 ①②③** —— ① detected/evidence_id
+> 证据契约（miss 永不进玩家链，A/B 共享证据计数）；② 删主动自动旁路 +
+> TMA robust refit 统一口径 + 残差行 schema（废除 residual_deg）；③ CI 主门禁
+> （tools/ci_tests.txt 清单 + 非零退出码）。验收见 `tools/s100_integrity_test.gd`
+> （D1-D8）与 OPERATIONS.md §5。
 
 ---
 

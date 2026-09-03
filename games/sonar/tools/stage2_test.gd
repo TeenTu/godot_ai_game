@@ -433,7 +433,7 @@ func _gen_target_turn(
 func _calc_rms(entries: Array) -> float:
 	var s: float = 0.0
 	for e in entries:
-		s += e["residual_deg"] * e["residual_deg"]
+		s += float(e["raw_value"]) * float(e["raw_value"])
 	return sqrt(s / float(maxi(entries.size(), 1)))
 
 

@@ -76,13 +76,23 @@ func first_measurement() -> Measurement:
 	return measurement_history[0]
 
 
-## 有效测量数（只统计真正探测到接触的 LOB）。
-func detection_count() -> int:
-	var n: int = 0
+## 有效物理证据数（S1-00-REQ-02）：按去重 evidence_id 统计，A/B 镜像共享
+## 一次物理到达只计一次；主动 bearing+range 单条 Measurement 也是一个证据。
+## 旧数据/手工测量无 evidence_id 时按 measurement_id 兜底（各计一次）。
+func evidence_count() -> int:
+	var ids: Dictionary = {}
 	for m in measurement_history:
-		if m.detection_probability > 0.0:
-			n += 1
-	return n
+		if not m.detected:
+			continue  # miss 样本不得计入（GAP-DATA-01）
+		var key: String = m.evidence_id if m.evidence_id != "" else "obj_%d" % m.measurement_id
+		ids[key] = true
+	return ids.size()
+
+
+## 有效探测数（= 去重物理证据数；GAP-DATA-03：不再用 Pd>0 近似，也不再
+## 把 A/B 镜像当两次独立探测）。
+func detection_count() -> int:
+	return evidence_count()
 
 
 ## 标记失去接触。

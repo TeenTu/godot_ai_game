@@ -58,8 +58,47 @@ jobs:
           fi
           echo "asset size gate: OK"
 
+  test:
+    name: Headless test gate (REQ-06)
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.5 # must match GODOT_VERSION above
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          lfs: true
+      # S1-00-REQ-06：主门禁按 tools/ci_tests.txt 清单显式执行全部测试，
+      # 以非零退出码为准（Godot quit(1) = FAIL），不再只 grep 单个 PASS。
+      - name: Run per-game test manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          any=0
+          for game in games/*/; do
+            [ -f "${game}tools/ci_tests.txt" ] || continue
+            any=1
+            name="$(basename "$game")"
+            echo ""
+            echo "============================================================"
+            echo "Test gate: $name (manifest: tools/ci_tests.txt)"
+            echo "============================================================"
+            godot --headless --path "$game" --import
+            while IFS= read -r t || [ -n "$t" ]; do
+              t="${t%$'\r'}"          # 防 CRLF 残留
+              [ -n "$t" ] || continue
+              case "$t" in \#*) continue ;; esac
+              echo "--- $name: $t ---"
+              godot --headless --path "$game" --script "res://tools/${t}.gd"
+            done < "${game}tools/ci_tests.txt"
+          done
+          if [ "$any" -eq 0 ]; then
+            echo "No game declares tools/ci_tests.txt — nothing to gate."
+          fi
+
   export-web:
     name: Export Web builds (all games)
+    needs: test
     runs-on: ubuntu-latest
     container:
       image: barichello/godot-ci:4.5 # must match GODOT_VERSION above
