@@ -114,6 +114,12 @@ godot --path games/sonar --script res://tools/ui_regression.gd
   D7 弱目标概率探测间歇出现（无 SE<=0 硬门限）/
   D8 谱图背景 AR(1) 时间相关噪声 texture（非固定纯色，行间均差<2dB）。
   运行：`godot --headless --path games/sonar --script res://tools/dynamics_test.gd`
+- 主动声呐 Ping 无头验收（S1-04 交互）：`tools/ping_test.gd` ——
+  P1 冷却（连发被拒、冷却后恢复）/ P2 近目标回波 detected+带 range≈真距 /
+  P3 极远目标无回波（SE 极负不产 Measurement）/ P4 回波 append 测量流 /
+  P5 摘要字段完整 / P6 场景 active_sonar 配置覆盖 / P7 无目标空回波+无 active
+  传感器也能 ping（缺省艇首阵）/ P8 摘要方位≈几何真方位。运行：
+  `godot --headless --path games/sonar --script res://tools/ping_test.gd`
 - 注意：main_ui 默认 `world.auto_measurements = false`；旧冒烟/回归工具
   （play_test / ui_regression）在 UI 就绪后显式开回 true 模拟 Autocrew 模式。
 

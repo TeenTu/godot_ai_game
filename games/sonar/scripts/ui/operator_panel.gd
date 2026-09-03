@@ -16,6 +16,7 @@ signal towed_deploy_requested
 signal towed_retract_requested
 signal towed_hold_requested
 signal towed_length_commanded(frac: float)  # 0..1 × max_tow_length_m（S1-03）
+signal ping_requested  # S1-04：玩家按下主动声呐 Ping
 
 const MAX_ROWS_SHOWN: int = 80
 
@@ -34,6 +35,9 @@ var _btn_tow_retract: Button = null
 var _btn_tow_hold: Button = null
 var _len_slider: HSlider = null
 var _lbl_tow: Label = null  # TOWED 状态/阵航向/长度显示
+var _ping_row: HBoxContainer = null  # 主动声呐 Ping 区（S1-04）
+var _btn_ping: Button = null
+var _lbl_ping: Label = null
 var _last_row_count: int = -1
 
 
@@ -111,6 +115,28 @@ func _init() -> void:
 	_lbl_tow.add_theme_font_size_override("font_size", 12)
 	_lbl_tow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tow_ctl.add_child(_lbl_tow)
+
+	# 主动声呐 Ping（S1-04）：玩家主动发脉冲→回波带测距；冷却防 spam。
+	# 与被动阵列选择无关（艇首主动阵）；发出后本艇会被敌方被动声呐截获。
+	_ping_row = HBoxContainer.new()
+	_ping_row.add_theme_constant_override("separation", 4)
+	add_child(_ping_row)
+	_btn_ping = Button.new()
+	_btn_ping.text = "Ping (ACTIVE)"
+	_btn_ping.add_theme_font_size_override("font_size", 13)
+	_btn_ping.modulate = Color(1.0, 0.65, 0.25)
+	_btn_ping.tooltip_text = (
+		"Emit an active sonar pulse.\nReturns range to any echo — "
+		+ "but reveals your position to enemy passive sonar."
+	)
+	_btn_ping.pressed.connect(func(): ping_requested.emit())
+	_ping_row.add_child(_btn_ping)
+	_lbl_ping = Label.new()
+	_lbl_ping.text = "Ping: ready"
+	_lbl_ping.add_theme_font_size_override("font_size", 12)
+	_lbl_ping.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lbl_ping.custom_minimum_size = Vector2(0, 0)
+	_ping_row.add_child(_lbl_ping)
 
 	# BB 瀑布显示基准切换：RELATIVE(默认,艇艏=0°) / TRUE STABILIZED(真北稳定)
 	var bb_mode_row := HBoxContainer.new()
@@ -211,6 +237,17 @@ func update_towed_controls(t: TowedArray) -> void:
 	if _len_slider != null and not _len_slider.has_focus():
 		if t.max_tow_length_m > 0.0:
 			_len_slider.set_value_no_signal(t.commanded_tow_length_m / t.max_tow_length_m)
+
+
+## 更新主动 Ping 按钮状态与回波摘要（S1-04）。每帧由主 UI 调。
+func set_ping_state(ready: bool, cd_left: float, summary: String) -> void:
+	if _btn_ping == null or _lbl_ping == null:
+		return
+	_btn_ping.disabled = not ready
+	var txt: String = "Ping: " + ("ready" if ready else "recharge %.0fs" % ceili(cd_left))
+	if summary != "":
+		txt += "  |  " + summary
+	_lbl_ping.text = txt
 
 
 ## Operator 有新瀑布行时调用（只在行数变化时重建 UI 数据）。
