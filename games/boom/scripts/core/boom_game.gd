@@ -17,6 +17,12 @@ signal game_over(final_score: int)
 signal prop_broken(pos: Vector3, coin_value: int)
 ## 技能弹道命中（非普通弹）：pos=命中点，skill_id=弹道归属（§4.2 fan 每命中飘字）。
 signal skill_bullet_hit(pos: Vector3, skill_id: String)
+## M5 大剑弧斩命中（§4.2/§4.3）：pos=命中点，dmg=单目标伤害（=swing_dmg）。
+## 大剑伤害不走 enemy_damaged 弹道飘字管线，表现层按此信号做重击反馈。
+signal blade_hit(pos: Vector3, dmg: int)
+
+## M5 挥斩 FSM（design_m5_weapons.md §4.2：蓄 → 抡 → 收，纯逻辑可无头断言）。
+enum SwingState { NONE, WINDUP, ACTIVE, RECOVER }
 
 const PLAYER_BOUND_X: float = 3.6
 const PLAYER_BOUND_Z: float = 9.5
@@ -96,6 +102,11 @@ var game_time: float = 0.0
 var auto_spawn: bool = true
 var input_move: Vector2 = Vector2.ZERO
 
+## M5：当前武器（BoomWeaponDef，由 set_weapon 注入；默认恒为泡泡枪）。
+var weapon_cfg: BoomWeaponDef
+## M5 R9：对局是否已开战（选武器期间 sim 已建但未发波）。
+var match_started: bool = false
+
 var _spawned_total: int = 0
 var _quota_current: int = 0
 var _spawn_cd: float = 0.5
@@ -108,6 +119,14 @@ var _last_killstop: float = -10.0
 ## 瞄准目标防抖：锁定后 0.15s 内不轻易换目标，避免多个敌人之间抖动。
 var _locked: BoomJelly = null
 var _lock_ttl: float = 0.0
+# ---- M5 大剑挥斩状态 ----
+var _swing_state: int = SwingState.NONE
+var _swing_t: float = 0.0
+## 挥出瞬间的朝向快照（前摇期内不再转向新目标，宽容判定按挥出瞬间算，§4.2）。
+var _swing_facing: Vector3 = Vector3.FORWARD
+var _last_swing_freeze: float = -10.0  # 斩中顿帧 0.5s 门控
+## R3 死亡表现窗：已死 jelly 移出 enemies 后仍挂树演 0.2s 压扁/淡出（不阻塞结算）。
+var _corpses: Array = []
 
 
 func _init() -> void:
@@ -140,10 +159,14 @@ func step(delta: float) -> void:
 	_tick_bullets(delta)
 	_tick_props(delta)
 	_tick_spawns(delta)
+	_tick_corpses(delta)
 	_tick_player_contact()
 
 
+## M5：纯数值重置（R9 把"开波"拆到 begin_match；存量调用语义 = 默认武器重开）。
 func restart() -> void:
+	weapon_cfg = BoomWeapons.get_def(BoomWeapons.default_id())
+	player.apply_weapon(weapon_cfg)
 	wave = 1
 	score = 0
 	coins = 0
@@ -157,27 +180,50 @@ func restart() -> void:
 	_quota_current = 0
 	_between_waves = false
 	_next_wave_cd = 0.0
-	_fire_cd = 0.2
+	_fire_cd = weapon_cfg.fire_cd
 	_freeze_left = 0.0
 	_last_killstop = -10.0
 	_locked = null
 	_lock_ttl = 0.0
-	player.hp = BoomPlayer.MAX_HP
+	_swing_state = SwingState.NONE
+	_swing_t = 0.0
+	_swing_facing = player.facing
+	_last_swing_freeze = -10.0
+	match_started = false
+	player.hp = player.max_hp
 	player.invuln_left = 0.0
+	player.lock_move_left = 0.0
 	player.position = Vector3.ZERO
 	player.set_move(Vector2.ZERO)
 	for b in bullets:
 		(b as BoomBullet).recycle()
 	for e in enemies:
 		if is_instance_valid(e):
-			remove_child(e)
 			e.queue_free()
 	enemies.clear()
 	for prop in props:
 		if is_instance_valid(prop):
-			remove_child(prop)
 			prop.queue_free()
 	props.clear()
+	for corpse in _corpses:
+		if is_instance_valid(corpse):
+			corpse.queue_free()
+	_corpses.clear()
+
+
+## M5：选择武器并落机体数值（§3.3 关键工程点 1）。
+func set_weapon(id: String) -> void:
+	weapon_cfg = BoomWeapons.get_def(id)
+	player.apply_weapon(weapon_cfg)
+	player.hp = player.max_hp
+	_fire_cd = weapon_cfg.fire_cd
+	_swing_state = SwingState.NONE
+	_swing_t = 0.0
+
+
+## M5：开战（= 原 restart 后半段 _spawn_props + _begin_wave；R9 与构造解耦）。
+func begin_match() -> void:
+	match_started = true
 	_spawn_props()
 	_begin_wave()
 
@@ -185,7 +231,16 @@ func restart() -> void:
 # ------------------------------------------------------------------ 玩家
 
 
+## 攻击循环按当前武器分发（design §3/§4）：RANGED=自动连射；MELEE=挥斩 FSM。
 func _tick_player(delta: float) -> void:
+	if weapon_cfg.kind == BoomWeaponDef.AttackKind.MELEE:
+		_tick_melee(delta)
+	else:
+		_tick_ranged(delta)
+
+
+## 泡泡枪：自动瞄准连射（保留现手感；参数读武器 def，默认与旧常量一致）。
+func _tick_ranged(delta: float) -> void:
 	player.physics_update(delta, PLAYER_BOUND_X, PLAYER_BOUND_Z)
 	_lock_ttl = maxf(0.0, _lock_ttl - delta)
 	if _locked != null and (not is_instance_valid(_locked) or _locked.is_dead()):
@@ -201,15 +256,102 @@ func _tick_player(delta: float) -> void:
 		var aim_dir := _aim_dir(muzzle_pos, target)
 		player.face_toward(aim_dir)
 		if _fire_cd <= 0.0:
-			_fire_cd = FIRE_CD
+			_fire_cd = weapon_cfg.fire_cd
 			_spawn_bullet(muzzle_pos, aim_dir)
+			player.play_anim_once("recoil")
 	elif player.move_vec.length_squared() > 0.01:
 		# 无目标时朝移动方向边走边扫（只转向不开火会留空档）。
 		var mv := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
 		player.face_toward(mv)
 		if _fire_cd <= 0.0:
-			_fire_cd = FIRE_CD
+			_fire_cd = weapon_cfg.fire_cd
 			_spawn_bullet(muzzle_pos, mv.normalized())
+			player.play_anim_once("recoil")
+
+
+## 大剑挥斩 FSM（§4.2：蓄 0.24 → 抡 0.12 锁移动 → 收 0.34）。前摇可走但转向冻结；
+## 无目标不空挥（扛剑待机）；判定在挥出瞬间按当前朝向快照算一次，宽容不挫败。
+func _tick_melee(delta: float) -> void:
+	match _swing_state:
+		SwingState.WINDUP:
+			_swing_t -= delta
+			# 前摇期朝向冻结（不可转向新目标）。
+			player.face_toward(_swing_facing)
+			if _swing_t <= 0.0:
+				_swing_state = SwingState.ACTIVE
+				_swing_t = weapon_cfg.swing_active
+				_execute_swing()
+		SwingState.ACTIVE:
+			_swing_t -= delta
+			# 判定窗锁移动。
+			player.lock_move_left = _swing_t
+			if _swing_t <= 0.0:
+				_swing_state = SwingState.RECOVER
+				_swing_t = weapon_cfg.swing_recover
+				player.play_anim_once("swing")
+		SwingState.RECOVER:
+			_swing_t -= delta
+			# 后摇可走可转向。
+			var mv := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
+			if player.move_vec.length_squared() > 0.01 and _nearest_enemy() == null:
+				player.face_toward(mv)
+			if _swing_t <= 0.0:
+				_swing_state = SwingState.NONE
+		_:
+			# 待机：只追最近敌的朝向，进入斩程即起手。
+			var target := _nearest_enemy()
+			if target == null:
+				var mv2 := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
+				if player.move_vec.length_squared() > 0.01:
+					player.face_toward(mv2)
+			else:
+				var to_enemy: Vector3 = target.position - player.position
+				to_enemy.y = 0.0
+				player.face_toward(to_enemy)
+				if to_enemy.length() <= weapon_cfg.swing_range:
+					_swing_state = SwingState.WINDUP
+					_swing_t = weapon_cfg.swing_windup
+					_swing_facing = player.facing
+	player.physics_update(delta, PLAYER_BOUND_X, PLAYER_BOUND_Z)
+
+
+## 挥出瞬间结算一次：150°×2.9m 扇形内 ≤6 名（§4.2），逐敌 3 伤 + 强击退，
+## 致死复用既有 _finalize_kill 管线；斩中 ≥1 触发顿帧（0.5s 门控）与 blade_hit。
+func _execute_swing() -> void:
+	var half_rad: float = deg_to_rad(weapon_cfg.swing_arc_deg * 0.5)
+	var fwd := _swing_facing
+	if fwd.length_squared() < 0.001:
+		fwd = Vector3(0.0, 0.0, 1.0)
+	var candidates: Array = []
+	for e in enemies:
+		var jelly := e as BoomJelly
+		if jelly == null or jelly.is_dead() or jelly.hp <= 0:
+			continue
+		var to_enemy: Vector3 = jelly.position - player.position
+		to_enemy.y = 0.0
+		var dist: float = to_enemy.length()
+		if dist <= 0.001 or dist > weapon_cfg.swing_range:
+			continue
+		var to_dir := to_enemy / dist
+		var ang := acos(clampf(fwd.dot(to_dir), -1.0, 1.0))
+		if ang <= half_rad:
+			candidates.append([dist, jelly])
+	candidates.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	var hit_any := false
+	var hit_count: int = mini(weapon_cfg.swing_max_targets, candidates.size())
+	for i in hit_count:
+		var jelly := candidates[i][1] as BoomJelly
+		var hit_dir: Vector3 = (jelly.position - player.position).normalized()
+		hit_dir.y = 0.0
+		if hit_dir.length_squared() < 0.001:
+			hit_dir = _swing_facing
+		blade_hit.emit(jelly.position, weapon_cfg.swing_dmg)
+		if jelly.take_damage(weapon_cfg.swing_dmg, hit_dir, weapon_cfg.swing_knock):
+			_finalize_kill(jelly)
+		hit_any = true
+	if hit_any and game_time - _last_swing_freeze >= 0.5:
+		_last_swing_freeze = game_time
+		_freeze_left = maxf(_freeze_left, weapon_cfg.swing_freeze)
 
 
 ## 目标决议：加权最优为候选；锁定窗口内不换目标（防抖），
@@ -520,9 +662,32 @@ func _finalize_kill(jelly: BoomJelly) -> void:
 	if jelly.elite:
 		_elite_coin_rain(jelly.position)
 	enemies.erase(jelly)
-	if is_instance_valid(jelly):
-		remove_child(jelly)
-		jelly.queue_free()
+	# R3：移出逻辑数组（enemies）但延迟销毁——由 BoomJelly 的表现窗 Tween 完成后
+	# queue_free（_tick_corpses 兜底驱动，避免无头环境 tween 不跑导致的悬挂）。
+	_corpses.append(jelly)
+	if not is_instance_valid(jelly):
+		return
+	if not jelly.is_dying():
+		jelly.begin_death()
+
+
+## 死亡表现窗驱动（R3）：已死 jelly 不参与对局逻辑，仅推进 0.2s 压扁/淡出。
+func _tick_corpses(delta: float) -> void:
+	var done: Array = []
+	for corpse in _corpses:
+		var jelly := corpse as BoomJelly
+		if jelly == null or not is_instance_valid(jelly):
+			done.append(corpse)
+			continue
+		jelly.tick_death(delta)
+		if jelly.death_elapsed() >= BoomJelly.DEATH_WINDOW:
+			done.append(corpse)
+			if is_instance_valid(jelly) and jelly.is_inside_tree():
+				remove_child(jelly)
+			if is_instance_valid(jelly):
+				jelly.queue_free()
+	for c in done:
+		_corpses.erase(c)
 
 
 ## §4 精英死亡金币雨：ELITE_COIN_COUNT 枚 × ELITE_COIN_VALUE 逐枚入账，
@@ -657,6 +822,9 @@ func _begin_wave() -> void:
 
 func _tick_spawns(delta: float) -> void:
 	if is_over:
+		return
+	# R9：未 begin_match（选武器期间）不开波、不推进波次状态机。
+	if not match_started:
 		return
 	if _between_waves:
 		_next_wave_cd -= delta
