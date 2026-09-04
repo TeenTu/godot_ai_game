@@ -201,6 +201,19 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   `se_db`（己方武器状态合法信息的确定性声学接收计算，不消耗 RNG、无探测门限
   判定）——使 OWN_FACT 爆炸证据可进战果层级判定。`ci_tests.txt` 登记 24 项
   全量门禁。
+- **评审修复 Patch A（数据正确性与身份）**：外部评审（腾讯文档 S1-07 复审）
+  确认三处缺陷并修复——①P0-01 `EnemySensorAdapter` 把声源深度误当真方位写入
+  证据（sample_passive 用 c.depth_m、intercept_events 用 src_depth）→ 改为
+  NavUtils.bearing_to_true(observer→source) 几何真方位，深度只用于跨层传播
+  损失；证据仍无 range/位置/target_id。②P0-05 `WeaponSystem.fire_program`
+  硬编码 "T%02d" 忽略 id_prefix → 双方独立计数器都可产生 "T01" 冲突 → 改
+  "%s%02d" % [id_prefix, _next_id]（玩家 T01/T02…、敌方 ET01/ET02…，全局
+  唯一）。③P1-09 World 在 `enemy_weapons.step()` 已过滤 dead 后的数组里找
+  dead → notify_torpedo_resolved 永不触发、doctrine 在水计数不释放、拒绝再次
+  反击 → 改 step 前后按稳定 torpedo_id 求差、对消失 ID 恰好一次 notify；
+  EnemyDoctrineController 增只读 `active_torpedo_count()`。回归
+  `tools/patch_a_test.gd`（PA-01 深度≠方位刻意组合、PA-02 双系统 ID 唯一、
+  PA-03 结算释放；AT-01/AT-02 对应）。
 
 ---
 

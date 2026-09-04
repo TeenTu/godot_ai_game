@@ -278,6 +278,11 @@ func notify_torpedo_resolved() -> void:
 	_torpedo_count = maxi(_torpedo_count - 1, 0)
 
 
+## P1-09：在水武器计数只读视图（World 结算释放后应递减；测试/诊断用）。
+func active_torpedo_count() -> int:
+	return _torpedo_count
+
+
 func _depth_band() -> String:
 	var dm: Variant = sensor.depth_model if sensor != null else null
 	if dm != null and bool(dm.get("enabled")):
