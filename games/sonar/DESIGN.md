@@ -38,11 +38,11 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-3 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-4 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
-Commit 3（任意条件发射）**，均已合入 sonar-dev：
+Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）**，均已合入 sonar-dev：
 
 - **Commit 0**：旧武器缺陷行为刻画测试（Truth 直读 / 单一 ENABLE_RANGE /
   target_id 进 UI / DEAD 自动补装）——重构后已删除，由新契约测试接管。
@@ -72,10 +72,20 @@ Commit 3（任意条件发射）**，均已合入 sonar-dev：
   按上下文自动选 SOLUTION（有解）/ BEARING_ONLY（选中接触 LOB）/
   MANUAL（沿本艇艏向），weapon_panel 显示模式与风险提示；weapon_test w6
   翻转（无解 MANUAL 可发射）；`weapon_program_test` WPN-PROG-01..04。
-- **遗留项**（后续 Commit 4-12）：WireLink+fallback 执行、TorpedoAcousticProfile+
-  EmissionBus、TorpedoSensorAdapter+SeekerReturn、SeekerTrack 捕获/丢失/重搜/
-  制导、诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/告警/在水
-  控制 UI（Commit 4/11）。
+- **Commit 4（WireLink 与 fallback，§5.4/§5.5）**：新增 `scripts/weapon/
+  wire_link.gd`（放线/超长确定性断线/cut/命令门，无 Truth）；Torpedo 导线
+  状态唯一源改为 `wire_link`（CONNECTED/BROKEN/CUT），线控命令门只认
+  CONNECTED，断/切后拒绝新命令并执行 fallback——保持最后命令航向（按
+  max_turn_rate 渐进转向）→ 预设 search depth band（内部命令不经过线控门）
+  → 进入 SEARCH → 按 fallback 预设距离/时间自动授权自主与开启 active TX
+  （`_advance_fallback_autonomy` + active OFF 也能按程序化条件自触发）。
+  命令全部记 `command_log`（§5.1 CommandLog），绝不改写发射程序快照。
+  `wire_guidance_test` WPN-WIRE-01..04（连接命令生效/速率逼近/断切拒绝/
+  fallback 执行）。
+- **遗留项**（后续 Commit 5-12）：TorpedoAcousticProfile+EmissionBus、
+  TorpedoSensorAdapter+SeekerReturn、SeekerTrack 捕获/丢失/重搜/制导、
+  诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/告警/在水
+  控制 UI（Commit 11）。
 
 ---
 

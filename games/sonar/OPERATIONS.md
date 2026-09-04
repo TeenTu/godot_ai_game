@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-3 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-4 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -245,7 +245,9 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 无解但有选中接触 → BEARING_ONLY（沿该接触 LOB，无隐藏距离）
 都无              → MANUAL（沿本艇艏向，宽搜索扇区）
 → LAUNCHING → WIRE_RUN（PASSIVE_LISTEN 默认 ON / ACTIVE_TX 默认 OFF）
-→ 线控命令（course/speed/depth band/active_tx/autonomy/cut_wire，按 WireState 门控）
+→ 线控命令（course/speed/depth band/active_tx/autonomy/cut_wire，仅 CONNECTED 可收）
+→ 导线超长确定性 BROKEN / 玩家 CUT → 拒绝新命令并执行 fallback（§5.5：保持
+  最后命令航向 → 预设搜索深度带 → SEARCH → 按预设距离授权自主 + 开主动 TX）
 → 引信按 arm_distance 独立 SAFE→ARMED（与主动/自主解耦）
 → DEAD（燃料耗尽；发射管保持 EMPTY，不自动补装，reload_tube 显式装填）
 ```
@@ -266,11 +268,15 @@ godot --headless --path games/sonar --script res://tools/weapon_test.gd   # WEAP
 godot --headless --path games/sonar --script res://tools/weapon_program_test.gd  # WPN-PROG-01..04
 godot --headless --path games/sonar --script res://tools/s1_07_state_model_test.gd  # SM1-SM7
 godot --headless --path games/sonar --script res://tools/depth_layer_test.gd        # D1-D7
+godot --headless --path games/sonar --script res://tools/wire_guidance_test.gd      # WPN-WIRE-01..04
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
 鱼雷日志（5 行）；`scripts/ui/own_maneuver_panel.gd` 本艇航向/航速/深度控制。
 main_ui 收到 `fire_requested` 后用自身 own 位置执行发射，面板不持有 Truth own。
+WireLink（`scripts/weapon/wire_link.gd`）：放线按鱼雷速度累计、超长确定性
+BROKEN（首版不用随机断线）、玩家可 CUT_WIRE；断/切后线控命令拒绝并在 UI 说明
+原因（In-water console 属 Commit 11，控制 API 本批已完备）。
 
 ---
 
@@ -301,7 +307,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 15 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 16 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -311,7 +317,8 @@ done < games/sonar/tools/ci_tests.txt
 （S1-07 正交状态模型/WeaponProgram/Truth 隔离，SM1-SM7）、`depth_layer_test`
 （S1-07A 双层深度 + 跨层 TL + 场景集成，D1-D7）、`weapon_program_test`
 （S1-07 Commit3 发射模式 MANUAL/BEARING_ONLY/SOLUTION + tube EMPTY，
-WPN-PROG-01..04）。
+WPN-PROG-01..04）、`wire_guidance_test`（S1-07 Commit4 WireLink 放线/断切/
+命令门 + fallback 执行，WPN-WIRE-01..04）。
 
 ### S1-00 信息链热修状态（2026-09）
 

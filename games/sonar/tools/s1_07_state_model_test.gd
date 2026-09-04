@@ -52,7 +52,7 @@ func _initialize() -> void:
 	_assert_eq(fails, "SM1a mission after launch", tp.mission_state, Torpedo.MissionState.LAUNCHING)
 	_assert_eq(fails, "SM1b seeker default", tp.seeker_state, Torpedo.SeekerState.PASSIVE_LISTEN)
 	_assert_eq(fails, "SM1c active_tx default", tp.active_tx_state, Torpedo.ActiveTxState.OFF)
-	_assert_eq(fails, "SM1d wire default", tp.wire_state, Torpedo.WireState.CONNECTED)
+	_assert_eq(fails, "SM1d wire default", tp.wire_link.state, WireLink.State.CONNECTED)
 	_assert_eq(
 		fails, "SM1e guidance default", tp.guidance_authority, Torpedo.GuidanceAuthority.WIRE_ONLY
 	)

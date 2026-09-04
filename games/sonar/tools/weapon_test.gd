@@ -105,7 +105,7 @@ func _initialize() -> void:
 		fails.append("w2 passive receiver not ON by default")
 	if tp.active_tx_state != Torpedo.ActiveTxState.OFF:
 		fails.append("w2 active TX not OFF by default")
-	if tp.wire_state != Torpedo.WireState.CONNECTED:
+	if tp.wire_link.state != WireLink.State.CONNECTED:
 		fails.append("w2 wire not CONNECTED by default")
 	if tp.guidance_authority != Torpedo.GuidanceAuthority.WIRE_ONLY:
 		fails.append("w2 guidance not WIRE_ONLY by default")
