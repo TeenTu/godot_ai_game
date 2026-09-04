@@ -16,7 +16,7 @@ var highlight_evidence_id: int = -1  # P0-07.4：地图 LOB 点击 → 同 id �
 var _world: World = null
 var _get_track_bearings: Callable = Callable()
 var _lbl: Label = null
-var _rendered: int = 0
+var _last_newest_id: int = -1  # P1-10：封顶后 size 恒定，按最新 evidence_id 判定
 var _last_highlight: int = -2
 
 
@@ -42,11 +42,12 @@ func sync() -> void:
 	var evs: Array = _world.player_evidence
 	if evs.is_empty():
 		_lbl.text = "No alerts"
-		_rendered = 0
+		_last_newest_id = -1
 		return
-	if evs.size() == _rendered and highlight_evidence_id == _last_highlight:
-		return  # 无新证据且高亮未变不重排
-	_rendered = evs.size()
+	var newest: int = int(evs[evs.size() - 1].get("evidence_id", -1))
+	if newest == _last_newest_id and highlight_evidence_id == _last_highlight:
+		return  # 无新证据且高亮未变不重排（封顶后 size 恒定，比较最新 id）
+	_last_newest_id = newest
 	_last_highlight = highlight_evidence_id
 	var track_brgs: Array = []
 	if _get_track_bearings.is_valid():

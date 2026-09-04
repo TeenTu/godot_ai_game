@@ -35,6 +35,7 @@ var mean_signal_excess_db: float = -999.0
 var track_quality: float = 0.0
 var lock_quality: float = 0.0
 var depth_relation: String = ""
+var depth_band_hint: String = ""  # P1-08 配套：最新回波层带提示（垂直机动）
 var classification_match: float = 0.0  # 谱一致性 EMA（1=与首次捕获谱稳定一致）
 var source_history: Array = []  # SeekerReturn.return_id 时间线（封顶）
 
@@ -52,6 +53,8 @@ static func create() -> SeekerTrack:
 ##   bearing_smoothing(0.45) rate_smoothing(0.30) alpha_hit(0.22)
 ##   gamma_innovation(0.15) meas_se_ref_db(15.0)
 func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
+	if str(r.depth_band_hint) != "":
+		depth_band_hint = str(r.depth_band_hint)
 	var smoothing: float = float(cfg.get("bearing_smoothing", 0.45))
 	var rate_smoothing: float = float(cfg.get("rate_smoothing", 0.30))
 	var alpha: float = float(cfg.get("alpha_hit", 0.22))

@@ -110,6 +110,7 @@ var rows_by_array: Dictionary = {}
 var bb_rows: Array = []
 var nb_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values, tonals}]
 var demon_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values}]
+var waterfall_seq: int = 0  # P1-10：单调递增行序号（封顶后 UI 仍可据此刷新）
 var demon_estimate: Dictionary = {}  # {rpm_hz, rpm_sigma_hz, blades, speed_kn, speed_sigma_kn, ..}
 var classification: Dictionary = {}  # {CLASS: p} + "best"
 var detection_count: int = 0
@@ -468,6 +469,9 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			"values": demon
 		}
 	)
+	# P1-10：每新行递增单调序号（pop_front 封顶后 size 不再变化，UI 比较
+	# newest_sequence 而非数组长度，否则 600 行后瀑布永久冻结）。
+	waterfall_seq += 1
 	if bb_rows.size() > 600:
 		bb_rows.pop_front()
 		nb_rows.pop_front()

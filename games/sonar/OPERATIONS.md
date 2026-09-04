@@ -429,7 +429,12 @@ LOB 起点不随本艇机动漂移（AT-09）/ThreatTrack 时间-方位-种类�
 CANDIDATE+五正交状态逐帧行/武器卡重建保留 header+无候选 Accept 禁用+事件
 日志一行一事件/s1_combat 场景装配+SONAR_SCENARIO 选择器+UI 同配置端到端
 /搜索扫掠自当前航向连续初始化/侧栏宽度契约 300-340-420/候选摘要含
-bearing_sigma_deg，PE-01..06）。
+bearing_sigma_deg，PE-01..06）、
+`patch_f_test`（评审 Patch F：swept 引信连续碰撞+垂直门（AT-15）/瀑布与
+告警封顶后 sequence 驱动持续刷新（AT-14）/s1_combat e2e 反击链无 Truth
+泄漏（AT-17 来袭半环），PF-01..03）、
+`calibration_envelope_test`（AT-16 声学标定包线：固定 seed MC 被动/主动
+P_d(R)，R50/R90 设计区间冻结+次序关系+复现性，CAL-1..9）。
 
 ### S1-00 信息链热修状态（2026-09）
 

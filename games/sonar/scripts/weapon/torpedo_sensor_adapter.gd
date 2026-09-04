@@ -350,8 +350,19 @@ func _build_return(
 	sr.depth_relation = _depth_relation(
 		float(extra.get("contact_depth", 0.0)), float(extra.get("receiver_depth", 0.0))
 	)
+	sr.depth_band_hint = _band_hint_for(float(extra.get("contact_depth", 0.0)))
 	sr.ping_id = str(extra.get("ping_id", ""))
 	return sr
+
+
+## 深度带粗分类（P1-08 配套）：接触深度 → 最近的层带 hold（UPPER/LOWER）。
+## 只输出层带标签，不携带精确 Truth 深度；深度模型缺失时无提示。
+func _band_hint_for(contact_depth: float) -> String:
+	if depth_model == null:
+		return ""
+	var upper: float = float(depth_model.get("upper_hold_depth_m"))
+	var lower: float = float(depth_model.get("lower_hold_depth_m"))
+	return "UPPER" if contact_depth < 0.5 * (upper + lower) else "LOWER"
 
 
 ## 频带 + 落在带内的窄带谱线（不含任何 Truth 身份）。
