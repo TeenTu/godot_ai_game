@@ -2,9 +2,8 @@ class_name SonarUI
 extends Control
 ## main_ui.gd — 主 UI 装配与仿真驱动（TMA 可视化重构版）。
 ## 布局：左方位盘 | 中海图 | 右控制面板(280px) | 底部诊断区 BT/残差可切换
-##   （CLOSED/BT/RESIDUAL/SPLIT，关闭释放空间、重开保留数据）。
-## 要点：selected_track_id 只拟合选中接触；脏标记驱动重建；BT↔海图↔残差
-##   三方悬停联动；Truth 仅 Show Truth 开发开关打开时才进海图。
+##   （CLOSED/BT/RESIDUAL/SPLIT）。要点：selected_track_id 只拟合选中接触；
+## 脏标记驱动重建；BT↔海图↔残差三方悬停联动；Truth 仅 Show Truth 开关打开才进海图。
 
 const SCENARIO_NAME: String = "stage1_basic_passive"
 const PANEL_W: float = 280.0
@@ -522,9 +521,8 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		# S1-03B/03C-P1-02：条目由 TmaUiData 组装——未消歧 A/B 候选组两条都打
-		# candidate 标记，海图同权画细虚线/半透明（LR AMBIGUOUS），既不出现两条
-		# 同等级普通 LOB，也不因 branch 符号泄露真实一侧。
+		# S1-03B/03C-P1-02：未消歧 A/B 候选组两条都打 candidate，海图同权画细虚线/
+		# 半透明（LR AMBIGUOUS），不出现两条同级普通 LOB，也不因 branch 泄露真实侧。
 		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
@@ -978,8 +976,16 @@ func _on_fire_torpedo() -> void:
 		_update_status("No System Solution — Auto Fit then Accept first")
 		return
 	var own: RefCounted = world.world["own"]
-	var tp: Torpedo = world.weapons.fire(
-		system_sol, float(own.position_east_m), float(own.position_north_m), world.sim_time
+	var ws: WeaponSystem = world.weapons
+	var tp: Torpedo = (
+		ws
+		. fire(
+			system_sol,
+			float(own.position_east_m),
+			float(own.position_north_m),
+			world.sim_time,
+			float(own.depth_m),
+		)
 	)
 	if tp != null:
 		_update_status("Torpedo away (%s)" % tp.torpedo_id)
@@ -1005,9 +1011,8 @@ func _op_step() -> void:
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		# S1-03B：autocrew 可能返回 A/B 镜像组（共享 evidence）；S1-03C：整组
-		# 作为一个证据原子走 feed_evidence_group（候选集合最小角差）——一次物理
-		# 到达 = 一个 Track，不因 latest 是 sibling 而跨时刻分裂、不双计、不建第二目标。
+		# S1-03B/C：autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个
+		# 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
 		var auto_ms: Array = op.autocrew_step(world.sim_time)
 		var i2: int = 0
 		while i2 < auto_ms.size():
@@ -1159,9 +1164,8 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
-## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
-## x_value 为当前显示基准方位：as_true=false 是艇艏相对方位(-180..180)，
-## as_true=true 是真北方位(0..360)；create_mark 内部处理。
+## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。x_value 为当前
+## 显示基准方位（as_true=false 艇艏相对 -180..180 / true 真北 0..360）。
 ## S1-03C：A/B 镜像组作为"一个物理证据"整体关联——选中接触时只对选中 Track
 ## 门控，通过则原子追加整组、不通过则提示且绝不静默新建第二个接触。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:

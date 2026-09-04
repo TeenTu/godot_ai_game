@@ -86,12 +86,7 @@ func _refresh() -> void:
 		return
 	var chart_data: Array = []
 	for tp in weapons.torpedoes:
-		var state_name: String = "RUN"
-		match tp.state:
-			Torpedo.State.SEARCH:
-				state_name = "SEARCH"
-			Torpedo.State.PURSUIT:
-				state_name = "PURSUIT"
-		chart_data.append({"trail": tp.trail, "state": state_name})
+		# S1-07：任务状态（MissionState）命名；SEARCH/ATTACK 由后续 Seeker 链驱动。
+		chart_data.append({"trail": tp.trail, "state": tp.mission_state_name()})
 	chart.torpedoes = chart_data
 	chart.queue_redraw()

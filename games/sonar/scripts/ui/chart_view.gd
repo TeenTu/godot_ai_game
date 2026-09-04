@@ -699,7 +699,9 @@ func _draw_torpedoes() -> void:
 	for i in range(torpedoes.size()):
 		var tp: Dictionary = torpedoes[i]
 		var col := Color(1.0, 0.3, 0.2)
-		if str(tp.get("state", "")) == "PURSUIT":
+		# S1-07：任务层追猎/末段（ATTACK/TERMINAL，原 PURSUIT 语义）高亮为橙色。
+		var st: String = str(tp.get("state", ""))
+		if st == "ATTACK" or st == "TERMINAL" or st == "PURSUIT":
 			col = Color(1.0, 0.6, 0.1)
 		var pts: Array = tp.get("trail", [])
 		var prev: Vector2 = Vector2.ZERO
