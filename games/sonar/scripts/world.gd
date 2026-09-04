@@ -398,12 +398,19 @@ func _advance_enemy_ai(dt: float) -> void:
 	var actions: Array = enemy_ai.update(sim_time, dt, events)
 	_apply_enemy_actions(actions)
 	if enemy_weapons != null and not enemy_weapons.torpedoes.is_empty():
+		# P1-09：step 前后按稳定 ID 求差——本步内消失（DEAD/DETONATED/EXPIRED）
+		# 的鱼雷恰好一次 notify_torpedo_resolved，doctrine 在水计数正确释放
+		# （旧实现在 step 已过滤后的数组里找 dead，永远找不到 → 计数不释放）。
+		var before_ids: Dictionary = {}
+		for t in enemy_weapons.torpedoes:
+			before_ids[str(t.torpedo_id)] = true
 		enemy_weapons.step(dt, sim_time, enemy_torpedo_ctx)
+		for t in enemy_weapons.torpedoes:
+			before_ids.erase(str(t.torpedo_id))
+		if enemy_ai != null:
+			for _id in before_ids:
+				enemy_ai.notify_torpedo_resolved()
 	_sync_torpedo_shadows()
-	if enemy_weapons != null:
-		var dead: Array = enemy_weapons.torpedoes.filter(func(t): return t.is_dead())
-		for _d in dead:
-			enemy_ai.notify_torpedo_resolved()
 
 
 ## 同步双方在水鱼雷的内核影子：

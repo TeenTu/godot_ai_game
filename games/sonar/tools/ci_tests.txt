@@ -52,3 +52,5 @@ fuze_evidence_test
 weapon_ui_test
 #   s107_integrated_test    S1-07 Commit12 全流程集成：击杀链/敌方反击/seed 复现（INT-A/B/C）
 s107_integrated_test
+#   patch_a_test            评审 Patch A：敌方方位几何/鱼雷 ID 唯一/在水计数释放（PA-01..03）
+patch_a_test

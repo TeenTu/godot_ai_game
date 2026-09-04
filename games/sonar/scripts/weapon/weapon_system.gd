@@ -130,7 +130,8 @@ func fire_program(
 		weapon_event.emit("", "INVALID_PROGRAM", {"errors": errs})
 		return null
 
-	var tid: String = "T%02d" % _next_id
+	# P0-05：id_prefix 生效（玩家 "T"/敌方 "ET"），计数器各自独立 → 全局唯一。
+	var tid: String = "%s%02d" % [id_prefix, _next_id]
 	_next_id += 1
 	var tp := Torpedo.new()
 	tp.launch(tid, program, own_e, own_n, own_depth_m, sim_time)

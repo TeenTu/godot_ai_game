@@ -90,7 +90,17 @@ func sample_passive(observer: RefCounted, now: float) -> Array:
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
 		if rng.randf() >= pd:
 			continue
-		out.append(_make_evidence("PASSIVE_CONTACT", now, float(c.depth_m), se, pd, freq, ""))
+		# P0-01：真方位来自几何 bearing_to_true，绝不把目标深度当方位。
+		var true_brg: float = (
+			NavUtils
+			. bearing_to_true(
+				float(observer.position_east_m),
+				float(observer.position_north_m),
+				float(c.position_east_m),
+				float(c.position_north_m),
+			)
+		)
+		out.append(_make_evidence("PASSIVE_CONTACT", now, true_brg, se, pd, freq, ""))
 	# 误报（独立生成器，不绑定任何真实源）。
 	if false_alarm_rate > 0.0 and rng.randf() < false_alarm_rate:
 		var ev := _make_evidence("FALSE_ALARM", now, float(observer.depth_m), 0.0, 0.5, freq, "")
@@ -143,9 +153,19 @@ func intercept_events(events: Array, observer: RefCounted, now: float) -> Array:
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
 		if rng.randf() >= pd:
 			continue  # 未探测 → 无证据 → AI 行为绝不变（§9.8）
+		# P0-01：真方位来自源位置几何；src_depth 只用于跨层传播损失（上方 SE）。
+		var src_brg: float = (
+			NavUtils
+			. bearing_to_true(
+				float(observer.position_east_m),
+				float(observer.position_north_m),
+				float(src.get("e", 0.0)),
+				float(src.get("n", 0.0)),
+			)
+		)
 		out.append(
 			_make_evidence(
-				"EMISSION_INTERCEPT", now, src_depth, se, pd, freq, str(ev.get("emission_kind", ""))
+				"EMISSION_INTERCEPT", now, src_brg, se, pd, freq, str(ev.get("emission_kind", ""))
 			)
 		)
 	return out

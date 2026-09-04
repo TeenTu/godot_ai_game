@@ -277,6 +277,7 @@ godot --headless --path games/sonar --script res://tools/enemy_ai_test.gd       
 godot --headless --path games/sonar --script res://tools/fuze_evidence_test.gd       # FUZE-01..07
 godot --headless --path games/sonar --script res://tools/weapon_ui_test.gd           # UIW-01..06
 godot --headless --path games/sonar --script res://tools/s107_integrated_test.gd     # INT-A/B/C
+godot --headless --path games/sonar --script res://tools/patch_a_test.gd             # PA-01..03
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -409,7 +410,9 @@ FUZE-01..07）、`weapon_ui_test`（S1-07 Commit11 UI：在水控制台状态正
 断线禁用拒绝原因/诱饵库存禁用/告警 PROBABLE_KILL 标注且绝无 CONFIRMED 与
 target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-07 Commit12
 集成：全链击杀 INT-A/敌方反击告警+来袭雷可听 INT-B/固定 seed 复现 INT-C，
-无 UI 直读 Truth、证据无 target_id）。
+无 UI 直读 Truth、证据无 target_id）、`patch_a_test`（评审 Patch A：敌方感知
+真方位来自几何 bearing 绝不用深度冒充（深度≠方位刻意组合）/双方鱼雷 ID 前缀
+唯一（T01 vs ET01）/敌方在水计数结算释放可再反击，PA-01..03）。
 
 ### S1-00 信息链热修状态（2026-09）
 
