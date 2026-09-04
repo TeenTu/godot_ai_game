@@ -38,7 +38,7 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-8 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-9 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
@@ -145,9 +145,23 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   （return 谱线与锚点谱相似度 EMA）并以 w_c 进 score——稳定谱高、抖动假峰
   被稀释。`decoy_test` CM-01..05（发射/库存冷却寿命/同链采样/无类型泄露/
   固定 seed 拉锁复现）+ World 集成 + SPEC 谱线/分类。
-- **遗留项**（后续 Commit 9-12）：敌方感知/Doctrine、引信/伤害
-  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）、集成任务与 CI 门禁
-  （Commit 12）。
+- **Commit 9（§9，敌方随机出生/感知/Doctrine）**：新增 `scripts/ai/`——
+  `enemy_spawn_generator.gd`（§9.4 方位带 + 三角距离 + 航向分布 + 深度带权重
+  抽样；min_separation/尝试上限/fallback_spawn；独立派生 RNG 不消耗世界主
+  RNG——玩家测量流随机序列零扰动）；`enemy_sensor_adapter.gd`（§9.5/§9.6
+  内核边界：被动接触采样 + 声学事件单程截获，输出净化证据 noisy bearing/
+  时间/频带/分类假设/置信度，绝无 range/位置/target_id；未探测绝不产证据 →
+  AI 行为不变）；`enemy_track_manager.gd`（方位航迹：门限关联 + EMA + 质量
+  命中涨/无证据衰减=不确定区扩大；TORPEDO 分类告警）；`enemy_doctrine_controller.gd`
+  （§9.7 状态机 PATROL_PASSIVE→SUSPICIOUS→TRACKING→ATTACKING→EVADING→
+  REACQUIRE；§9.8 公平性：反应延迟 3..15s 绝不同 tick 反应、概率化机动/换层/
+  诱饵/反击、命令值接口限速率、BEARING_ONLY 宽扇区反击无隐藏距离）。World：
+  场景 `enemy_spawn` 块装配（旧场景零行为变化）；敌方鱼雷独立 WeaponSystem+
+  TorpedoContext（seeker 声源=本艇+蓝方诱饵）；双方鱼雷内核影子互听（玩家
+  声呐可听到来袭鱼雷，敌方感知"来袭鱼雷"证据源）。`enemy_ai_test` AI-01..09
+  + World 集成。
+- **遗留项**（后续 Commit 10-12）：引信/伤害净化反馈（Commit 10）、
+  完整深度条/告警/在水控制 UI（Commit 11）、集成任务与 CI 门禁（Commit 12）。
 
 ---
 

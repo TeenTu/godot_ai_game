@@ -44,3 +44,5 @@ torpedo_acoustic_test
 torpedo_seeker_test
 torpedo_track_test
 decoy_test
+#   enemy_ai_test           S1-07 Commit9 敌方随机出生/感知/Doctrine/反击/规避（AI-01..09）
+enemy_ai_test
