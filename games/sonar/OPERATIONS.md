@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-4 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-5 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -269,6 +269,7 @@ godot --headless --path games/sonar --script res://tools/weapon_program_test.gd 
 godot --headless --path games/sonar --script res://tools/s1_07_state_model_test.gd  # SM1-SM7
 godot --headless --path games/sonar --script res://tools/depth_layer_test.gd        # D1-D7
 godot --headless --path games/sonar --script res://tools/wire_guidance_test.gd      # WPN-WIRE-01..04
+godot --headless --path games/sonar --script res://tools/torpedo_acoustic_test.gd    # WPN-ACOU-01..03
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -277,6 +278,16 @@ main_ui 收到 `fire_requested` 后用自身 own 位置执行发射，面板不�
 WireLink（`scripts/weapon/wire_link.gd`）：放线按鱼雷速度累计、超长确定性
 BROKEN（首版不用随机断线）、玩家可 CUT_WIRE；断/切后线控命令拒绝并在 UI 说明
 原因（In-water console 属 Commit 11，控制 API 本批已完备）。
+
+Commit 5 声学层（§6.1/§6.2/§9.1/§9.2）：`TorpedoAcousticProfile` 把速度模式
+映射到速度/续航/运行噪声源级（QUIET 28kn/1800s/112dB < CRUISE 40kn/1200s/
+128dB < HIGH 50kn/800s/146dB）+ 主动收发参数 + 出管/动力启动瞬态；
+`command_speed_mode` 切模式按续航比等比折算剩余燃料（HIGH 更快烧完）。
+`AcousticEmissionBus` 统一声学事件：本艇主动 Ping / 鱼雷出管瞬态 / 动力启动 /
+运行噪声（按模式源级周期广播）/ 主动 Ping（按 profile 节拍）都落
+`emission_bus.record`；`World.active_emissions`（S1-04C 契约）是总线事件数组的
+同一引用，旧读方零改动。事件只带内部 emitter 引用、绝不携带 target_id/Truth；
+截获 SE/Pd 与玩家声呐同源（连续概率、非硬门限）。
 
 ---
 
@@ -307,7 +318,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 16 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 17 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -318,7 +329,9 @@ done < games/sonar/tools/ci_tests.txt
 （S1-07A 双层深度 + 跨层 TL + 场景集成，D1-D7）、`weapon_program_test`
 （S1-07 Commit3 发射模式 MANUAL/BEARING_ONLY/SOLUTION + tube EMPTY，
 WPN-PROG-01..04）、`wire_guidance_test`（S1-07 Commit4 WireLink 放线/断切/
-命令门 + fallback 执行，WPN-WIRE-01..04）。
+命令门 + fallback 执行，WPN-WIRE-01..04）、`torpedo_acoustic_test`（S1-07
+Commit5 声学画像模式表/燃料折算 + EmissionBus 出管/动力启动/运行噪声/主动
+Ping 事件与截获概率，WPN-ACOU-01..03）。
 
 ### S1-00 信息链热修状态（2026-09）
 

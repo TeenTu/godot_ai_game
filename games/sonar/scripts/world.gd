@@ -46,11 +46,12 @@ var ping_hardware: bool = false  # 场景显式配置主动阵才为 true
 # 未声明 = 全向 (0..360) 无盲区（旧行为）。issue_ping 只在发射时刻扇区内登记回波。
 var ping_coverage_sector: Vector2 = Vector2(0, 360)
 var ping_baffle_sector: Vector2 = Vector2(0, 0)
-# ---- S1-04C-REQ-05 主动暴露事件 ----
-# 每次显式发射记录一条 ActiveEmissionEvent（本艇发射事实，非目标 Truth）：
-#   {emitter_internal_ref, emit_time, source_position_internal:{e,n},
-#    center_frequency_hz, bandwidth_hz, source_level_db, pulse_duration_s}
-# 阶段一只记录事件供敌方被动截获判定/审计使用（完整敌方行为 S2-05 接入）。
+# ---- S1-04C-REQ-05 / S1-07 §9.1 声学事件 ----
+# 每次显式发射记录一条 AcousticEmissionEvent（本艇发射事实，非目标 Truth）。
+# Commit 5：统一经 emission_bus 落事件（含 PLATFORM_ACTIVE_PING 与鱼雷各阶段
+# 声源）；active_emissions 为总线事件数组的兼容视图（S1-04C 读方不变）。
+# 敌方感知层只消费净化后样本（完整敌方行为 Commit 9 接入）。
+var emission_bus: AcousticEmissionBus = null
 var active_emissions: Array = []
 
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
@@ -77,6 +78,12 @@ func load_scenario(scenario: Dictionary) -> void:
 	torpedo_ctx = TorpedoContext.new()
 	torpedo_ctx.env = world.get("env", null)
 	torpedo_ctx.depth_model = world.get("depth_model", null)
+	# S1-07 §9.1（Commit 5）：通用声学事件总线。active_emissions 是该总线事件
+	# 数组的兼容视图（同一数组实例），S1-04C 读方（R22 等）无需改动。
+	emission_bus = AcousticEmissionBus.new()
+	active_emissions = emission_bus.events
+	weapons.emission_bus = emission_bus
+	torpedo_ctx.emission_bus = emission_bus
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -108,7 +115,8 @@ func load_scenario(scenario: Dictionary) -> void:
 	_ping_session = {}
 	_ping_results.clear()
 	_next_ping_id = 1
-	active_emissions.clear()
+	if emission_bus != null:
+		emission_bus.clear()
 
 
 ## 推进内部仿真时间 dt（秒）。dt 已由上层按 time_scale 折算。
@@ -336,23 +344,16 @@ func issue_ping() -> bool:
 		"sensor": sensor,
 	}
 	_next_ping_id += 1
-	# REQ-05：发射成功记录 ActiveEmissionEvent（本艇发射事实）。
+	# REQ-05 / §9.1：发射成功记录声学事件（PLATFORM_ACTIVE_PING，含深度）。
 	(
-		active_emissions
-		. append(
-			{
-				"emitter_internal_ref": "own",
-				"emit_time": sim_time,
-				"source_position_internal":
-				{
-					"e": own.position_east_m,
-					"n": own.position_north_m,
-				},
-				"center_frequency_hz": ping_center_freq_hz(),
-				"bandwidth_hz": _ping_bandwidth_hz(),
-				"source_level_db": ping_sl_db,
-				"pulse_duration_s": ping_pulse_duration_s,
-			}
+		emission_bus
+		. record_platform_active_ping(
+			sim_time,
+			Vector3(own.position_east_m, own.position_north_m, own.depth_m),
+			ping_center_freq_hz(),
+			_ping_bandwidth_hz(),
+			ping_sl_db,
+			ping_pulse_duration_s,
 		)
 	)
 	return true

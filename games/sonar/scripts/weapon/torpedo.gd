@@ -35,18 +35,16 @@ enum GuidanceAuthority { WIRE_ONLY, ASSISTED, AUTONOMOUS }
 enum DepthState { HOLDING_UPPER, DIVING, HOLDING_LOWER, CLIMBING }
 enum FuzeState { SAFE, ARMED, TRIGGERED, INERT }
 
-# 速度/续航按 speed_mode（占位标定，Commit 5 TorpedoAcousticProfile 外部化
-# 时替换；本批先保证"模式同时改速度与续航"，不单改地图速度）。
-const SPEED_KN_BY_MODE := {"QUIET": 28.0, "CRUISE": 40.0, "HIGH": 50.0}
-const ENDURANCE_S_BY_MODE := {"QUIET": 1800.0, "CRUISE": 1200.0, "HIGH": 800.0}
+# 速度/续航/运行噪声源级由 TorpedoAcousticProfile 承载（Commit 5，§6.2：
+# 速度模式同时改变速度/噪声/续航，绝不单改地图速度）。
+const RUNNING_NOISE_CADENCE_S: float = 1.0
 const DEFAULT_TURN_RATE_DEG_S: float = 6.0
 const LAUNCH_TRANSITION_S: float = 1.0
 # 深度带占位 hold 深度（Commit 2 起由 DepthLayerModel 配置覆盖）。
 const DEFAULT_UPPER_HOLD_DEPTH_M: float = 70.0
 const DEFAULT_LOWER_HOLD_DEPTH_M: float = 180.0
-# 主动发射机占位节拍（Commit 5/6 接入真实 PingSession/回波前只走状态机）。
-const ACTIVE_PULSE_S: float = 0.5
-const ACTIVE_PING_INTERVAL_S: float = 8.0
+# 主动发射机节拍由 TorpedoAcousticProfile.active_pulse_duration_s /
+# active_ping_interval_s 提供（Commit 5 起）；PingSession/回波 TOF 为 Commit 6 链。
 
 var torpedo_id: String = ""
 var program: WeaponProgram = null
@@ -64,8 +62,11 @@ var wire_link: WireLink = WireLink.new()
 var pos_east_m: float = 0.0
 var pos_north_m: float = 0.0
 var course_deg: float = 0.0
-var speed_kn: float = SPEED_KN_BY_MODE["CRUISE"]
-var fuel_left_s: float = ENDURANCE_S_BY_MODE["CRUISE"]
+# Commit 5：声学画像（速度/续航/自噪声/主动参数）与当前速度模式。
+var acoustic_profile: TorpedoAcousticProfile = TorpedoAcousticProfile.make_default()
+var speed_mode: int = WeaponProgram.SpeedMode.CRUISE
+var speed_kn: float = 40.0
+var fuel_left_s: float = 1200.0
 var traveled_m: float = 0.0
 
 # 深度（S1-07A 双层伪三维，Commit 2 接连续升降）：命令与实际分离，禁止瞬移
@@ -89,6 +90,9 @@ var _tx_cycle_s: float = 0.0
 var _tx_manual_armed: bool = false
 var _depth_model: RefCounted = null  # DepthLayerModel（Commit 2 由 ctx 注入）
 var _fallback_active: bool = false
+# Commit 5：ctx 注入的声学事件总线（null=无总线，如直接单测不发射）。
+var _emission_bus: AcousticEmissionBus = null
+var _noise_timer_s: float = 0.0
 
 
 ## 发射：装入 WeaponProgram 快照并进入 LAUNCHING。from_depth = 发射平台深度。
@@ -110,12 +114,16 @@ func launch(
 	_fallback_active = false
 	command_log.clear()
 	wire_link.reset()
+	_noise_timer_s = 0.0
 	if program != null:
 		wire_link.enabled = program.wire_guidance_enabled
 		guidance_authority = program.guidance_authority
+		# Commit 5：速度/续航来自声学画像（§6.2 模式同时改速度与续航）。
+		acoustic_profile = TorpedoAcousticProfile.make_default()
 		var sm: String = WeaponProgram.speed_mode_name(program.speed_mode)
-		speed_kn = float(SPEED_KN_BY_MODE.get(sm, SPEED_KN_BY_MODE["CRUISE"]))
-		fuel_left_s = float(ENDURANCE_S_BY_MODE.get(sm, ENDURANCE_S_BY_MODE["CRUISE"]))
+		speed_mode = program.speed_mode
+		speed_kn = acoustic_profile.speed_kn(sm)
+		fuel_left_s = acoustic_profile.endurance_s(sm)
 		course_deg = NavUtils.wrap360(program.initial_course_deg)
 		commanded_depth_band = program.initial_depth_band
 		if program.active_enable_mode == WeaponProgram.ActiveEnableMode.IMMEDIATE:
@@ -190,12 +198,23 @@ func command_course(deg: float) -> bool:
 	return true
 
 
+## 速度模式命令（§6.2，Commit 5）：模式同时改速度与续航——切模式时按
+## 新旧模式续航比等比折算剩余燃料（HIGH 更快烧完，QUIET 更省），并更新
+## 运行噪声源级（由 acoustic_profile 派生，_emit_running_noise 消费）。
 func command_speed_mode(mode: int) -> bool:
 	if not _wire_accepts_command():
 		return false
-	var sm: String = WeaponProgram.speed_mode_name(mode)
-	speed_kn = float(SPEED_KN_BY_MODE.get(sm, speed_kn))
-	_log_command("SET_SPEED_MODE", {"mode": sm})
+	if mode == speed_mode:
+		return true
+	var old_name: String = WeaponProgram.speed_mode_name(speed_mode)
+	var new_name: String = WeaponProgram.speed_mode_name(mode)
+	var old_end: float = acoustic_profile.endurance_s(old_name)
+	var new_end: float = acoustic_profile.endurance_s(new_name)
+	if old_end > 0.0:
+		fuel_left_s = fuel_left_s * new_end / old_end
+	speed_kn = acoustic_profile.speed_kn(new_name)
+	speed_mode = mode
+	_log_command("SET_SPEED_MODE", {"mode": new_name})
 	return true
 
 
@@ -361,6 +380,7 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 		return true
 
 	fired_event = fired_event or _advance_mission(dt, sim_time)
+	_advance_running_noise(dt)
 	fired_event = fired_event or _advance_fallback_autonomy()
 	fired_event = fired_event or _advance_fuze()
 	fired_event = fired_event or _advance_active_tx(dt)
@@ -383,6 +403,9 @@ func _bind_ctx(ctx: RefCounted) -> void:
 		return
 	if ctx.depth_model != null:
 		_depth_model = ctx.depth_model
+	# Commit 5：声学事件总线（null=无总线，跳过声源广播）。
+	if ctx.emission_bus != null:
+		_emission_bus = ctx.emission_bus
 
 
 func _advance_mission(dt: float, sim_time: float) -> bool:
@@ -391,6 +414,8 @@ func _advance_mission(dt: float, sim_time: float) -> bool:
 			if sim_time - _launch_t >= LAUNCH_TRANSITION_S:
 				mission_state = MissionState.WIRE_RUN
 				event_occurred.emit(torpedo_id, "WIRE_RUN", {"course_deg": course_deg})
+				# §9.2：动力启动瞬态（一次）。出管瞬态由 WeaponSystem.fire 记录。
+				_emit_motor_start()
 				return true
 		MissionState.WIRE_RUN, MissionState.SEARCH, MissionState.ATTACK, MissionState.TERMINAL:
 			# 航向按最大转向率逼近命令航向（WIRE_ONLY 下 Seeker 不得擅自转向；
@@ -417,11 +442,9 @@ func _advance_fuze() -> bool:
 	return false
 
 
-## 主动发射机状态机（占位：Commit 5/6 接 AcousticEmissionBus + PingSession，
-## 本批按程序/fallback 触发条件走 OFF→WAITING_TRIGGER→PINGING→COOLDOWN）。
-## Commit 4：OFF 也能按程序化触发条件（DISTANCE/TIME/IMMEDIATE）自动进入
-## WAITING_TRIGGER——fallback 的"按预设条件开启 active TX"（§5.5）由此生效；
-## MANUAL 模式仍只由玩家线控命令（set_active_tx(true)）开启。
+## 主动发射机状态机（Commit 5：PingSession 前占位；节拍由 acoustic_profile
+## active_pulse_duration_s / active_ping_interval_s 提供）。每次进入 PINGING
+## 记录一条 TORPEDO_ACTIVE_PING 声学事件（§9.1，可被被动阵概率截获）。
 func _advance_active_tx(dt: float) -> bool:
 	var fired_event: bool = false
 	if active_tx_state == ActiveTxState.OFF:
@@ -430,20 +453,22 @@ func _advance_active_tx(dt: float) -> bool:
 	elif active_tx_state == ActiveTxState.WAITING_TRIGGER:
 		if _tx_trigger_met():
 			active_tx_state = ActiveTxState.PINGING
-			_tx_cycle_s = ACTIVE_PULSE_S
+			_tx_cycle_s = acoustic_profile.active_pulse_duration_s
 			event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {})
+			_emit_active_ping()
 			fired_event = true
 	elif active_tx_state == ActiveTxState.PINGING:
 		_tx_cycle_s -= dt
 		if _tx_cycle_s <= 0.0:
 			active_tx_state = ActiveTxState.COOLDOWN
-			_tx_cycle_s = ACTIVE_PING_INTERVAL_S
+			_tx_cycle_s = acoustic_profile.active_ping_interval_s
 	elif active_tx_state == ActiveTxState.COOLDOWN:
 		_tx_cycle_s -= dt
 		if _tx_cycle_s <= 0.0:
 			active_tx_state = ActiveTxState.PINGING
-			_tx_cycle_s = ACTIVE_PULSE_S
+			_tx_cycle_s = acoustic_profile.active_pulse_duration_s
 			event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {})
+			_emit_active_ping()
 			fired_event = true
 	return fired_event
 
@@ -471,6 +496,85 @@ func _tx_program_trigger_met() -> bool:
 
 func _tx_trigger_met() -> bool:
 	return _tx_manual_armed or _tx_program_trigger_met()
+
+
+## ---- 声学事件广播（§9.2，Commit 5）----
+## 记录进 ctx 注入的 AcousticEmissionBus；无总线（直接单测 ctx=null）时跳过。
+## 事件只带 torpedo_id 与自身状态/位置，绝不含任何目标 Truth / target_id。
+
+
+## 动力启动瞬态（出管后进入 WIRE_RUN 时一次）。
+func _emit_motor_start() -> void:
+	if _emission_bus == null:
+		return
+	var t: Dictionary = acoustic_profile.motor_start_transient
+	(
+		_emission_bus
+		. record(
+			AcousticEmissionEvent.TORPEDO_MOTOR_START,
+			torpedo_id,
+			_sim_time,
+			Vector3(pos_east_m, pos_north_m, actual_depth_m),
+			float(t.get("center_frequency_hz", 800.0)),
+			float(t.get("bandwidth_hz", 4000.0)),
+			float(t.get("sl_db", 158.0)),
+			float(t.get("duration_s", 1.5)),
+		)
+	)
+
+
+## 主动 Ping（每次进入 PINGING 记录；TOF/回波由 Commit 6 PingSession 消费）。
+func _emit_active_ping() -> void:
+	if _emission_bus == null:
+		return
+	(
+		_emission_bus
+		. record(
+			AcousticEmissionEvent.TORPEDO_ACTIVE_PING,
+			torpedo_id,
+			_sim_time,
+			Vector3(pos_east_m, pos_north_m, actual_depth_m),
+			acoustic_profile.active_center_frequency_hz,
+			acoustic_profile.active_bandwidth_hz,
+			acoustic_profile.active_source_level_db,
+			acoustic_profile.active_pulse_duration_s,
+		)
+	)
+
+
+## 航行噪声（持续声源）：按 RUNNING_NOISE_CADENCE_S 周期性广播，源级随速度
+## 模式（§6.2：HIGH 更响）。事件 duration = 本次发射代表的一段时间。
+func _advance_running_noise(dt: float) -> void:
+	if _emission_bus == null:
+		return
+	if (
+		mission_state != MissionState.WIRE_RUN
+		and mission_state != MissionState.SEARCH
+		and mission_state != MissionState.ATTACK
+		and mission_state != MissionState.TERMINAL
+	):
+		return
+	_noise_timer_s -= dt
+	if _noise_timer_s > 0.0:
+		return
+	_noise_timer_s = RUNNING_NOISE_CADENCE_S
+	var sm: String = WeaponProgram.speed_mode_name(speed_mode)
+	var band: Vector2 = acoustic_profile.running_noise_band_hz()
+	var center: float = 0.5 * (band.x + band.y)
+	var bw: float = maxf(band.y - band.x, 1.0)
+	(
+		_emission_bus
+		. record(
+			AcousticEmissionEvent.TORPEDO_RUNNING_NOISE,
+			torpedo_id,
+			_sim_time,
+			Vector3(pos_east_m, pos_north_m, actual_depth_m),
+			center,
+			bw,
+			acoustic_profile.own_noise_sl_db(sm),
+			RUNNING_NOISE_CADENCE_S,
+		)
+	)
 
 
 ## 放线推进（§5.4，Commit 4）：在水运行段按鱼雷速度累计放线长；超长且
