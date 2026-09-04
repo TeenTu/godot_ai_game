@@ -419,7 +419,12 @@ target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-0
 /WIRE_ONLY 不 ATTACK/主动链 ping_id+FOV 门+NO_RETURN 完成，PB-01..07）、
 `patch_c_test`（评审 Patch C：统一声场 UI 路径可探测鱼雷+已探测样本显示下限/
 谱线逐线声学净化不复制 Truth/主动回波反射历元一致+timestamp/available_time/
-己方声源 OWN token 资格拒绝+引信独立安全保险，PC-01..05）。
+己方声源 OWN token 资格拒绝+引信独立安全保险，PC-01..05）、
+`patch_d_test`（评审 Patch D：威胁证据观察点快照+evidence_kind+available_time
+LOB 起点不随本艇机动漂移（AT-09）/ThreatTrack 时间-方位-种类升级链关联抑制
+告警洪泛/SeekerBeamState 扇区单一真源+适配器被动与主动门边界内外与正后行为
+（AT-19）/海图真实 torpedo_id+tx_state 驱动脉冲+真实 ±σ+命中测试与 auto_frame
+/证据与 track 无 Truth 泄漏，PD-01..05）。
 
 ### S1-00 信息链热修状态（2026-09）
 

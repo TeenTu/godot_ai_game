@@ -58,3 +58,5 @@ patch_a_test
 patch_b_test
 #   patch_c_test            评审 Patch C：统一声场/显示下限/谱线净化/回波历元/己方安全（PC-01..05）
 patch_c_test
+#   patch_d_test            评审 Patch D：威胁证据/ThreatTrack/扇区单一真源/地图鱼雷指示（PD-01..05）
+patch_d_test

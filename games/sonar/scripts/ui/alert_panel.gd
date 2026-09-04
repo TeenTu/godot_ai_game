@@ -11,10 +11,13 @@ extends VBoxContainer
 
 const MAX_ROWS: int = 6
 
+var highlight_evidence_id: int = -1  # P0-07.4：地图 LOB 点击 → 同 id 高亮
+
 var _world: World = null
 var _get_track_bearings: Callable = Callable()
 var _lbl: Label = null
 var _rendered: int = 0
+var _last_highlight: int = -2
 
 
 func _init() -> void:
@@ -41,9 +44,10 @@ func sync() -> void:
 		_lbl.text = "No alerts"
 		_rendered = 0
 		return
-	if evs.size() == _rendered:
-		return  # 无新证据不重排
+	if evs.size() == _rendered and highlight_evidence_id == _last_highlight:
+		return  # 无新证据且高亮未变不重排
 	_rendered = evs.size()
+	_last_highlight = highlight_evidence_id
 	var track_brgs: Array = []
 	if _get_track_bearings.is_valid():
 		track_brgs = _get_track_bearings.call()
@@ -64,5 +68,8 @@ func sync() -> void:
 		if e.has("bearing_deg"):
 			line += " brg %03.0f°" % float(e["bearing_deg"])
 		line += " conf %d%%" % int(100.0 * float(e.get("confidence", 0.0)))
+		# P0-07.4：地图选中的证据行加前缀高亮。
+		if int(e.get("evidence_id", -1)) == highlight_evidence_id:
+			line = "> " + line + " <"
 		lines.append(line)
 	_lbl.text = "\n".join(lines)

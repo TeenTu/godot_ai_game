@@ -1,9 +1,7 @@
 class_name SonarUI
 extends Control
-## main_ui.gd — 主 UI 装配与仿真驱动（TMA 可视化重构版）。
-## 布局：左方位盘 | 中海图 | 右控制面板(280px) | 底部诊断区 BT/残差可切换
-##   （CLOSED/BT/RESIDUAL/SPLIT）。要点：selected_track_id 只拟合选中接触；
-## 脏标记驱动重建；BT↔海图↔残差三方悬停联动；Truth 仅 Show Truth 开关打开才进海图。
+## main_ui.gd — 主 UI 装配与仿真驱动。selected_track_id 只拟合选中接触；
+## 脏标记驱动重建；BT↔海图↔残差联动；Truth 仅 Show Truth 打开才进海图。
 
 const SCENARIO_NAME: String = "stage1_basic_passive"
 const PANEL_W: float = 280.0
@@ -94,9 +92,7 @@ func _ready() -> void:
 	_ping_ctrl.tracker = tracker
 	_ping_ctrl.on_status = _update_status
 	_ping_ctrl.on_dirty = func(): _dirty = true
-	# S1-04B/S1-04C：回波命中已喂 Tracker → 选中该接触；是否 REFIT 由
-	# REQ-02 fit_mode 裁决（AUTO 经 on_fit_requested 回调驱动，ASSISTED 等
-	# Apply，MANUAL 只入 Track）——不在此无条件自动拟合。
+	# 回波命中已喂 Tracker；是否 REFIT 由 REQ-02 fit_mode 裁决（不自动拟合）。
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
 	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
 	# S1-04C：撤销一次自动关联后刷新视图（REFIT REQUIRED 语义）。
@@ -162,6 +158,7 @@ func _build_ui() -> void:
 	_chart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_chart.tick_selected.connect(_on_tick_selected)
+	_chart.threat_selected.connect(_on_threat_selected)
 	main_row.add_child(_chart)
 	# §11.4 侧边深度条（Surface/层带/Bot + OWN/TK/DCY 标记）。
 	_depth_bar = DepthBandDisplay.new()
@@ -429,7 +426,6 @@ func _apply_diag_mode() -> void:
 	queue_redraw()
 
 
-## 供面板控件调用：设置诊断区显示模式。
 func _set_diag_mode(mode: int) -> void:
 	_diag_mode = mode
 	_apply_diag_mode()
@@ -479,6 +475,7 @@ func _process(delta: float) -> void:
 	if _dirty:
 		_rebuild_display_data()
 	if _weapon_panel != null:
+		_weapon_panel.now_time = world.sim_time
 		_weapon_panel.refresh()
 	if _in_water_panel != null:
 		_in_water_panel.sync()
@@ -530,8 +527,7 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		# S1-03B/03C-P1-02：未消歧 A/B 候选组两条都打 candidate，海图同权画细虚线/
-		# 半透明（LR AMBIGUOUS），不出现两条同级普通 LOB，也不因 branch 泄露真实侧。
+		# S1-03B/03C-P1-02：未消歧 A/B 候选组同权弱化，不因 branch 泄露侧别。
 		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
@@ -586,8 +582,7 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图（REQ-06 单位分离：喂全量残差行，plot 内部 deg 视图只画
-	# bearing 行、m 视图只画 range 行、σ 视图共用归一化；σ 参考线按通道对齐）
+	# 3) 残差图（REQ-06 单位分离：全量残差行，视图切换在 plot 内部）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
 		res = last_fit.get("residuals", [])
@@ -638,6 +633,8 @@ func _selected_track() -> Track:
 
 func _update_displays_light() -> void:
 	var own: TruthEntity = world.world["own"]
+	_chart.now_time = world.sim_time
+	_chart.set_threat_evidence(world.player_evidence, world.sim_time)
 	_chart.own_pos = Vector2(own.position_east_m, own.position_north_m)
 	_chart.own_course_deg = own.course_deg  # S1-01.4：本艇符号随实际艏向旋转
 	_chart.own_track = _own_track_cache()
@@ -808,9 +805,13 @@ func _on_hover_changed(time: float) -> void:
 
 
 func _on_tick_selected(time: float) -> void:
-	# 时间刻度点击 → 残差图高亮对应测量
-	_res_plot.set_highlight(time)
+	_res_plot.set_highlight(time)  # 时间刻度点击 → 残差图高亮
 	_res_plot.queue_redraw()
+
+
+func _on_threat_selected(evidence_id: int) -> void:
+	if _alert_panel != null:  # 地图 LOB 点击 → 告警卡高亮（反向联动属 Patch E）
+		_alert_panel.highlight_evidence_id = evidence_id
 
 
 func _on_pause() -> void:
