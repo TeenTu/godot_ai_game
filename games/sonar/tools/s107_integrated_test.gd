@@ -167,8 +167,10 @@ func _mk_kill_world() -> World:
 		"range_min_m": 2500.0,
 		"range_mode_m": 2700.0,
 		"range_max_m": 3000.0,
-		"speed_min_kn": 4.0,
-		"speed_max_kn": 6.0,
+		# 静止靶：击杀链场景意图 = 全链路贯通，对 P1-07 回波历元语义稳健
+		# （移动靶的微小几何扰动会把 15m 触发半径的最近通过推出阈值）。
+		"speed_min_kn": 0.0,
+		"speed_max_kn": 0.0,
 		"min_separation_m": 1000.0,
 		"max_generation_attempts": 50,
 		"fallback_spawn":
@@ -176,7 +178,7 @@ func _mk_kill_world() -> World:
 			"position_east_m": sin(b) * 2500.0,
 			"position_north_m": cos(b) * 2500.0,
 			"course_deg": 225.0,
-			"speed_kn": 5.0,
+			"speed_kn": 0.0,
 			"depth_m": 70.0
 		},
 		"acoustic": {"broadband_base_level_db": 160.0},

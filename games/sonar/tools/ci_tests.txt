@@ -56,3 +56,5 @@ s107_integrated_test
 patch_a_test
 #   patch_b_test            评审 Patch B：alpha-beta 滤波/一对一关联/状态机/主动链（PB-01..07）
 patch_b_test
+#   patch_c_test            评审 Patch C：统一声场/显示下限/谱线净化/回波历元/己方安全（PC-01..05）
+patch_c_test

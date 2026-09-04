@@ -39,6 +39,9 @@ var source_kind_hypotheses: Array = []
 var debug_truth_ref: String = ""
 # P0-09：主动链传播——ACTIVE return 携带产生它的 ping_id（同 id 串联）。
 var ping_id: String = ""
+# P1-12：内核边界 source token（OWN/HOSTILE/FRIENDLY）——资格与安全过滤用，
+# 绝不含 Truth 身份/位置；UI 侧只可见分类/安全原因。
+var source_token: String = ""
 
 
 ## 序列化结果（UI/日志/净水管线消费）。只含 §6.5 玩法字段，

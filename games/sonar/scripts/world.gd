@@ -107,7 +107,9 @@ var _enemy_perception_acs: Dictionary = {}
 # CONFIRMED KILL（§10.4）。
 var _detonations: Array = []  # 内核 Debrief 记录（含 internal target 引用）
 var _fuze_min_pass: Dictionary = {}  # torpedo_id -> 最近通过距离（内核台账）
-var _fuze_alive: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
+var _fuze_alive: Dictionary = {}
+# P1-12.4：引信安全保险闩（每雷一次 INHIBIT 事件）。
+var _fuze_safety_latched: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
 
 
 ## 从场景 JSON 构建并初始化世界。
@@ -133,12 +135,18 @@ func load_scenario(scenario: Dictionary) -> void:
 	adapter.env = world.get("env", null)
 	adapter.depth_model = world.get("depth_model", null)
 	adapter.rng = world.get("rng", null)
-	# Commit 8：武器侧采样声源 = targets + 活动诱饵（合成数组，独立实例）。
-	_weapon_contacts = []
+	# Commit 8：武器侧采样声源 = 本艇 + targets + 活动诱饵（合成数组，独立
+	# 实例）。P0-06/P1-12：本艇是真实声源（seeker 可采样到 OWN return，由
+	# torpedo 侧资格过滤拒绝）；contact_tokens 为内核边界安全过滤数据。
+	var own_ref: TruthEntity = world["own"]
+	_weapon_contacts = [own_ref]
 	for t in world.get("targets", []):
 		_weapon_contacts.append(t)
 	adapter.contacts = _weapon_contacts
 	adapter.contact_acs = world.get("target_acs", {})
+	adapter.contact_tokens = {str(own_ref.id): "OWN"}
+	for t2 in world.get("targets", []):
+		adapter.contact_tokens[str(t2.id)] = "HOSTILE"
 	torpedo_ctx.sensor_adapter = adapter
 	# Commit 8（§8.1）：玩家反制发射器（场景 own_ship.countermeasures 可覆盖）。
 	countermeasures = CountermeasureSystem.new()
@@ -256,6 +264,8 @@ func _advance_decoys(dt: float) -> void:
 		var just_activated: bool = d.step(dt)
 		if just_activated:
 			_weapon_contacts.append(d)
+			if torpedo_ctx != null and torpedo_ctx.sensor_adapter != null:
+				torpedo_ctx.sensor_adapter.contact_tokens[str(d.id)] = "FRIENDLY"
 			if emission_bus != null:
 				var ac: RefCounted = d.signature_ac
 				var sl: float = 160.0
@@ -279,6 +289,8 @@ func _advance_decoys(dt: float) -> void:
 	for d in expired:
 		decoys.erase(d)
 		_weapon_contacts.erase(d)
+		if torpedo_ctx != null and torpedo_ctx.sensor_adapter != null:
+			torpedo_ctx.sensor_adapter.contact_tokens.erase(str(d.id))
 
 
 ## 玩家发射诱饵（§8.5）：发射器库存/冷却/程序合法性校验；诱饵先进入活动
@@ -474,16 +486,46 @@ func _rebuild_enemy_contacts() -> void:
 	var own: TruthEntity = world["own"]
 	_enemy_perception_contacts.append(own)
 	_enemy_perception_acs[str(own.id)] = world.get("own_ac", null)
+	var e_tokens: Dictionary = {str(own.id): "HOSTILE"}
 	for s in _player_torpedo_shadows:
 		_enemy_perception_contacts.append(s)
+		e_tokens[str(s.id)] = "HOSTILE"
 		if _player_shadow_acs.has(str(s.id)):
 			_enemy_perception_acs[str(s.id)] = _player_shadow_acs[str(s.id)]
 	for d in decoys:
 		if str(d.side) == enemy_side:
 			continue
 		_enemy_perception_contacts.append(d)
+		e_tokens[str(d.id)] = "FRIENDLY"
 		if d.signature_ac != null:
 			_enemy_perception_acs[str(d.id)] = d.signature_ac
+	if enemy_torpedo_ctx != null and enemy_torpedo_ctx.sensor_adapter != null:
+		enemy_torpedo_ctx.sensor_adapter.contact_tokens = e_tokens
+
+
+## P0-06 统一声场（内核侧注册表快照）：双方在水鱼雷影子 + 活动诱饵。
+## Truth 几何只在本边界内；OperatorSonar/UI 仅消费净化派生（峰/证据）。
+func _acoustic_scene_emitters() -> Array:
+	var out: Array = []
+	for sh in _enemy_torpedo_shadows:
+		out.append(sh)
+	for sh in _player_torpedo_shadows:
+		out.append(sh)
+	for d in decoys:
+		out.append(d)
+	return out
+
+
+func _acoustic_scene_acs() -> Dictionary:
+	var out: Dictionary = {}
+	for k in _enemy_shadow_acs:
+		out[k] = _enemy_shadow_acs[k]
+	for k in _player_shadow_acs:
+		out[k] = _player_shadow_acs[k]
+	for d in decoys:
+		if d.signature_ac != null:
+			out[str(d.id)] = d.signature_ac
+	return out
 
 
 ## 执行 Doctrine 动作（World 是执行者；AI 本体只写命令值与返回动作）。
@@ -994,6 +1036,29 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 			tp.fuze_state = tp.FuzeState.ARMED
 			tp.event_occurred.emit(tp.torpedo_id, "FUZE_ARMED", {"traveled_m": tp.traveled_m})
 		return
+	# P1-12.4：引信独立安全保险（independent safety inhibit）——与 seeker
+	# 过滤互相独立：即使资格层漏过滤，引信对发射方本侧平台也绝不起爆。
+	var safety_c: RefCounted = null
+	if from_player:
+		safety_c = world["own"]
+	elif enemy_ai != null:
+		safety_c = enemy_ai.entity
+	if safety_c != null:
+		var sd: float = (
+			NavUtils
+			. distance(
+				tp.pos_east_m,
+				tp.pos_north_m,
+				float(safety_c.position_east_m),
+				float(safety_c.position_north_m),
+			)
+		)
+		if sd <= fc.trigger_radius_m():
+			var tid2: String = str(tp.torpedo_id)
+			if not _fuze_safety_latched.has(tid2):
+				_fuze_safety_latched[tid2] = true
+				tp.event_occurred.emit(tid2, "FUZE_SAFETY_INHIBIT", {"reason": "OWN_SIDE"})
+			return
 	# 几何触发判定。
 	var res: Dictionary = fc.check_trigger(tp, contacts)
 	if not bool(res["triggered"]):

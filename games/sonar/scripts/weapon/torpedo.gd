@@ -735,6 +735,8 @@ func _emit_active_ping() -> void:
 				acoustic_profile,
 				_sim_time,
 				pid,
+				actual_depth_m,
+				speed_kn,
 			)
 		)
 
@@ -869,13 +871,23 @@ func _collect_active_returns(sim_time: float) -> void:
 
 
 func _record_seeker_returns(returns: Array) -> void:
+	# P1-12.2：TargetEligibility 默认拒绝 OWN/FRIENDLY 接管——return 可在
+	# 传感器内部产生（本艇是真实声源），但绝不进航迹/制导；拒绝可观测
+	# （结构化事件只带 token 原因，不泄露 Truth）。
+	var eligible: Array = []
 	for r in returns:
+		var tok: String = str(r.source_token)
+		if tok == "OWN" or tok == "FRIENDLY":
+			event_occurred.emit(torpedo_id, "CONTACT_REJECTED_SAFETY", {"source_token": tok})
+			continue
 		seeker_returns.append(r)
+		eligible.append(r)
 	while seeker_returns.size() > 256:
 		seeker_returns.pop_front()
 	# Commit 7：净化 return 同步喂 Seeker 航迹机（关联/更新，§7.2）。
-	if _seeker != null and not returns.is_empty():
-		_seeker.process_returns(returns, _sim_time)
+	# P1-12：只喂资格通过的 return（OWN/FRIENDLY 已剔除）。
+	if _seeker != null and not eligible.is_empty():
+		_seeker.process_returns(eligible, _sim_time)
 
 
 ## ---- Commit 7（§7）：Seeker 相位推进 + 制导 ----
