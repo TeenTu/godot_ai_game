@@ -161,8 +161,12 @@ func _wpn_wire_02_rate_limits(fails: Array, sim_t0: float) -> void:
 	_assert_bool(fails, "WIRE-02f depth reached", arrived, true)
 	if max_dz > 1.0 + 1e-3:
 		fails.append("WIRE-02g per-tick dz %.3f m exceeds Vz limit" % max_dz)
-	if ticks < 128:
-		fails.append("WIRE-02h depth change too fast (ticks=%d)" % ticks)
+	# Patch F 修复发射 hold 深度后，命令前鱼雷已按 Vz 限速向下走了 3 步
+	# （50→53m），剩余行程 127m → 期望 127 ticks；按实际起点动态下限。
+	var d_start: float = 53.0
+	var min_ticks: int = int(ceil((180.0 - d_start) / (2.0 * DT)))
+	if ticks < mini(min_ticks, 127):
+		fails.append("WIRE-02h depth change too fast (ticks=%d expect>=%d)" % [ticks, min_ticks])
 
 
 ## ---- WPN-WIRE-03 CUT 后拒绝新命令 ----

@@ -183,6 +183,10 @@ func launch(
 		fuel_left_s = acoustic_profile.endurance_s(sm)
 		course_deg = NavUtils.wrap360(program.initial_course_deg)
 		commanded_depth_band = program.initial_depth_band
+		# P1-08 配套修复：发射初始化只写了层带标签、没写 hold 深度命令，
+		# 鱼雷从此停在发射深度（_advance_vertical 因 commanded_depth_m=-1
+		# 直接返回）——层带 hold 从未真正执行。补上垂直命令。
+		commanded_depth_m = _hold_depth_for_band(program.initial_depth_band)
 		if program.active_enable_mode == WeaponProgram.ActiveEnableMode.IMMEDIATE:
 			active_tx_state = ActiveTxState.WAITING_TRIGGER
 	depth_state = (
@@ -1014,6 +1018,11 @@ func _advance_guidance(sim_time: float) -> void:
 			track = null
 	if track != null:
 		_guidance_course_deg = TorpedoGuidance.pursuit_course_deg(track, cfg)
+		# P1-08 配套：深度带归向——选中航迹的层带提示（测量边界内粗分类）
+		# 驱动垂直机动（Vz_max 限速），异层目标才可能进入引信垂直门。
+		var band_hint: String = track.depth_band_hint
+		if band_hint != "" and band_hint != commanded_depth_band:
+			_command_depth_band_internal(band_hint)
 		# TERMINAL：主动回波测距进入近程（距离来自回波测量，绝不读 Truth）。
 		if (
 			mission_state == MissionState.ATTACK

@@ -328,6 +328,44 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
     +Accept 门控+日志格式/PE-03 s1_combat 装配+UI 同配置+场景选择器/
     PE-04 扫掠连续初始化/PE-05 侧栏契约/PE-06 摘要 sigma）。PB-04 断言随
     P2-01 语义更新（单步持续推进 + 20s 累计净漂移 >5°，替代跳相位伪影阈值）。
+- **Patch F（评审可靠性与完整场景，2026-09-05）**：
+  - P1-08 swept 引信：FuzeController 新增 `swept_min_distance_m/_h_m`、
+    `swept_closest_t` 与 `check_trigger_swept`——对每个 contact 用上一 tick
+    相对位置快照做 [t0,t1] 连续最近通过判定，消除 40/50kn 每 tick 10-13m
+    逐点采样穿越漏触发；水平 swept ≤ 触发半径且 CPA 时刻垂直距离 ≤
+    `FUZE_VERTICAL_GATE_M`(25m，层带粒度近似) 才触发——深度层语义纳入引信
+    （AT-15）。World 维护 `_fuze_prev_tp/_fuze_prev_contact` 快照台账并随
+    load_scenario 重置；swept 同样用于最近通过台账与安全保险检查。
+  - 发射 hold 深度修复（P1-08 排查副产物）：Torpedo.launch 只写
+    `commanded_depth_band` 未写 `commanded_depth_m`，`_advance_vertical`
+    恒早退——层带 hold 从未执行、鱼雷停在发射深度。补上 hold 深度命令。
+  - 深度带归向（P1-08 配套）：SeekerReturn 新增 `depth_band_hint`
+    （适配器在测量边界内对接触深度的层带粗分类 UPPER/LOWER，不含精确
+    Truth 深度）；SeekerTrack 保留最新提示；制导拥有操舵权时向提示层带
+    垂直机动（Vz_max 限速）——异层目标自此可被合法攻击，否则 25m 垂直门
+    使跨带杀伤链永不成立。
+  - P1-10 长局刷新：OperatorSonar 新增单调 `waterfall_seq`（每新行递增），
+    OperatorPanel 比较 size+seq（封顶 600 行后仍持续刷新）；AlertPanel 改
+    比较最新 `evidence_id`（封顶 256 条后仍持续更新）（AT-14）。
+  - AT-16 声学标定包线：新增 `tools/calibration_envelope_test.gd`——固定
+    环境（stage1_basic_passive）、同层/跨层、QUIET/CRUISE/HIGH Monte Carlo
+    被动 P_d(R) 曲线（BB+逐谱线独立采样）与主动曲线（seeker 12kHz SL195
+    TS14、接收机自噪@40kn）；断言固定 seed 复现、QUIET<CRUISE<HIGH 次序、
+    跨层 < 同层、R50≥R90，并冻结设计区间（被动 QUIET 1.5-6km / CRUISE
+    6-18km；主动 R50 150-1200m / R90 50-900m）。实测：被动 R50 2400/11800/
+    ≥20000m（同层），跨层 7400m；主动 R50=500m、R90=300m。改标定须显式
+    更新区间与本节。
+  - AT-17 端到端（来袭半环）：`patch_f_test` PF-03 以 s1_combat 正式场景 +
+    `auto_measurements=false`（与 UI 相同配置）验证 玩家发射 → 敌截获
+    LAUNCH_TRANSIENT → doctrine 反击 → 玩家收到 INTERCEPT 证据 +
+    ThreatTrack，全程无 Truth 泄漏；s1_combat doctrine 显式
+    `evade_trigger_probability: 0`（反击优先 doctrine）。发现→TMA→发射→
+    命中半环由 `s107_integrated_test` INT-A/B 覆盖，两测试合成 AT-17。
+  - 回归 `tools/patch_f_test.gd`（PF-01 swept 纯函数+穿越触发+半径外不误触
+    +垂直门/PF-02 瀑布与告警封顶后持续刷新/PF-03 e2e 反击链）与
+    `tools/calibration_envelope_test.gd`（CAL-1..9）。WIRE-02h 断言随发射
+    hold 修复更新（按实际起点动态下限）；FUZE-05 在新垂直语义下保持原
+    几何（敌雷向层带 hold 机动后同带命中）。
 
 ---
 

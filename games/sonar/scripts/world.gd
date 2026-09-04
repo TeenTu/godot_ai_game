@@ -111,6 +111,9 @@ var _enemy_perception_acs: Dictionary = {}
 var _detonations: Array = []  # 内核 Debrief 记录（含 internal target 引用）
 var _fuze_min_pass: Dictionary = {}  # torpedo_id -> 最近通过距离（内核台账）
 var _fuze_alive: Dictionary = {}
+# P1-08：上一 tick 位置快照（swept 连续碰撞用）。id → Vector3(e,n,depth)。
+var _fuze_prev_tp: Dictionary = {}
+var _fuze_prev_contact: Dictionary = {}
 # P1-12.4：引信安全保险闩（每雷一次 INHIBIT 事件）。
 var _fuze_safety_latched: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
 
@@ -172,6 +175,8 @@ func load_scenario(scenario: Dictionary) -> void:
 	_detonations.clear()
 	_fuze_min_pass.clear()
 	_fuze_alive.clear()
+	_fuze_prev_tp.clear()
+	_fuze_prev_contact.clear()
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -1011,19 +1016,31 @@ func _advance_fuze_engine() -> void:
 func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> void:
 	if tp.is_dead() or not tp._in_water():
 		_fuze_alive.erase(str(tp.torpedo_id))
+		_fuze_prev_tp.erase(str(tp.torpedo_id))
 		return
-	_fuze_alive[str(tp.torpedo_id)] = true
-	# 最近通过距离台账（Debrief 用；内核侧）。
+	# P1-08：本 tick/上 tick 位置快照（含深度）。fuze 引擎在运动推进之后
+	# 运行，故当前值即本 tick 末态 —— 读出旧快照后立即覆写为最新值，
+	# 之后任何早退路径都不会污染下一 tick 的 swept 线段。
+	var tid: String = str(tp.torpedo_id)
+	var tp_now := Vector3(float(tp.pos_east_m), float(tp.pos_north_m), float(tp.actual_depth_m))
+	var tp_prev: Vector3 = tp_now
+	if _fuze_prev_tp.has(tid):
+		tp_prev = _fuze_prev_tp[tid]
+	_fuze_prev_tp[tid] = tp_now
+	_fuze_alive[tid] = true
+	# 最近通过距离台账（Debrief 用；内核侧）——swept 连续最近通过。
 	var min_d: float = INF
 	for c in contacts:
 		if str(c.damage_state) == "sunk":
 			continue
-		min_d = minf(
-			min_d,
-			NavUtils.distance(
-				tp.pos_east_m, tp.pos_north_m, float(c.position_east_m), float(c.position_north_m)
-			),
-		)
+		var c_now := Vector3(float(c.position_east_m), float(c.position_north_m), float(c.depth_m))
+		var c_prev: Vector3 = c_now
+		if _fuze_prev_contact.has(str(c.id)):
+			c_prev = _fuze_prev_contact[str(c.id)]
+		_fuze_prev_contact[str(c.id)] = c_now
+		var h0 := Vector2(c_prev.x - tp_prev.x, c_prev.y - tp_prev.y)
+		var h1 := Vector2(c_now.x - tp_now.x, c_now.y - tp_now.y)
+		min_d = minf(min_d, FuzeController.swept_min_distance_h_m(h0, h1))
 	if min_d < float(_fuze_min_pass.get(str(tp.torpedo_id), INF)):
 		_fuze_min_pass[str(tp.torpedo_id)] = min_d
 	# 引信解保（§10.2 双保险：arm distance + min_time）。
@@ -1048,23 +1065,27 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 	elif enemy_ai != null:
 		safety_c = enemy_ai.entity
 	if safety_c != null:
-		var sd: float = (
-			NavUtils
-			. distance(
-				tp.pos_east_m,
-				tp.pos_north_m,
-				float(safety_c.position_east_m),
-				float(safety_c.position_north_m),
-			)
+		var s_now := Vector3(
+			float(safety_c.position_east_m),
+			float(safety_c.position_north_m),
+			float(safety_c.depth_m),
 		)
-		if sd <= fc.trigger_radius_m():
-			var tid2: String = str(tp.torpedo_id)
-			if not _fuze_safety_latched.has(tid2):
-				_fuze_safety_latched[tid2] = true
-				tp.event_occurred.emit(tid2, "FUZE_SAFETY_INHIBIT", {"reason": "OWN_SIDE"})
+		var s_prev: Vector3 = s_now
+		if _fuze_prev_contact.has(str(safety_c.id)):
+			s_prev = _fuze_prev_contact[str(safety_c.id)]
+		var sh0 := Vector2(s_prev.x - tp_prev.x, s_prev.y - tp_prev.y)
+		var sh1 := Vector2(s_now.x - tp_now.x, s_now.y - tp_now.y)
+		var sd: float = FuzeController.swept_min_distance_h_m(sh0, sh1)
+		var sv: float = absf(s_now.z - tp_now.z)
+		if sd <= fc.trigger_radius_m() and sv <= FuzeController.FUZE_VERTICAL_GATE_M:
+			if not _fuze_safety_latched.has(tid):
+				_fuze_safety_latched[tid] = true
+				tp.event_occurred.emit(tid, "FUZE_SAFETY_INHIBIT", {"reason": "OWN_SIDE"})
 			return
-	# 几何触发判定。
-	var res: Dictionary = fc.check_trigger(tp, contacts)
+	# 几何触发判定（P1-08：swept 连续碰撞，不再逐点采样）。
+	var res: Dictionary = fc.check_trigger_swept(
+		tp_now, tp_prev, contacts, _fuze_prev_contact, fc.trigger_radius_m()
+	)
 	if not bool(res["triggered"]):
 		return
 	# 爆炸结算（内核）：EXPLOSION 声学事件（可被双方被动链截获）+ Truth 伤害。
@@ -1102,7 +1123,8 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 		)
 	)
 	tp.detonate({"min_distance_m": float(res["min_distance_m"])})
-	_fuze_alive.erase(str(tp.torpedo_id))
+	_fuze_alive.erase(tid)
+	_fuze_prev_tp.erase(tid)
 
 
 ## 消费新声学事件 → 净化证据（DETONATION_HEARD / 鱼雷告警 / 本艇武器事实）。

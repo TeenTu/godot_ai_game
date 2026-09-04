@@ -42,6 +42,7 @@ var _len_slider: HSlider = null
 var _lbl_tow: Label = null  # TOWED 状态/阵航向/长度显示
 var _active_card: ActiveSonarCard = null  # 主动声呐结构化卡片（S1-04C-REQ-01）
 var _last_row_count: int = -1
+var _last_wf_seq: int = -1  # P1-10：封顶后 size 恒定，按单调序号判定刷新
 var _last_array_id: String = ""  # S1-03B：切阵列时即使行数相同也强制刷新瀑布
 
 
@@ -262,9 +263,10 @@ func refresh(op: OperatorSonar) -> void:
 	var force: bool = aid != _last_array_id
 	_last_array_id = aid
 	var n: int = op.bb_rows.size()
-	if n == _last_row_count and not force:
+	if n == _last_row_count and op.waterfall_seq == _last_wf_seq and not force:
 		return
 	_last_row_count = n
+	_last_wf_seq = op.waterfall_seq
 	wf_bb.set_rows(op.bb_rows.slice(maxi(0, n - MAX_ROWS_SHOWN)))
 	wf_nb.set_rows(op.nb_rows.slice(maxi(0, n - MAX_ROWS_SHOWN)))
 	wf_demon.set_rows(op.demon_rows.slice(maxi(0, n - MAX_ROWS_SHOWN)))

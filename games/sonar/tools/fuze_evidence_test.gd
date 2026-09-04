@@ -148,6 +148,8 @@ func _fuze_05_enemy_torpedo_hits_own(fails: Array) -> void:
 		ent.position_east_m, ent.position_north_m, own.position_east_m, own.position_north_m
 	)
 	w._enemy_fire({"action": "FIRE_TORPEDO", "bearing_deg": brg})
+	# P1-08：引信纳入垂直门 + 发射 hold 深度修复后，来袭雷会向程序层带
+	# hold 机动；本艇保持场景深度即可形成同带杀伤链几何。
 	_assert_bool(
 		fails, "FUZE-05a enemy torpedo launched", not w.enemy_weapons.torpedoes.is_empty(), true
 	)

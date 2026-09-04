@@ -139,6 +139,7 @@
       "reaction_delay_min_s": 3.0,
       "reaction_delay_max_s": 15.0,
       "counterfire_probability": 1.0,
+    "evade_trigger_probability": 0.0,
       "counterfire_cooldown_s": 120.0,
       "max_simultaneous_weapons": 2,
       "sample_interval_s": 2.0,

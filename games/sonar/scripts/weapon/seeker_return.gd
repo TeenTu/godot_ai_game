@@ -35,6 +35,9 @@ var signal_excess_db: float = -999.0
 var detection_probability: float = 0.0
 var spectral_features: Dictionary = {}
 var depth_relation: String = "SAME_LAYER"
+# 深度带归向提示（P1-08 配套）：适配器在测量边界内对接触深度做的层带
+# 粗分类（UPPER/LOWER/""），供制导垂直机动；不含精确 Truth 深度。
+var depth_band_hint: String = ""
 var source_kind_hypotheses: Array = []
 var debug_truth_ref: String = ""
 # P0-09：主动链传播——ACTIVE return 携带产生它的 ping_id（同 id 串联）。
