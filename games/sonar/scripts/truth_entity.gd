@@ -19,6 +19,14 @@ var position_east_m: float = 0.0
 var position_north_m: float = 0.0
 var depth_m: float = 0.0  # 向下为正
 
+# S1-07A（Commit 2）：双层伪三维垂向运动。命令值与实际值分离，实际深度按
+# max_vertical_speed_m_s 限速逼近 commanded_depth_m，禁止瞬移换层。
+# commanded_depth_m < 0 = 无垂向命令（保持当前深度，旧场景零行为变化）。
+var commanded_depth_m: float = -1.0
+var max_vertical_speed_m_s: float = 2.0
+var min_depth_m: float = 0.0
+var max_depth_m: float = 400.0
+
 var course_deg: float = 0.0  # 实际艏向（从北顺时针）
 var speed_kn: float = 0.0  # 实际航速
 var turn_rate_deg_s: float = 0.0  # >0 顺时针（最大转向率，G-05/S1-02）
@@ -74,6 +82,16 @@ func has_speed_command() -> bool:
 	return commanded_speed_kn >= 0.0 and absf(commanded_speed_kn - speed_kn) > 0.01
 
 
+## 下令垂向（S1-07A）：只写命令值，实际深度按最大垂速逼近。
+func command_depth(depth: float) -> void:
+	commanded_depth_m = clampf(depth, min_depth_m, max_depth_m)
+
+
+## 是否有未完成的垂向命令。
+func has_depth_command() -> bool:
+	return commanded_depth_m >= 0.0 and absf(commanded_depth_m - depth_m) > 0.01
+
+
 ## 推进一个固定步长（dt 秒）。返回 true 表示平台仍存活。
 func advance(dt: float) -> bool:
 	if damage_state == "sunk":
@@ -102,6 +120,15 @@ func advance(dt: float) -> bool:
 	elif acceleration_kn_s != 0.0 and not _motion_commanded:
 		speed_kn = clampf(speed_kn + acceleration_kn_s * dt, 0.0, 60.0)
 
+	# ---- 垂向（S1-07A：实际深度按最大垂速逼近命令深度，禁止瞬移换层）----
+	if commanded_depth_m >= 0.0:
+		var r := DepthLayerModel.step_vertical(
+			depth_m, commanded_depth_m, max_vertical_speed_m_s, min_depth_m, max_depth_m, dt
+		)
+		depth_m = r["z"]
+		if bool(r["done"]):
+			commanded_depth_m = -1.0
+
 	# 平移
 	var v_ms: float = NavUtils.kn_to_ms(speed_kn)
 	var next: Dictionary = NavUtils.advance_pos(
@@ -126,6 +153,10 @@ func from_dict(d: Dictionary) -> void:
 	position_east_m = float(d.get("position_east_m", 0.0))
 	position_north_m = float(d.get("position_north_m", 0.0))
 	depth_m = float(d.get("depth_m", 0.0))
+	commanded_depth_m = float(d.get("commanded_depth_m", -1.0))
+	max_vertical_speed_m_s = float(d.get("max_vertical_speed_m_s", max_vertical_speed_m_s))
+	min_depth_m = float(d.get("min_depth_m", min_depth_m))
+	max_depth_m = float(d.get("max_depth_m", max_depth_m))
 	course_deg = NavUtils.wrap360(float(d.get("course_deg", 0.0)))
 	speed_kn = float(d.get("speed_kn", 0.0))
 	turn_rate_deg_s = float(d.get("turn_rate_deg_s", 0.0))

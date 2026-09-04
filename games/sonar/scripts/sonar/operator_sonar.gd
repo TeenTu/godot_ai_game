@@ -322,6 +322,8 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var noise: float = _env.effective_noise_db(500.0, own_speed)
 		var level_db: float = ac.broadband_sl_db(speed_kn, float(tgt.depth_m)) - tl
 		var se_db: float = level_db + gain + dir_gain - noise
+		# S1-07A（Commit 2）：跨温跃层附加 TL（与自动测量链同源；旧场景=0）。
+		se_db -= _env.cross_layer_extra_db(500.0, own_depth, float(tgt.depth_m))
 		total_se = maxf(total_se, se_db)
 		# 概率探测 P_d（S1-04）：不再用 SE<=0 硬门限，弱目标间歇出现
 		var pd: float = AcousticService.detection_probability(se_db)
@@ -389,6 +391,8 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			# P1-03/REQ-08：NB tonal 也吃方向增益 + 部署/弯曲/超速损失——与 BB 同源，
 			# 不得只进 BB se_db（否则 FLANK 扇区边缘谱线强度不随方向衰减）。
 			var lvl: float = float(line_v["level_db"]) + gain + dir_gain - tl_f - noise_f
+			# S1-07A：NB tonal 同吃跨层附加 TL（按谱线频率）。
+			lvl -= _env.cross_layer_extra_db(f_hz, own_depth, float(tgt.depth_m))
 			var p_line: float = AcousticService.detection_probability(lvl)
 			if _rng.randf() >= p_line:
 				continue

@@ -13,6 +13,11 @@ static func build(scenario: Dictionary) -> Dictionary:
 	var env := EnvironmentModel.new()
 	env.from_dict(scenario.get("environment", {}))
 
+	# S1-07A（Commit 2）：双层伪三维深度层。旧场景无 depth_layers → disabled。
+	var depth_model := DepthLayerModel.new()
+	depth_model.from_dict(scenario.get("depth_layers", {}))
+	env.depth_model = depth_model
+
 	# 本艇（蓝方）
 	var own := TruthEntity.new()
 	var own_dict: Dictionary = scenario.get("own_ship", {})
@@ -56,6 +61,7 @@ static func build(scenario: Dictionary) -> Dictionary:
 	return {
 		"rng": rng,
 		"env": env,
+		"depth_model": depth_model,
 		"own": own,
 		"own_ac": own_ac,
 		"targets": targets,
