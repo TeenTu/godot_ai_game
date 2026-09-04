@@ -38,12 +38,13 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-5 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-6 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
 Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5（声学
-画像 + EmissionBus）**，均已合入 sonar-dev：
+画像 + EmissionBus）+ Commit 6（TorpedoSensorAdapter + SeekerReturn）**，
+均已合入 sonar-dev：
 
 - **Commit 0**：旧武器缺陷行为刻画测试（Truth 直读 / 单一 ENABLE_RANGE /
   target_id 进 UI / DEAD 自动补装）——重构后已删除，由新契约测试接管。
@@ -97,9 +98,27 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   `emission_bus.record` 落事件，截获 SE/Pd 与玩家声呐同源（连续概率非硬门限）。
   `torpedo_acoustic_test` WPN-ACOU-01..03（模式单调性 + 燃料折算 / 瞬态事件
   + 截获概率单调 / 主动 Ping 可截获 + 噪声随 HIGH 更响）。
-- **遗留项**（后续 Commit 6-12）：TorpedoSensorAdapter+SeekerReturn、
-  SeekerTrack 捕获/丢失/重搜/制导、诱饵干扰、敌方感知/Doctrine、引信/伤害
-  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）。
+- **Commit 6（TorpedoSensorAdapter + SeekerReturn，§6.3/§6.4/§6.5/§6.7）**：
+  新增 `scripts/weapon/seeker_return.gd`（净化输出：return_id/timestamp/
+  available_time/sensor_mode/detected/带噪方位/可选测距/SE/Pd/频谱特征/
+  depth_relation/分类假设占位；to_dict 与字段绝不带 target_id、真实位置、
+  damage_state，debug_truth_ref 玩法链恒空）与 `scripts/weapon/
+  torpedo_sensor_adapter.gd`（仿真内核唯一可触 Truth 的武器侧对象：注入
+  env/depth_model/RNG + Truth 声源数组）。被动采样与玩家声呐同源（SE_passive
+  = SL_contact − TL_layer − N_eff(torpedo speed) + AG − DT，Pd 连续无硬门限，
+  miss 帧无 return）；FOV=profile 水平波束；高速自噪抬 N_eff → 被动 SE 下降
+  （§6.2）；跨温跃层 depth_relation=SAME/CROSS/TRANSITION 且 SE 降不硬断；
+  主动 Ping 按 tau=2R/c 登记回波、到点结算（R_meas=c·tau/2+noise，测距同源
+  REQ-19 纪律，绝不同 tick 瞬时返回）；误报独立生成器（false_alarm_rate）不
+  绑定 target。Torpedo 接 ctx.sensor_adapter：出管后 passive_receiver_on 默认
+  ON、按 1s 周期采样并收主动回波，SeekerReturn 净化为 seeker_returns（只记不
+  转——捕获/转向属 Commit 7）；World.load_scenario 装配 adapter（contacts=
+  targets）。`torpedo_seeker_test` WPN-SEEK-01/02/04/05 + miss/cross/speed/FA
+  （被动默认 ON 收到 return / 被动无 range 且净化 / miss 确定性无 return /
+  跨层 SE 降 / HIGH 自噪降被动 SE / 主动 TOF 延迟与测距 / 误报独立）。
+- **遗留项**（后续 Commit 7-12）：SeekerTrack 捕获/丢失/重搜/制导（多目标
+  score 竞争）、诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/
+  告警/在水控制 UI（Commit 11）。
 
 ---
 

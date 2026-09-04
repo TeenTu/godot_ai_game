@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-5 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-6 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -270,6 +270,7 @@ godot --headless --path games/sonar --script res://tools/s1_07_state_model_test.
 godot --headless --path games/sonar --script res://tools/depth_layer_test.gd        # D1-D7
 godot --headless --path games/sonar --script res://tools/wire_guidance_test.gd      # WPN-WIRE-01..04
 godot --headless --path games/sonar --script res://tools/torpedo_acoustic_test.gd    # WPN-ACOU-01..03
+godot --headless --path games/sonar --script res://tools/torpedo_seeker_test.gd      # WPN-SEEK-01/02/04/05
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -288,6 +289,16 @@ Commit 5 声学层（§6.1/§6.2/§9.1/§9.2）：`TorpedoAcousticProfile` 把�
 `emission_bus.record`；`World.active_emissions`（S1-04C 契约）是总线事件数组的
 同一引用，旧读方零改动。事件只带内部 emitter 引用、绝不携带 target_id/Truth；
 截获 SE/Pd 与玩家声呐同源（连续概率、非硬门限）。
+
+Commit 6 Seeker 采样（§6.3/§6.4/§6.5）：`TorpedoSensorAdapter`（World 装配、
+注入 env/depth_model/RNG + Truth 声源）是武器侧唯一可触 Truth 的边界，向鱼雷
+只输出净化 `SeekerReturn`（无 target_id/真实位置/被动无 range）。被动采样与
+玩家声呐同源：SE=SL−TL_layer−N_eff(鱼雷航速)+AG−DT，Pd 连续无硬门限、miss 帧
+无 return；鱼雷高速自噪抬 N_eff → 被动 SE 降（§6.2）；跨温跃层 SE 降但不硬断
+（depth_relation SAME/CROSS/TRANSITION）。主动 Ping 回波按 tau=2R/c 延迟到点
+结算、R_meas=c·tau/2+noise（绝不同 tick 瞬时返回）；误报独立生成不绑 target。
+鱼雷出管后被动默认 ON、按 1s 周期采样，SeekerReturn 记入 `seeker_returns`（只
+记不转——捕获/转向属 Commit 7 SeekerTrack/制导）。
 
 ---
 
@@ -318,7 +329,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 17 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 18 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -331,7 +342,10 @@ done < games/sonar/tools/ci_tests.txt
 WPN-PROG-01..04）、`wire_guidance_test`（S1-07 Commit4 WireLink 放线/断切/
 命令门 + fallback 执行，WPN-WIRE-01..04）、`torpedo_acoustic_test`（S1-07
 Commit5 声学画像模式表/燃料折算 + EmissionBus 出管/动力启动/运行噪声/主动
-Ping 事件与截获概率，WPN-ACOU-01..03）。
+Ping 事件与截获概率，WPN-ACOU-01..03）、`torpedo_seeker_test`（S1-07 Commit6
+TorpedoSensorAdapter+SeekerReturn：被动默认 ON 收到 return / 被动无 range 且
+净化无 Truth / miss 无 return / 跨层 SE 降 / 高速自噪降被动 SE / 主动 TOF
+tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）。
 
 ### S1-00 信息链热修状态（2026-09）
 
