@@ -1,5 +1,5 @@
 extends SceneTree
-## s1_03c_test.gd — S1-03C 拖曳阵证据组关联 + 阵列中心几何 无头验收（P0 首批）。
+## s1_03c_test.gd — S1-03C 拖曳阵证据组关联 + 阵列中心几何 + coverage 接入 无头验收。
 ##
 ## 背景 bug（腾讯文档 DZkRDb09rb2d6cVdh 评审）：
 ##   P0-01  一次 A/B 镜像组被当成两条普通测量：main_ui 用全局 tracker.feed(m)
@@ -9,8 +9,11 @@ extends SceneTree
 ##          (0,-230) 为起点（≈60°）→ ~6° 系统误差（距离越近、缆越长越明显）。
 ##   P0-03  TMA 门槛用 measurement_history.size()（拖曳 2 次点击=4 行即放行），
 ##          未按物理 evidence 计数。
+##   P1-03  SensorArray.in_coverage 无调用方：场景 JSON 声明的覆盖/挡板盲区在
+##          自动测量链与主动 Ping 链中形同虚设（旧实现 BOW/FLANK 全向、主动
+##          Ping 全向）。
 ##
-## 覆盖（对齐评审 TEST-01..05 / 首批任务）：
+## 覆盖（对齐评审 TEST-01..05/09 与 P1-03 coverage 接入）：
 ##   C1  连续五次 TOWED 手动 Mark（第 3 次改点另一支）：1 Track / 5 evidence /
 ##       10 candidate rows，绝不出现 M02；selected_track 真正约束目标 Track。
 ##   C2  Autocrew 跨五个到达时刻：1 Track / 5 evidence，不因 latest 是 sibling
@@ -20,6 +23,12 @@ extends SceneTree
 ##   C4  阵列中心方位一致性：target=(1732,770)、own=(0,0)、阵心=(0,-230)、
 ##       阵轴 0° 时生成真方位 ≈60°（非艇心 66°）；Measurement observer == (0,-230)；
 ##       LOB 从 observer 发出穿过目标；TL 用阵心距离 ~2000m。
+##   C5  镜像严格对称（P1-01）：A+B≈2·阵轴；Mark 方位 == 显示峰；sibling 镜像。
+##   C6  STOWED / 孔径不足严格无目标特征（P1-03a）。
+##   C7  自动被动链 coverage 门禁（P1-03b）：覆盖扇区不含目标 → 零测量；
+##       同 seed 全向覆盖 → 稳定报出（miss 源于 coverage 而非 pd/SE）。
+##   C8  主动 Ping 发射扇区（P1-03b）：发射时刻固化方位——扇区外目标不登记
+##       回波（NO_RETURN），扇区内登记并返回（RETURN）。
 ##
 ## 全部确定性（固定种子/解析构造），可无头运行：
 ##   godot --headless --path games/sonar --script res://tools/s1_03c_test.gd
@@ -34,6 +43,10 @@ func _initialize() -> void:
 	_c2_autocrew_no_split(fails)
 	_c3_evidence_gate(fails)
 	_c4_array_center_bearing(fails)
+	_c5_mirror_symmetry(fails)
+	_c6_stowed_no_features(fails)
+	_c7_auto_passive_coverage(fails)
+	_c8_active_ping_sector(fails)
 	if fails.is_empty():
 		print("S1_03C_TEST result=PASS")
 		quit(0)
@@ -81,15 +94,19 @@ func _mk_own() -> TruthEntity:
 
 
 func _mk_op(seed: int) -> OperatorSonar:
+	return _mk_op_own(seed, _mk_own())
+
+
+func _mk_op_own(seed: int, own: TruthEntity) -> OperatorSonar:
 	var op := OperatorSonar.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
-	op.setup({"env": _mk_env(), "own": _mk_own(), "rng": rng})
+	op.setup({"env": _mk_env(), "own": own, "rng": rng})
 	op.set_array("TOWED")
 	return op
 
 
-## 高 SL 目标（保证每行稳定出 A/B 峰，pd≈1）。
+## 高 SL 目标（保证每行稳定出 A/B 峰，pd≈1）；带一根 NB 音线供 STOWED/方向测试。
 func _mk_target(east: float, north: float) -> Dictionary:
 	var tgt := TruthEntity.new()
 	tgt.id = "T1"
@@ -98,7 +115,15 @@ func _mk_target(east: float, north: float) -> Dictionary:
 	tgt.speed_kn = 6.0
 	tgt.depth_m = 0.0
 	var ac := AcousticProfile.new()
-	ac.from_dict({"broadband_base_level_db": 195.0})
+	(
+		ac
+		. from_dict(
+			{
+				"broadband_base_level_db": 195.0,
+				"tonal_lines": [{"freq_hz": 120.0, "level_db": 160.0}],
+			}
+		)
+	)
 	return {"targets": [tgt], "acs": {"T1": ac}}
 
 
@@ -115,9 +140,103 @@ func _mk_meas(brg: float, t: float, ev: String, pair: String, branch: int) -> Me
 	return m
 
 
+## C7/C8 共用的 World 场景：own=(0,0) 艏向 0；目标 (tgt_e,tgt_n)（相对 45° 扇区
+## 方位、6000m）；hull_broadband 被动阵覆盖 passive_cov；艇首主动阵（显式硬件）
+## 覆盖 active_cov。seed 固定 → 自动链与 Ping 结算均确定。
+func _mk_cov_scenario(
+	passive_cov: Vector2, active_cov: Vector2, tgt_e: float, tgt_n: float
+) -> Dictionary:
+	var own: Dictionary = {
+		"id": "own",
+		"class_id": "attack_sub",
+		"side": "blue",
+		"platform_type": "submarine",
+		"position_east_m": 0.0,
+		"position_north_m": 0.0,
+		"depth_m": 50.0,
+		"course_deg": 0.0,
+		"speed_kn": 4.0,
+		"turn_rate_deg_s": 0.0,
+		"acceleration_kn_s": 0.0,
+		"active_sonar":
+		{
+			"ping_sl_db": 210.0,
+			"cooldown_s": 15.0,
+			"freq_min_hz": 2000.0,
+			"freq_max_hz": 4000.0,
+			"array_gain_db": 24.0,
+			"sound_speed_m_s": 1500.0,
+			"listen_window_s": 15.0,
+			"coverage_start_deg": active_cov.x,
+			"coverage_end_deg": active_cov.y,
+		},
+	}
+	var tgt: Dictionary = {
+		"id": "T1",
+		"class_id": "frigate",
+		"side": "red",
+		"platform_type": "surface",
+		"position_east_m": tgt_e,
+		"position_north_m": tgt_n,
+		"depth_m": 0.0,
+		"course_deg": 180.0,
+		"speed_kn": 0.0,
+		"turn_rate_deg_s": 0.0,
+		"acceleration_kn_s": 0.0,
+		"acoustic":
+		{
+			"broadband_base_level_db": 195.0,  # 高 SL：SE 充足，pd≈1（miss 只可能源于 coverage）
+			"active_target_strength_db": 14.0,
+			"tonal_lines": [{"freq_hz": 120.0, "level_db": 160.0}],
+		},
+	}
+	return {
+		"name": "s1_03c_cov",
+		"seed": 707,
+		"dt": 0.5,
+		"duration": 400.0,
+		"environment":
+		{
+			"ambient_noise_by_frequency": {"500": 55.0, "1000": 52.0},
+			"own_noise_base_db": 38.0,
+			"own_noise_speed_coeff": 1.5,
+			"tl_spreading_k": 20.0,
+			"tl_absorption_alpha": 0.5,
+			"tl_environment_loss": 2.0,
+		},
+		"own_ship": own,
+		"own_acoustic": {"broadband_base_level_db": 45.0},
+		"targets": [tgt],
+		"sensors":
+		[
+			{
+				"sensor_id": "hull_broadband",
+				"array_type": "passive_broadband",
+				"owner_id": "own",
+				"freq_min_hz": 100.0,
+				"freq_max_hz": 1000.0,
+				"array_gain_db": 20.0,
+				"detection_threshold_db": 3.0,
+				"detection_k_d": 4.0,
+				"bearing_sigma_min_deg": 0.8,
+				"bearing_sigma_max_deg": 6.0,
+				"coverage_start_deg": passive_cov.x,
+				"coverage_end_deg": passive_cov.y,
+				"update_interval_s": 2.0,
+				"deployed": true,
+			}
+		],
+	}
+
+
 func _assert_bool(fails: Array, name: String, got: bool, want: bool) -> void:
 	if got != want:
 		fails.append("%s: got=%s want=%s" % [name, str(got), str(want)])
+
+
+func _assert_eq(fails: Array, name: String, got: String, want: String) -> void:
+	if got != want:
+		fails.append("%s: got=%s want=%s" % [name, got, want])
 
 
 func _assert_close(fails: Array, name: String, got: float, want: float, tol: float) -> void:
@@ -295,3 +414,142 @@ func _c4_array_center_bearing(fails: Array) -> void:
 	_assert_close(fails, "C4 LOB passes target", closest.distance_to(tgt_pos), 0.0, 60.0)
 	# TL 距离基准 = 阵心距离 ~2000m（非艇心 ~1896m）
 	_assert_close(fails, "C4 observer range to target", obs.distance_to(tgt_pos), 2000.0, 20.0)
+
+
+# ------------------------------------------------------------------
+#  C5：镜像严格对称 + Mark 峰方位一致（P1-01 / 评审 TEST-06）
+# ------------------------------------------------------------------
+
+
+func _c5_mirror_symmetry(fails: Array) -> void:
+	var op := _mk_op(404)
+	var td: Dictionary = _mk_target(1500.0, 3500.0)
+	op.update(10.0, td["targets"], td["acs"])
+	if op.bb_rows.is_empty():
+		fails.append("C5 no TOWED row")
+		return
+	var row: Dictionary = op.bb_rows[-1]
+	var brgs: Dictionary = {}  # branch -> display bearing
+	for pk in row.get("peaks", []):
+		var b: int = int(pk.get("ambiguity_branch", 0))
+		if b != 0 and not brgs.has(b):
+			brgs[b] = float(pk["bearing_deg"])
+	if brgs.size() != 2:
+		fails.append("C5 expected both A/B peaks (got %d)" % brgs.size())
+		return
+	# own course=0、阵轴 psi=0 → display 帧阵轴=0；要求 wrap360(A+B)≈2*psi=0
+	var sum_ab: float = float(brgs[1]) + float(brgs[-1])
+	_assert_close(fails, "C5 A+B symmetric about axis", absf(NavUtils.wrap180(sum_ab)), 0.0, 0.6)
+	# 点击 A 峰 → Mark 方位必须等于峰方位（转真北），不得二次抽样
+	var grp: Array = op.create_mark_group(float(brgs[1]), 10.0, "", false, row)
+	if grp.is_empty():
+		fails.append("C5 mark empty")
+		return
+	var m: Measurement = grp[0] as Measurement
+	var true_a: float = NavUtils.rel_to_true(0.0, float(brgs[1]))
+	var m_b: float = m.measured_bearing_deg
+	_assert_close(
+		fails,
+		"C5 mark bearing == displayed peak",
+		absf(NavUtils.wrap180(m_b - true_a)),
+		0.0,
+		0.1,
+	)
+	# 镜像支严格镜像：theta_B = 2*psi - theta_A（转真北后）
+	var sib: Measurement = grp[1] as Measurement
+	var psi: float = 0.0
+	_assert_close(
+		fails,
+		"C5 sibling mirrors primary",
+		absf(NavUtils.wrap180(sib.measured_bearing_deg - (2.0 * psi - m_b))),
+		0.0,
+		0.1,
+	)
+	_assert_bool(fails, "C5 A/B share evidence", sib.evidence_id == m.evidence_id, true)
+	_assert_bool(
+		fails, "C5 A/B share sigma", absf(sib.bearing_sigma_deg - m.bearing_sigma_deg) < 1e-6, true
+	)
+
+
+# ------------------------------------------------------------------
+#  C6：STOWED / 孔径不足时严格无目标特征（P1-03 / 评审 TEST-09）
+# ------------------------------------------------------------------
+
+
+func _c6_stowed_no_features(fails: Array) -> void:
+	var own := _mk_own()
+	own.towed.actual_tow_length_m = 0.0  # 收回（≤dead_length）→ is_acoustically_active=false
+	var op := _mk_op_own(505, own)
+	var td: Dictionary = _mk_target(1500.0, 3500.0)
+	op.update(10.0, td["targets"], td["acs"])
+	if op.bb_rows.is_empty():
+		fails.append("C6 stowed should still emit background row")
+		return
+	var row: Dictionary = op.bb_rows[-1]
+	_assert_bool(fails, "C6 stowed no BB peaks", row.get("peaks", []).is_empty(), true)
+	var nbrow: Dictionary = op.nb_rows[-1] if not op.nb_rows.is_empty() else {}
+	_assert_bool(fails, "C6 stowed no NB tonals", nbrow.get("tonals", []).is_empty(), true)
+	# 对照：部署态同 seed 应出现目标峰与音线
+	var op2 := _mk_op(506)
+	op2.update(10.0, td["targets"], td["acs"])
+	if op2.bb_rows.is_empty():
+		fails.append("C6 deployed row missing")
+		return
+	var row2: Dictionary = op2.bb_rows[-1]
+	_assert_bool(fails, "C6 deployed has BB peaks", not row2.get("peaks", []).is_empty(), true)
+	var nbrow2: Dictionary = op2.nb_rows[-1] if not op2.nb_rows.is_empty() else {}
+	_assert_bool(fails, "C6 deployed has NB tonals", not nbrow2.get("tonals", []).is_empty(), true)
+
+
+# ------------------------------------------------------------------
+#  C7：自动被动链 coverage 门禁（P1-03b / SensorArray.in_coverage 真正参与）
+# ------------------------------------------------------------------
+#  目标相对 45°。覆盖扇区不含 45° → 自动链恒 miss（零测量）；同 seed 全向覆盖
+#  → 稳定报出。两者都跑同一段自动链，证明 miss 是 coverage 造成的、而非 pd/SE
+#  或 RNG 序列差异（全向覆盖场景行为与接入前逐位一致）。
+
+
+func _c7_auto_passive_coverage(fails: Array) -> void:
+	var w0 := World.new()
+	w0.load_scenario(_mk_cov_scenario(Vector2(200, 340), Vector2(0, 360), 4242.6, 4242.6))
+	w0.run_steps(30)  # 15s @ dt=0.5 → 自动链多次采样
+	_assert_bool(fails, "C7 out-of-coverage auto chain silent", w0.measurement_count() == 0, true)
+	var w1 := World.new()
+	w1.load_scenario(_mk_cov_scenario(Vector2(0, 360), Vector2(0, 360), 4242.6, 4242.6))
+	w1.run_steps(30)
+	_assert_bool(fails, "C7 full-coverage auto chain detects", w1.measurement_count() >= 1, true)
+	if w1.measurements.is_empty():
+		return
+	var m: Measurement = w1.measurements[0] as Measurement
+	_assert_close(fails, "C7 detected bearing ~45", m.measured_bearing_deg, 45.0, 3.0)
+
+
+# ------------------------------------------------------------------
+#  C8：主动 Ping 发射扇区（P1-03b — 发射时刻固化方位，仅登记扇区内目标回波）
+# ------------------------------------------------------------------
+#  目标相对 45°。主动阵覆盖不含 45° → issue_ping 不登记回波（pending=0，
+#  监听窗到期 NO_RETURN）；覆盖含 45° → 登记 1 条回波并到点结算（RETURN）。
+
+
+func _c8_active_ping_sector(fails: Array) -> void:
+	var w0 := World.new()
+	w0.load_scenario(_mk_cov_scenario(Vector2(0, 360), Vector2(200, 340), 4242.6, 4242.6))
+	_assert_bool(fails, "C8 out-of-sector ping issued", w0.issue_ping(), true)
+	_assert_bool(fails, "C8 out-of-sector no echo registered", w0.pending_echo_count() == 0, true)
+	_assert_eq(fails, "C8 out-of-sector LISTENING (window)", w0.ping_state_name(), "LISTENING")
+	# 无登记回波 → 诚实监听整个窗口；窗口+冷却结束（15s）→ 无任何回波可结算
+	w0.run_steps(40)  # 20s > listen 15s：监听窗到期并回到 READY
+	_assert_bool(fails, "C8 out-of-sector no echo ever", w0.take_arrived_echoes().is_empty(), true)
+	_assert_eq(fails, "C8 out-of-sector back to READY", w0.ping_state_name(), "READY")
+	_assert_bool(fails, "C8 out-of-sector can ping again", w0.can_ping(), true)
+	var w1 := World.new()
+	w1.load_scenario(_mk_cov_scenario(Vector2(0, 360), Vector2(30, 60), 4242.6, 4242.6))
+	_assert_bool(fails, "C8 in-sector ping issued", w1.issue_ping(), true)
+	_assert_bool(fails, "C8 in-sector echo registered", w1.pending_echo_count() == 1, true)
+	# τ = 2·6000/1500 = 8s → 跑到 9s（18 步）结算
+	w1.run_steps(18)
+	var echoes: Array = w1.take_arrived_echoes()
+	_assert_bool(fails, "C8 in-sector echo settled", echoes.size() == 1, true)
+	if not echoes.is_empty():
+		_assert_bool(fails, "C8 in-sector echo detected", bool(echoes[0]["detected"]), true)
+	_assert_eq(fails, "C8 in-sector RETURN", w1.ping_state_name(), "RETURN")

@@ -379,7 +379,7 @@ func _draw_lobs() -> void:
 		var is_latest: bool = t >= t_latest
 		var is_sel: bool = t == selected_time or t == hover_time
 		var inlier: bool = bool(lob.get("inlier", true))
-		var mirror: bool = bool(lob.get("mirror", false))
+		var candidate: bool = bool(lob.get("candidate", false))
 		var col: Color = lob.get("color", Color(1.0, 0.85, 0.3))
 		var origin_s := world_to_screen(lob["origin"])
 		var brad: float = deg_to_rad(float(lob["bearing_deg"]))
@@ -388,9 +388,10 @@ func _draw_lobs() -> void:
 		if not inlier:
 			_draw_dashed(origin_s, end_s, COL_OUTLIER, 1.5)
 			_draw_x(origin_s, COL_OUTLIER)
-		elif mirror:
-			# S1-03B：拖曳阵 A/B 镜像支 → 细虚线 + 半透明，绝不做成同等级普通
-			# 实线；歧义性只以弱化候选呈现（选中时再标 LR AMBIGUOUS）。
+		elif candidate:
+			# S1-03C-P1-02：未消歧的 A/B 候选组两条**同权**弱化（细虚线 + 半透明 +
+			# 同色同透明度）——绝不因 branch 符号把一边画实线泄露真假倾向；
+			# 歧义性只以弱化候选呈现（选中时标 LR AMBIGUOUS）。
 			_draw_dashed(origin_s, end_s, Color(col.r, col.g, col.b, 0.32), 1.0)
 		elif is_sel or is_latest:
 			draw_line(
@@ -400,20 +401,20 @@ func _draw_lobs() -> void:
 			draw_line(
 				origin_s, end_s, Color(col.r, col.g, col.b, _lob_alpha(lob, false, false)), 1.0
 			)
-		# σ 扇区：仅悬停 / 选中测量（图例开关 sigma 控制）；镜像支不画同等级扇区
-		if bool(layers.get("sigma", true)) and is_sel and not mirror:
+		# σ 扇区：仅悬停 / 选中测量（图例开关 sigma 控制）；候选支不画同等级扇区
+		if bool(layers.get("sigma", true)) and is_sel and not candidate:
 			_draw_sigma_wedge(lob, col)
 		draw_circle(
 			origin_s,
-			2.5 if not mirror else 1.8,
-			Color(col.r, col.g, col.b, 0.9 if not mirror else 0.45),
+			2.5 if not candidate else 1.8,
+			Color(col.r, col.g, col.b, 0.9 if not candidate else 0.45),
 		)
-	# 选中 LOB 附加高亮圈；镜像支补 "LR AMBIGUOUS" 标注
+	# 选中 LOB 附加高亮圈；候选支补 "LR AMBIGUOUS" 标注
 	if selected_time >= 0.0 or hover_time >= 0.0:
 		for lob in reps:
 			if float(lob["time"]) in [selected_time, hover_time]:
 				draw_arc(world_to_screen(lob["origin"]), 7.0, 0, TAU, 20, Color(1, 1, 1, 0.8), 2.0)
-				if bool(lob.get("mirror", false)):
+				if bool(lob.get("candidate", false)):
 					var brad2: float = deg_to_rad(float(lob["bearing_deg"]))
 					var dir2 := Vector2(sin(brad2), -cos(brad2))
 					var lp2: Vector2 = world_to_screen(lob["origin"]) + dir2 * ray_len_px * 0.3

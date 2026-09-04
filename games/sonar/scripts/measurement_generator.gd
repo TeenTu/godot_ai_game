@@ -69,7 +69,14 @@ func generate_passive(
 
 	# 概率探测
 	var pd: float = sensor.detection_probability(se)
-	var detected: bool = _rng.randf() < pd
+	# S1-03C-P1-03/REQ-08：coverage/baffle 真正参与自动链——覆盖扇区外或挡板
+	# 盲区内的目标恒为 miss（detected=false）。旧实现 SensorArray.in_coverage()
+	# 无任何调用方，场景 JSON 声明的覆盖角/盲区形同虚设（BOW/FLANK 全向）。
+	# 覆盖判断放在 pd 采样之后，保持 RNG 消耗序列不变（全向覆盖场景零行为变化）。
+	var in_cov: bool = sensor.in_coverage(
+		NavUtils.wrap360(true_bearing - float(observer.course_deg))
+	)
+	var detected: bool = _rng.randf() < pd and in_cov
 
 	# 生成观测（未探测到时 detected=false——这是"miss"，必须由 World/UI/
 	# Tracker 三层过滤，绝不携带未加噪的真方位进入玩家链，GAP-DATA-01）。

@@ -494,20 +494,24 @@ static func latest_measurement(world: World) -> Measurement:
 
 
 # ------------------------------------------------------------------
-#  S1-03B：显示层歧义隔离（可无头单测）
+#  S1-03B / S1-03C-P1-02：显示层歧义隔离（可无头单测）
 # ------------------------------------------------------------------
 
 
-## 该测量是否为拖曳阵 A/B 的"镜像支"（branch<0）。显示层对镜像支必须用
-## 细虚线/半透明表示，绝不与主支同等级实线；同 pair 的主支（branch>0）实线。
-static func measurement_is_mirror(m: Measurement) -> bool:
-	return m.has_ambiguity() and m.ambiguity_branch < 0
+## 该测量是否为"未消歧歧义候选组"成员（A 或 B 支）。
+## P1-02/REQ-07：消歧前 A/B 只是同一物理到达的两个候选解释，**必须同权显示**
+## （同色/同线型/同透明度），禁止按 branch 符号把一边画实线、另一边画弱化
+## 虚线——那会从线型泄露真实一侧（生成器内部若把真实方向标 +1，玩家无需
+## 机动即可猜中）。resolved 后才允许按 TMA 权重弱化落选支（后续接入
+## mirror_weights 数据链路）。
+static func is_ambiguity_candidate(m: Measurement) -> bool:
+	return m.has_ambiguity()
 
 
-## 把单条 Track 的测量历史转成海图 LOB 条目（含 mirror 标记），供 main_ui
-## 组装 _chart.lobs。显示层据此做到：同一 physical evidence（A/B 共享
-## evidence_id）只会产生一条同等级普通 LOB + 至多一条镜像（细虚线）——
-## 绝不把两个分支当两条普通实线。
+## 把单条 Track 的测量历史转成海图 LOB 条目（含 candidate 标记），供 main_ui
+## 组装 _chart.lobs。显示层据此：同一 physical evidence（A/B 共享 evidence_id）
+## 的两条候选 LOB 都以同权弱化样式呈现（细虚线/半透明 + LR AMBIGUOUS 标注），
+## 绝不把两个分支当两条普通实线，也绝不给其中一支更高的视觉权重。
 static func lob_entries(t: Track, col: Color, is_sel: bool, outlier_times: Dictionary) -> Array:
 	var out: Array = []
 	for m in t.measurement_history:
@@ -525,14 +529,14 @@ static func lob_entries(t: Track, col: Color, is_sel: bool, outlier_times: Dicti
 					"time": m.timestamp,
 					"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
 					"inlier": inlier,
-					"mirror": measurement_is_mirror(m),
+					"candidate": is_ambiguity_candidate(m),
 				}
 			)
 		)
 	return out
 
 
-## 选中 Track 的测量索引条目（海图悬停/选中联动），带 mirror 标记。
+## 选中 Track 的测量索引条目（海图悬停/选中联动），带 candidate 标记。
 static func meas_index_entries(t: Track, outlier_times: Dictionary) -> Array:
 	var out: Array = []
 	for m in t.measurement_history:
@@ -546,7 +550,7 @@ static func meas_index_entries(t: Track, outlier_times: Dictionary) -> Array:
 					"bearing_deg": m.measured_bearing_deg,
 					"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
 					"inlier": inlier,
-					"mirror": measurement_is_mirror(m),
+					"candidate": is_ambiguity_candidate(m),
 					"track_id": t.track_id,
 				}
 			)

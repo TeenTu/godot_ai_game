@@ -65,6 +65,10 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 - **阵列**：BOW（全向，艉部 ±30° 盲区）/ FLANK（左右舷 ±55..125°，高增益高精度）/
   TOWED（相对阵轴前视 ±100°，低频增益最高）；右上 Operator 区可切换，覆盖外无检测。
   多扇区阵列（FLANK）方向性增益取"所有覆盖扇区中最优一支"（S1-01 回归）。
+  覆盖/盲区同样在**自动测量链与主动 Ping 链**强制执行（S1-03C-P1-03）：
+  自动被动测量经 `SensorArray.in_coverage()` 门禁（覆盖外恒 miss）；
+  主动 Ping 发射时刻固化各目标相对方位、只登记发射扇区内回波（`active_sonar`
+  可配 `coverage_start_deg/.../baffle_end_deg`，未配 = 全向，行为不变）。
 - **TOWED 可控长度拖曳阵（S1-03，批次2+ 重做）**：状态机
   `STOWED ↔ STREAMING ↔ HOLD_PARTIAL ↔ RETRIEVING`——实际缆长 ACT 与命令缆长 CMD
   分离，`stream/hold/retrieve` 任意长度可停可反向，缆长按固定收放速率（m/s）逼近命令；
@@ -279,11 +283,13 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 10 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 12 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
-`s100_integrity_test`（S1-00 信息链完整性验收 D1-D8）。
+`s100_integrity_test`（S1-00 信息链完整性验收 D1-D8）、`s1_03b_scope_test`
+（S1-03B 阵列作用域 + 拖曳歧义呈现）、`s1_03c_test`（S1-03C 证据组关联 +
+阵列中心几何 + coverage/发射扇区接入，C1-C8）。
 
 ### S1-00 信息链热修状态（2026-09）
 

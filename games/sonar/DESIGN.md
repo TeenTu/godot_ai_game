@@ -193,6 +193,13 @@ update_interval_s, tracker_capacity, deployed
 > 分别拟合，softmax 分支权重 `w_A=1/(1+exp(−(J_B−J_A)/2))`；可观测性合格
 > （rank≥4 且 legs≥2）且最佳权重≥门限（默认 0.9）才 `mirror_resolved=true`，
 > 否则 `AMBIGUOUS_LR`（落选分支保留在 alternatives）。
+>
+> **覆盖/挡板强制执行（S1-03C-P1-03）**：SensorArray 的 `coverage_sector` /
+> `baffle_sector`（相对艏向，经 `coverage_start_deg/coverage_end_deg/
+> baffle_start_deg/baffle_end_deg` 声明）不再只是配置数据——自动被动链
+> `MeasurementGenerator.generate_passive()` 与主动 Ping `World.issue_ping()`
+> 都经 `SensorArray.in_coverage()` 门禁：覆盖外/挡板盲区内目标恒 miss。
+> 门禁在 pd 采样之后判定，RNG 消耗序列不变（全向 0..360 场景零行为变化）。
 
 ### 3.5 Measurement
 ```
@@ -251,6 +258,12 @@ Ping；无硬件 → 状态 `UNAVAILABLE`、按钮禁用，绝不自动构造缺
 艇首主动阵参数（ping_sl_db / cooldown_s / freq_min_hz / freq_max_hz /
 array_gain_db / sound_speed_m_s / listen_window_s）全部由
 `own_ship.active_sonar` 覆盖；场景配了 `array_type=="active"` 传感器则复用之。
+
+**发射扇区（S1-03C-P1-03）**：主动阵不是全向的——`own_ship.active_sonar` 可
+声明 `coverage_start_deg/coverage_end_deg/baffle_start_deg/baffle_end_deg`
+（相对艏向，未声明 = 全向 0..360 无盲区），与 SensorArray 覆盖模型同源。
+`issue_ping` 在**发射时刻固化各目标相对方位**，只登记扇区内目标的在途回波；
+扇区外目标绝不产生回波（监听窗诚实到期 → NO_RETURN），到达时刻不补判。
 
 发射瞬间只按当前几何登记各目标的在途回波（`arrive_t = now + 2R/c` 与
 `range_ref_m`，**测距同源基准 REQ-19**）；结算在到达时刻

@@ -522,8 +522,9 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		# S1-03B：条目由 TmaUiData 组装并给 A/B 镜像支打 mirror 标记——海图侧
-		# 对镜像只画细虚线/半透明（LR AMBIGUOUS），绝不出现两条同等级普通 LOB。
+		# S1-03B/03C-P1-02：条目由 TmaUiData 组装——未消歧 A/B 候选组两条都打
+		# candidate 标记，海图同权画细虚线/半透明（LR AMBIGUOUS），既不出现两条
+		# 同等级普通 LOB，也不因 branch 符号泄露真实一侧。
 		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
@@ -899,12 +900,7 @@ func _on_fit_tma() -> void:
 	# S1-03C-P0-03：门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
 	# 不再用原始 Measurement 行数——否则拖曳 2 次点击(4 行)会被误放行。
 	if sel.evidence_count() < 4:
-		_update_status(
-			(
-				"Contact %s needs >= 4 physical evidences (has %d)"
-				% [sel.track_id, sel.evidence_count()]
-			)
-		)
+		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
 		return
 
 	var meas: Array = []

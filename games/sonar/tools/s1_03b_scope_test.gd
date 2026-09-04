@@ -17,8 +17,9 @@ extends SceneTree
 ##       艇心观测/无歧义——绝不产生"新传感器 + 旧阵拖曳字段"错配。
 ##   S4  点击 BOW/FLANK 行不产生镜像 Measurement（create_mark_group size==1）；
 ##       普通 BOW/FLANK 测量 ambiguous_pair_id 空、ambiguity_branch==0。
-##   S5  显示层隔离：TmaUiData.lob_entries 对同一 evidence 恰产生 1 条同等级
-##       普通 LOB + 1 条 mirror（细虚线/半透明）；无歧义 Track 全非 mirror。
+##   S5  显示层隔离（S1-03C-P1-02 更新）：TmaUiData.lob_entries 对同一证据的
+##       A/B 两条都标 candidate（同权弱化候选，细虚线/半透明）——既不出现两条
+##       同等级普通 LOB，也不按 branch 泄露真实侧；无歧义 Track 全非 candidate。
 ##
 ## 全部确定性（固定种子/解析构造），可无头运行：
 ##   godot --headless --path games/sonar --script res://tools/s1_03b_scope_test.gd
@@ -323,7 +324,7 @@ func _s4_hull_array_no_mirror(fails: Array) -> void:
 
 
 # ------------------------------------------------------------------
-#  S5：显示层隔离 —— lob_entries 同一 evidence 恰 1 实线 + 1 mirror
+#  S5：显示层隔离 —— lob_entries 同一 evidence 的 A/B 两条同权候选（P1-02）
 # ------------------------------------------------------------------
 
 
@@ -352,20 +353,23 @@ func _s5_lob_mirror_isolation(fails: Array) -> void:
 	_assert_bool(fails, "S5 two lob entries", lobs.size() == 2, true)
 	if lobs.size() != 2:
 		return
-	var mirror_n: int = 0
-	var main_n: int = 0
+	var cand_n: int = 0
+	var solid_n: int = 0
 	for lob in lobs:
-		if bool(lob.get("mirror", false)):
-			mirror_n += 1
+		if bool(lob.get("candidate", false)):
+			cand_n += 1
 		else:
-			main_n += 1
-	_assert_bool(fails, "S5 exactly 1 mirror per evidence", mirror_n == 1, true)
-	_assert_bool(fails, "S5 exactly 1 main per evidence", main_n == 1, true)
-	# 普通 BOW/FLANK Track：全非 mirror（不会出现两条同等级以外的东西）
+			solid_n += 1
+	# P1-02：A/B 两条都同权候选（细虚线/半透明），不存在"主实线 + 弱化镜像"之分
+	_assert_bool(fails, "S5 both A/B are equal candidates", cand_n == 2, true)
+	_assert_bool(fails, "S5 no solid main branch leaks", solid_n == 0, true)
+	# 普通 BOW/FLANK Track：全非 candidate（不会出现歧义弱化以外的东西）
 	var t2: Track = tracker.mark(_mk_plain("BOW", 30.0, 8.0), "M")
 	var lobs2: Array = TmaUiData.lob_entries(t2, Color(0.2, 0.8, 0.3), true, {})
 	for lob in lobs2:
-		_assert_bool(fails, "S5 hull lob never mirror", not bool(lob.get("mirror", false)), true)
+		_assert_bool(
+			fails, "S5 hull lob never candidate", not bool(lob.get("candidate", false)), true
+		)
 
 
 func _mk_plain(aid: String, brg: float, t: float) -> Measurement:
