@@ -424,7 +424,12 @@ target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-0
 LOB 起点不随本艇机动漂移（AT-09）/ThreatTrack 时间-方位-种类升级链关联抑制
 告警洪泛/SeekerBeamState 扇区单一真源+适配器被动与主动门边界内外与正后行为
 （AT-19）/海图真实 torpedo_id+tx_state 驱动脉冲+真实 ±σ+命中测试与 auto_frame
-/证据与 track 无 Truth 泄漏，PD-01..05）。
+/证据与 track 无 Truth 泄漏，PD-01..05）、
+`patch_e_test`（评审 Patch E：命令拒绝具体原因 WIRE CUT/LAUNCHING/NO
+CANDIDATE+五正交状态逐帧行/武器卡重建保留 header+无候选 Accept 禁用+事件
+日志一行一事件/s1_combat 场景装配+SONAR_SCENARIO 选择器+UI 同配置端到端
+/搜索扫掠自当前航向连续初始化/侧栏宽度契约 300-340-420/候选摘要含
+bearing_sigma_deg，PE-01..06）。
 
 ### S1-00 信息链热修状态（2026-09）
 

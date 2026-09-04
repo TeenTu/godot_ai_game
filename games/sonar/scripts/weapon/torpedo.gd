@@ -101,6 +101,9 @@ var trail: Array = []  # [{e, n, t}] 供海图画轨迹（自身状态，非 Tru
 # Commit 4 命令日志（S1-07 §5.1：线控命令另记 CommandLog，绝不悄悄改写原始
 # 发射程序）。_fallback_active：导线断/切后进入 fallback 执行态。
 var command_log: Array = []  # [{t, cmd, detail}] 已接受线控命令（封顶 256）
+# P1-01：最近一次 UI 命令被拒的具体原因（WIRE CUT / LAUNCHING /
+# NO CANDIDATE / INVALID STATE ...），供武器卡显示；命令成功时清空。
+var last_cmd_reject_reason: String = ""
 # Commit 6（§6.5）：净化后的 SeekerReturn 记录（被动周期采样 + 主动回波到达）。
 # 只存 SeekerReturn 对象/其 to_dict——不含 target_id / Truth（可直供 UI/日志）。
 var seeker_returns: Array = []
@@ -109,6 +112,11 @@ var passive_receiver_on: bool = true
 var _cmd_course_deg: float = -1.0  # <0 = 无航向命令（保持当前航向）
 var _launch_t: float = 0.0
 var _sim_time: float = 0.0
+# P2-01：搜索扫掠相位连续初始化——进入 SEARCH 时记录进入时刻并把扫掠
+# 相位偏置到当前航向（不跳到全局 sim_time 相位）。离开 SEARCH 失效。
+var _search_sweep_active: bool = false
+var _search_enter_t: float = 0.0
+var _search_phase_offset_s: float = 0.0
 var _tx_cycle_s: float = 0.0
 var _tx_manual_armed: bool = false
 var _depth_model: RefCounted = null  # DepthLayerModel（Commit 2 由 ctx 注入）
@@ -254,7 +262,7 @@ static func _enum_name(keys: Array, v: int, fallback: String) -> String:
 
 
 func command_course(deg: float) -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	_cmd_course_deg = NavUtils.wrap360(deg)
 	_log_command("SET_COURSE", {"course_deg": _cmd_course_deg})
@@ -265,7 +273,7 @@ func command_course(deg: float) -> bool:
 ## 新旧模式续航比等比折算剩余燃料（HIGH 更快烧完，QUIET 更省），并更新
 ## 运行噪声源级（由 acoustic_profile 派生，_emit_running_noise 消费）。
 func command_speed_mode(mode: int) -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	if mode == speed_mode:
 		return true
@@ -284,7 +292,7 @@ func command_speed_mode(mode: int) -> bool:
 ## 深度带命令：写 commanded_depth_band 并解析目标 hold 深度（Commit 2 起
 ## DepthLayerModel 注入后按模型配置；无模型用占位 hold 深度）。
 func command_depth_band(band: String) -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	if not _command_depth_band_internal(band):
 		return false
@@ -293,7 +301,7 @@ func command_depth_band(band: String) -> bool:
 
 
 func set_active_tx(on: bool) -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	if on:
 		if active_tx_state == ActiveTxState.OFF:
@@ -310,7 +318,7 @@ func set_active_tx(on: bool) -> bool:
 
 
 func authorize_autonomy() -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	guidance_authority = GuidanceAuthority.AUTONOMOUS
 	# P0-02.4：无锁时进入 SEARCH 并从当前航向平滑进入程序扇区扫掠；
@@ -334,7 +342,7 @@ func authorize_autonomy() -> bool:
 
 
 func return_to_wire_only() -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	guidance_authority = GuidanceAuthority.WIRE_ONLY
 	_assist_track_id = -1
@@ -347,9 +355,10 @@ func return_to_wire_only() -> bool:
 ## 导线连接时接受某条航迹作为制导输入；候选列表来自 seeker 的净化摘要
 ## （track_summaries），绝不暴露 Truth。断线后命令被拒。
 func accept_seeker_track(track_id: int) -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	if _seeker == null or _seeker.track_by_id(track_id) == null:
+		last_cmd_reject_reason = "NO CANDIDATE"
 		return false
 	_assist_track_id = track_id
 	# P0-02.5：接受航迹成功 = 显式进入 ASSISTED；绝不出现“按钮成功但
@@ -362,7 +371,7 @@ func accept_seeker_track(track_id: int) -> bool:
 
 ## 玩家主动切断（§5.4 CUT_WIRE）：切断后执行 fallback 并拒绝后续命令。
 func cut_wire() -> bool:
-	if not _wire_accepts_command():
+	if not _cmd_gate():
 		return false
 	if not wire_link.cut():
 		return false
@@ -381,6 +390,20 @@ func _wire_accepts_command() -> bool:
 		and mission_state != MissionState.LAUNCHING
 		and mission_state != MissionState.DEAD
 	)
+
+
+func _cmd_gate() -> bool:
+	if mission_state == MissionState.STOWED or mission_state == MissionState.DEAD:
+		last_cmd_reject_reason = "INVALID STATE %s" % mission_state_name()
+		return false
+	if mission_state == MissionState.LAUNCHING:
+		last_cmd_reject_reason = "LAUNCHING"
+		return false
+	if not wire_link.accepts_commands():
+		last_cmd_reject_reason = "WIRE %s" % wire_state_name()
+		return false
+	last_cmd_reject_reason = ""
+	return true
 
 
 ## Fallback 执行（§5.5，Commit 4）：导线 BROKEN/CUT 后——
@@ -518,6 +541,8 @@ func _bind_ctx(ctx: RefCounted) -> void:
 
 
 func _advance_mission(dt: float, sim_time: float) -> bool:
+	if mission_state != MissionState.SEARCH:
+		_search_sweep_active = false  # P2-01：离开 SEARCH 后重置扫掠相位
 	match mission_state:
 		MissionState.LAUNCHING:
 			if sim_time - _launch_t >= LAUNCH_TRANSITION_S:
@@ -1018,6 +1043,8 @@ func _advance_guidance(sim_time: float) -> void:
 
 ## 搜索扫掠（§7.5）：SEARCH 且无制导目标、无玩家命令时按程序扇区扫掠
 ## （SNAKE 三角波 / CIRCLE 旋转），转向速率仍受 max_turn_rate 约束。
+## P2-01：扫掠相位在进入 SEARCH 时连续初始化（从当前航向展开），
+## 不取全局 sim_time 相位。
 func _search_sweep_course(sim_time: float) -> float:
 	var prog := _search_program()
 	if prog == null:
@@ -1025,9 +1052,30 @@ func _search_sweep_course(sim_time: float) -> float:
 	var pattern: String = (
 		"SNAKE" if prog.search_pattern == WeaponProgram.SearchPattern.SNAKE else "CIRCLE"
 	)
+	if not _search_sweep_active:
+		_search_sweep_active = true
+		_search_enter_t = sim_time
+		_search_phase_offset_s = _search_phase_offset_for(prog, pattern)
+	var t: float = sim_time - _search_enter_t + _search_phase_offset_s
 	return TorpedoGuidance.search_course_deg(
-		pattern, prog.search_center_deg, prog.search_half_angle_deg, sim_time, _seeker_cfg()
+		pattern, prog.search_center_deg, prog.search_half_angle_deg, t, _seeker_cfg()
 	)
+
+
+## P2-01：求 t0 使 pattern(t0) = 当前航向（三角波取第一半周期分支，
+## 中心外夹到扇区边界；圆周取最近角），扫掠自当前航向连续展开。
+func _search_phase_offset_for(prog: WeaponProgram, pattern: String) -> float:
+	var cfg := _seeker_cfg()
+	var center: float = float(prog.search_center_deg)
+	if pattern == "CIRCLE":
+		var period: float = float(
+			cfg.get("circle_period_s", TorpedoGuidance.DEFAULT_CIRCLE_PERIOD_S)
+		)
+		return NavUtils.wrap360(course_deg - center) * period / 360.0
+	var period2: float = float(cfg.get("snake_period_s", TorpedoGuidance.DEFAULT_SNAKE_PERIOD_S))
+	var half: float = maxf(float(prog.search_half_angle_deg), 1.0)
+	var v: float = clampf(NavUtils.wrap180(course_deg - center) / half, -1.0, 1.0)
+	return (v + 1.0) / 4.0 * period2
 
 
 ## 搜索参数来源：fallback 激活后按 fallback（§5.5），否则按发射程序。

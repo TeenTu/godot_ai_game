@@ -2,10 +2,14 @@ class_name InWaterWeaponPanel
 extends VBoxContainer
 ## in_water_weapon_panel.gd — 在水武器控制台（S1-07 §11.2，Commit 11）。
 ##
-## 每枚在水鱼雷一节：任务/Seeker/主动/权限/导线/深度/速度/燃料/锁定摘要 +
-## 控制按钮（Course ◀▶ / Upper / Lower / Speed / Active ON-OFF / Autonomy /
-## Wire-Only / Accept Track / Cut Wire）。不可用按钮 disabled 并给原因
-## （导线 BROKEN/CUT、STOWED、无候选航迹等）。
+## 每枚在水鱼雷一节：五正交状态（P1-01：Receiver / Transmitter / Track /
+## Authority / Steering，逐帧从权威状态刷新，不等 phase 变化）+ 导线/深度/
+## 速度/燃料 + 控制按钮。命令失败显示具体原因（tp.last_cmd_reject_reason：
+## WIRE CUT / LAUNCHING / NO CANDIDATE / INVALID STATE ...），不是统一
+## rejected (CONNECTED)。
+##
+## P1-03.4：静态 header（标题）保留，动态武器卡只在专用 _cards 容器内重建，
+## _rebuild 不再 queue_free 标题。
 ##
 ## 信息链纪律：只读己方武器自身状态（合法）；命令只走 Torpedo 线控通道
 ## （wire CONNECTED 门控）；Seeker 候选来自净化摘要（track_summaries，无
@@ -14,6 +18,7 @@ extends VBoxContainer
 var _world: World = null
 var _sections: Dictionary = {}  # torpedo_id -> {labels, buttons...}
 var _note: Label = null
+var _cards: VBoxContainer = null  # P1-03.4：动态武器卡专用容器
 var _seen_ids: Array = []
 
 
@@ -25,14 +30,18 @@ func _init() -> void:
 	_note = Label.new()
 	_note.text = "No torpedoes in water"
 	_note.add_theme_font_size_override("font_size", 12)
+	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2：不撑宽侧栏
 	add_child(_note)
+	_cards = VBoxContainer.new()
+	_cards.add_theme_constant_override("separation", 4)
+	add_child(_cards)
 
 
 func bind(w: World) -> void:
 	_world = w
 
 
-## 每帧同步：鱼雷集合变化时重建；状态文本轻刷新。
+## 每帧同步：鱼雷集合变化时重建（只清 _cards）；状态文本逐帧轻刷新。
 func sync() -> void:
 	if _world == null or _world.weapons == null:
 		return
@@ -52,14 +61,13 @@ func sync() -> void:
 
 
 func _rebuild(tps: Array) -> void:
-	for c in get_children():
-		if c != _note:
-			c.queue_free()
+	for c in _cards.get_children():
+		c.queue_free()
 	_sections.clear()
 	if tps.is_empty():
 		return
 	for tp in tps:
-		add_child(_build_section(tp))
+		_cards.add_child(_build_section(tp))
 
 
 func _build_section(tp: RefCounted) -> VBoxContainer:
@@ -72,6 +80,7 @@ func _build_section(tp: RefCounted) -> VBoxContainer:
 	box.add_child(title)
 	var lbl := Label.new()
 	lbl.add_theme_font_size_override("font_size", 11)
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2
 	box.add_child(lbl)
 	var row1 := HBoxContainer.new()
 	row1.add_theme_constant_override("separation", 3)
@@ -106,7 +115,8 @@ func _mk_btn(parent: Control, text: String, action: Callable) -> Button:
 	return b
 
 
-## 命令分发：全部经 Torpedo 线控通道（内部有 wire CONNECTED 门控）。
+## 命令分发：全部经 Torpedo 线控通道（内部有 _cmd_gate 门控并记录
+## last_cmd_reject_reason）。失败时显示具体原因（P1-01）。
 func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
 	var ok: bool = false
 	match kind:
@@ -128,12 +138,18 @@ func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
 		"cut":
 			ok = tp.cut_wire()
 	if not ok:
-		_note.text = "%s CMD rejected (%s)" % [str(tp.torpedo_id), tp.wire_state_name()]
+		var reason_v: Variant = tp.get("last_cmd_reject_reason")
+		var reason: String = str(reason_v) if reason_v != null else ""
+		_note.text = (
+			"%s CMD rejected (%s)"
+			% [str(tp.torpedo_id), reason if reason != "" else "INVALID TRANSITION"]
+		)
 
 
 ## ASSISTED：接受当前最优净化候选（track_summaries 无 Truth）。
 func _accept_best_track(tp: RefCounted) -> bool:
 	if tp._seeker == null:
+		tp.last_cmd_reject_reason = "NO CANDIDATE"
 		return false
 	var best_id: int = -1
 	var best_q: float = -1.0
@@ -142,10 +158,12 @@ func _accept_best_track(tp: RefCounted) -> bool:
 			best_q = float(s.get("lock_quality", 0.0))
 			best_id = int(s.get("track_id", -1))
 	if best_id < 0:
+		tp.last_cmd_reject_reason = "NO CANDIDATE"
 		return false
 	return tp.accept_seeker_track(best_id)
 
 
+## 逐帧刷新（P1-01：五正交状态每帧从权威状态读取，绝不在 phase 变化时才刷）。
 func _refresh_section(tp: RefCounted) -> void:
 	var sec: Dictionary = _sections.get(str(tp.torpedo_id), {})
 	if sec.is_empty():
@@ -153,14 +171,16 @@ func _refresh_section(tp: RefCounted) -> void:
 	var lbl: Label = sec["lbl"]
 	var btns: Dictionary = sec["btns"]
 	var connected: bool = tp.wire_link.accepts_commands() and tp._wire_accepts_command()
-	# §11.2 状态摘要（全部为己方武器状态/净化摘要，无 Truth）。
+	# 五正交状态（P1-01）：Receiver / Transmitter / Track / Authority / Steering。
 	var txt: String = (
-		"%s | Seeker %s | TX %s | %s"
+		"%s\nRecv %s | TX %s\nTrk %s | Auth %s\nSteer %s"
 		% [
 			tp.mission_state_name(),
-			tp.seeker_state_name(),
+			"PASSIVE_ON" if bool(tp.passive_receiver_on) else "PASSIVE_OFF",
 			tp.active_tx_state_name(),
+			tp.seeker_state_name(),
 			tp.guidance_authority_name(),
+			str(SeekerBeamState.new_from(tp).steering_source),
 		]
 	)
 	txt += (
@@ -178,21 +198,33 @@ func _refresh_section(tp: RefCounted) -> void:
 		txt += " → D %.0fm (CMD)" % tp.commanded_depth_m
 	else:
 		txt += " | D %.0fm" % tp.actual_depth_m
+	# P1-03.5：候选出现后显示 track id、bearing、sigma、quality。
 	var summaries: Array = tp._seeker.track_summaries() if tp._seeker != null else []
 	if not summaries.is_empty():
 		var top: Dictionary = summaries[0]
 		txt += (
-			"\nTrk#%s q=%.2f (%d cand)"
-			% [str(top.get("track_id", "?")), float(top.get("lock_quality", 0.0)), summaries.size()]
+			"\nTrk#%s brg %.0f° σ%.1f° q=%.2f (%d cand)"
+			% [
+				str(top.get("track_id", "?")),
+				float(top.get("bearing_est_deg", 0.0)),
+				float(top.get("bearing_sigma_deg", 0.0)),
+				float(top.get("lock_quality", 0.0)),
+				summaries.size(),
+			]
 		)
 	lbl.text = txt
-	# 不可用按钮 disabled（§11.2：说明原因）。
+	# 不可用按钮 disabled（§11.2：说明原因）；P1-03.5：无候选 Accept 禁用。
 	var wire_txt: String = tp.wire_state_name()
 	for k in btns:
 		var b: Button = btns[k]
 		if k == "cut":
 			b.disabled = not connected
 			b.tooltip_text = "Cut wire (only CONNECTED)"
+		elif k == "accept":
+			b.disabled = not connected or summaries.is_empty()
+			b.tooltip_text = (
+				"No candidate track" if summaries.is_empty() else "Accept best candidate (ASSISTED)"
+			)
 		elif k == "active":
 			b.text = (
 				"Active OFF"

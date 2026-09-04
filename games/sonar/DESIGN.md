@@ -296,6 +296,38 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   - 回归 `tools/patch_d_test.gd`（PD-01 观察点快照 AT-09/PD-02 ThreatTrack
     关联升级链与洪泛抑制/PD-03 扇区单一真源+边界内外与正后目标门 AT-19/
     PD-04 海图输入数据与命中测试/PD-05 证据与 track 无 Truth 泄漏）。
+- **Patch E（评审武器 UI 与人机工效，2026-09-04）**：
+  - P1-01 五正交状态逐帧呈现：武器卡每帧从权威状态读取 Recv/TX/Trk/Auth/
+    Steer 五行（经 SeekerBeamState 派生 steering_source），不等 seeker
+    phase 变化才刷新。命令拒绝显示具体原因：Torpedo 新增 UI 命令门
+    `_cmd_gate()` + `last_cmd_reject_reason`（WIRE CUT / WIRE BROKEN /
+    LAUNCHING / INVALID STATE / NO CANDIDATE），武器卡显示
+    `CMD rejected (<原因>)`，不再统一 rejected (CONNECTED)。内核内部检查
+    继续用无副作用的 `_wire_accepts_command()`。
+  - P1-03 侧栏与武器卡生命周期：新增 `UiContract`（侧栏宽度契约
+    min=300/preferred=340/max=420 + `sidebar_clamp_x` 每帧钳制；场景解析）；
+    侧栏 VBox 不再 EXPAND_FILL，动态 Label 全部 autowrap；武器事件日志
+    一行一事件（废除 " | " 拼接）；事件文案映射与真实事件名一致
+    （SEEKER_PHASE/TRACK_ACCEPTED/ACTIVE_TX_PING/ECHO_RECEIVED/
+    LISTEN_COMPLETE_NO_RETURN/FUZE_ARMED...），删除失效的 ACQUIRE/ENABLE
+    特判；InWaterWeaponPanel 动态卡只在专用 `_cards` 容器重建（header 保留，
+    修复重建后标题消失）；无候选时 Accept Trk disabled + tooltip 原因；
+    SeekerTrack.to_summary 新增 `bearing_sigma_deg`（候选卡显示真实方差）。
+  - P0-08 combat scenario 入口：新增 `tools/scenarios/s1_combat.json`
+    （随机敌方出生 enemy_spawn + doctrine 反击/诱饵 + 深度层 + 拖曳阵 +
+    主动声呐）；默认场景保持 stage1_basic_passive 不静默变更，
+    `SONAR_SCENARIO=s1_combat` 显式切换（UiContract.resolve_scenario_name）。
+  - P2-01 搜索扫掠连续初始化：进入 SEARCH 时记录 enter 时刻并把扫掠相位
+    偏置到当前航向（SNAKE 取三角波第一分支、CIRCLE 取最近角，中心外夹到
+    扇区边界），离开 SEARCH 重置——不再跳到全局 sim_time 相位。
+  - P2-02（简化明示）：wire `paid_out_m` 语义为「累计放缆」（鱼雷绕回不收
+    缆），文档化为有意简化；如需松缆/收缆另建 cable state。
+  - P2-03（简化明示）：被动瞬态当前同 tick 到达、主动回波按 R/c/2R/c 传播
+    （P1-07 已实现历元）；证据统一携带 available_time，抽象边界已标注。
+  - 回归 `tools/patch_e_test.gd`（PE-01 拒绝原因+五正交行/PE-02 header 保留
+    +Accept 门控+日志格式/PE-03 s1_combat 装配+UI 同配置+场景选择器/
+    PE-04 扫掠连续初始化/PE-05 侧栏契约/PE-06 摘要 sigma）。PB-04 断言随
+    P2-01 语义更新（单步持续推进 + 20s 累计净漂移 >5°，替代跳相位伪影阈值）。
 
 ---
 

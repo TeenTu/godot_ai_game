@@ -221,6 +221,8 @@ func to_summary() -> Dictionary:
 	return {
 		"track_id": seeker_track_id,
 		"bearing_est_deg": snappedf(bearing_estimate_deg, 0.1),
+		# P1-03.5：候选卡显示不确定度（真实方差，非硬编码）。
+		"bearing_sigma_deg": snappedf(sqrt(maxf(bearing_var_deg2, 0.0)), 0.1),
 		"bearing_rate_deg_s": snappedf(bearing_rate_deg_s, 0.01),
 		"has_range": range_estimate_m >= 0.0,
 		"lock_quality": snappedf(lock_quality, 0.01),
