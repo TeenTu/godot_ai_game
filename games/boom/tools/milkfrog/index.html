@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>奶蛙 MilkFrog · Three.js 重建评审（第一阶段：自然站立）</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#ffffff;
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  #stage{position:fixed;inset:56px 0 0 0;}
+  #bar{position:fixed;top:0;left:0;right:0;height:56px;z-index:10;
+    display:flex;align-items:center;gap:14px;padding:0 20px;
+    background:#fff;border-bottom:1px solid #ece8e0;}
+  #bar h1{margin:0;font-size:16px;font-weight:650;color:#2b2622;}
+  #bar .sub{font-size:12px;color:#9a917f;}
+  .btn{border:1px solid #d8d2c6;background:#faf8f4;color:#4a443a;
+    font-size:13px;padding:7px 16px;border-radius:999px;cursor:pointer;transition:all .15s;}
+  .btn:hover{border-color:#a89e8a;}
+  .btn.active{background:#2b2622;color:#fff;border-color:#2b2622;}
+  #status{margin-left:auto;font-size:12px;color:#8a8171;}
+  .vlabel{position:absolute;font-size:11.5px;color:#8a8171;background:rgba(255,255,255,.75);
+    padding:2px 8px;border-radius:6px;pointer-events:none;}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/addons/"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="bar">
+    <h1>奶蛙 MilkFrog · 重建评审</h1>
+    <span class="sub">第一阶段 · 自然站立静态模型（双手抱腹 · 无托腮）· 身高归一化 2 · 脚底 y=0</span>
+    <button class="btn active" id="btnRot">自动旋转</button>
+    <button class="btn" id="btnWire">线框模式</button>
+    <button class="btn" id="btnGLB">导出 GLB</button>
+    <span id="status"></span>
+  </div>
+  <div id="stage"></div>
+  <script>
+    window.addEventListener('error', function (e) {
+      var d = document.createElement('div');
+      d.style.cssText = 'position:fixed;top:62px;left:12px;right:12px;color:#c00;z-index:99;font:12px monospace;white-space:pre-wrap;background:rgba(255,240,240,.9);padding:8px;border-radius:6px';
+      d.textContent = '[error] ' + e.message + '\n' + (e.filename || '') + ':' + (e.lineno || '') + ':' + (e.colno || '');
+      document.body.appendChild(d);
+    });
+  </script>
+  <script type="module">
+    import { createShowcase } from './milkfrog.js';
+    import * as THREE from 'three';
+    window.THREE = THREE;
+    window.__app = createShowcase(document.getElementById('stage'));
+  </script>
+</body>
+</html>
