@@ -13,6 +13,16 @@
     "tl_absorption_alpha": 0.5,
     "tl_environment_loss": 2.0
   },
+  "depth_layers": {
+    "enabled": true,
+    "surface_depth_m": 0,
+    "bottom_depth_m": 400,
+    "thermocline_depth_m": 120,
+    "thermocline_thickness_m": 20,
+    "upper_hold_depth_m": 70,
+    "lower_hold_depth_m": 180,
+    "cross_layer_loss_db_by_frequency": { "500": 6, "3000": 10 }
+  },
   "own_ship": {
     "id": "own",
     "class_id": "attack_sub",

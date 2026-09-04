@@ -11,6 +11,9 @@ extends SceneTree
 ##       propagation_loss_layer == propagation_loss。
 ##   D6  鱼雷深度：ctx.depth_model 注入后升降按模型 hold 深度、surface/bottom
 ##       钳制生效，禁瞬移。
+##   D7  场景集成（stage1_basic_passive 现已配 depth_layers）：loader 生成
+##       env.depth_model；UI 层语义 = 只写 own.commanded_depth_m；实际深度按
+##       Vz 限速逼近；换层 ETA = |cmd-actual|/Vz_max（S1-07A §4.2/§4.5）。
 ##
 ## 全部确定性，可无头运行：
 ##   godot --headless --path games/sonar --script res://tools/depth_layer_test.gd
@@ -66,6 +69,7 @@ func _initialize() -> void:
 	_d4_layer_se_pd(fails)
 	_d5_legacy_compat(fails)
 	_d6_torpedo_depth(fails)
+	_d7_scenario_integration(fails)
 	_finish(fails)
 
 
@@ -229,6 +233,51 @@ func _d6_torpedo_depth(fails: Array) -> void:
 		fails.append("D6d torpedo never reached lower hold depth")
 	if tp.depth_state != Torpedo.DepthState.HOLDING_LOWER:
 		fails.append("D6e depth_state not HOLDING_LOWER after arrival")
+
+
+func _d7_scenario_integration(fails: Array) -> void:
+	var sc: Dictionary = ConfigLoader.load_scenario("stage1_basic_passive")
+	var world := World.new()
+	world.load_scenario(sc)
+	var wd: Dictionary = world.world
+	# loader 应生成启用中的 depth_model
+	var dm: RefCounted = wd.get("depth_model", null)
+	if dm == null or not (dm as DepthLayerModel).enabled:
+		fails.append("D7a stage1 depth_model missing/disabled")
+		return
+	var env: RefCounted = wd["env"]
+	if env.depth_model == null:
+		fails.append("D7b env.depth_model not wired")
+	# 本艇默认深度 50m = UPPER；对洋面目标 (0m) 同层 → 无跨层附加
+	var own: RefCounted = wd["own"]
+	var tgt: RefCounted = wd["targets"][0]
+	if absf(float(own.depth_m) - 50.0) > 1e-6:
+		fails.append("D7c own default depth not 50")
+	var xl_same: float = env.cross_layer_extra_db(500.0, float(own.depth_m), float(tgt.depth_m))
+	_assert_float(fails, "D7d same-layer extra 0 in scenario", xl_same, 0.0, 1e-9)
+	# UI 语义：命令只写 commanded_depth_m，实际按 Vz 限速（无瞬移换层）
+	var t0: float = world.sim_time
+	own.command_depth(180.0)
+	var reached: bool = false
+	while world.sim_time - t0 < 300.0:
+		world.tick()
+		if not own.has_depth_command() and absf(float(own.depth_m) - 180.0) < 0.5:
+			reached = true
+			break
+	if not reached:
+		fails.append("D7e own ship never reached commanded 180m")
+	if absf(float(own.depth_m) - 180.0) > 1.0:
+		fails.append("D7f own final depth wrong: %.1f" % float(own.depth_m))
+	# 换层后与洋面目标跨层：附加 TL > 0（探测难度上升，不硬置零）
+	var xl_cross: float = env.cross_layer_extra_db(500.0, float(own.depth_m), float(tgt.depth_m))
+	if xl_cross <= 0.0:
+		fails.append("D7g cross-layer extra not >0 after dive (%.2f)" % xl_cross)
+	# ETA 公式：|cmd-actual|/Vz_max（UI 显示用）
+	var o2 := TruthEntity.new()
+	o2.from_dict({"depth_m": 70.0, "max_vertical_speed_m_s": 2.0})
+	o2.command_depth(180.0)
+	var eta: float = absf(o2.commanded_depth_m - o2.depth_m) / maxf(o2.max_vertical_speed_m_s, 0.5)
+	_assert_float(fails, "D7h ETA 70->180 @2m/s", eta, 55.0, 1e-6)
 
 
 func _assert_eq(fails: Array, name: String, got: Variant, want: Variant) -> void:
