@@ -38,7 +38,7 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-9 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-10 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
@@ -160,8 +160,23 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   TorpedoContext（seeker 声源=本艇+蓝方诱饵）；双方鱼雷内核影子互听（玩家
   声呐可听到来袭鱼雷，敌方感知"来袭鱼雷"证据源）。`enemy_ai_test` AI-01..09
   + World 集成。
-- **遗留项**（后续 Commit 10-12）：引信/伤害净化反馈（Commit 10）、
-  完整深度条/告警/在水控制 UI（Commit 11）、集成任务与 CI 门禁（Commit 12）。
+- **Commit 10（§10，Fuze/伤害证据/净化反馈）**：新增 `scripts/weapon/
+  fuze_controller.gd`（§10.1 FuzeMode CONTACT/ACOUSTIC_PROXIMITY/
+  MAGNETIC_PROXIMITY 简化几何版触发半径；§10.2 解保双保险 arm distance +
+  min_time，SAFE 绝不起爆；与 Seeker/TargetSelection 彻底分离）+
+  `scripts/acoustic/emission_sanitizer.gd`（§12.3 EventSanitizer：内核事件出
+  玩法层前净化——敌方事件单程概率截获产 noisy bearing 告警证据，未探测绝不
+  产证据；己方武器事件作本艇事实转录；§10.4 战果层级 classify_detonation
+  纯函数 DETONATION_HEARD→PROBABLE_HIT→PROBABLE_KILL 只吃证据+玩家航迹方位，
+  CONFIRMED_KILL 仅经 Debrief）。WeaponProgram 增 fuze_mode（快照携带）；
+  WeaponSystem id_prefix（敌方 "ET"）。World 引信引擎：双方鱼雷 vs 对方 Truth
+  几何触发 → EXPLOSION 声学事件（入总线可被双方截获）+ Truth 伤害（敌 sunk /
+  本艇 damaged）+ 最近通过距离台账（_detonations，仅 _debrief_summary 调试
+  通道）；player_evidence（净化证据队列）供告警 UI（Commit 11）。普通 UI 无
+  即时 CONFIRMED KILL、无 target_id（UI-07/08）。`fuze_evidence_test`
+  FUZE-01..07。
+- **遗留项**（后续 Commit 11-12）：完整深度条/告警/在水控制 UI（Commit 11）、
+  集成任务与 CI 门禁（Commit 12）。
 
 ---
 

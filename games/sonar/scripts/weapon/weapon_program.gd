@@ -51,6 +51,9 @@ var autonomy_enable_distance_m: float = 3000.0
 var autonomy_enable_time_s: float = 0.0
 
 var warhead_arm_distance_m: float = 300.0
+## 引信模式（S1-07 §10.1，Commit 10）：与制导/Seeker 彻底分离——磁/声学近炸
+## 属 Fuze 层，绝不进 Seeker TargetSelection。值取 FuzeController.FUZE_*。
+var fuze_mode: String = FuzeController.FUZE_CONTACT
 
 ## 导线中断后执行的安全回退程序（S1-07 §5.5）。发射前必须有 fallback：
 ## is_valid() 在 fallback_program == null 时拒绝该程序。
@@ -80,6 +83,7 @@ func snapshot() -> WeaponProgram:
 	p.autonomy_enable_distance_m = autonomy_enable_distance_m
 	p.autonomy_enable_time_s = autonomy_enable_time_s
 	p.warhead_arm_distance_m = warhead_arm_distance_m
+	p.fuze_mode = fuze_mode
 	p.fallback_program = fallback_program.snapshot() if fallback_program != null else null
 	return p
 
