@@ -48,18 +48,19 @@ var _kill_white: ColorRect = null  # 击杀全屏泛白 overlay（峰值≤0.15�
 var _kill_white_a: float = 0.0
 var _toast: Label
 var _wave_cd_label: Label  # M4 §5 波间歇倒计时
-var _over_panel: Control
-var _over_title: Label
-var _over_stats: Label
+var _over_panel: Control  # BoomResultPanel（结算 + 再来一局中转）
 var _hint_label: Label
 var _combo_label: Label  # M3 击杀播报大字
 var _combo_tween: Tween = null
-var _result_stars: Array = []  # M3 结算星级 Label（依次弹出）
-var _slowmo_until_ms: int = 0  # 结算慢镜头结束的真实时刻（ms）
-var _result_final_score: int = 0
-var _result_counting: bool = false  # 结算数字滚动期间 _hud_refresh 不覆盖分数
+var _result_stars: Array = []  # 镜像 BoomResultPanel.stars（play_test 兼容查询）
+var _slowmo_until_ms: int = 0  # 结算慢镜头镜像（真实时刻在 BoomResultPanel 内）
 var _started := false
 var _dmg_flash := 0.0
+# ---- M5 选武器（design_m5_weapons.md §3.3）----
+var _hud: Control
+var _select: BoomWeaponSelect = null
+var _in_select := false
+var _hp_slot: ColorRect = null
 
 
 func _ready() -> void:
@@ -85,15 +86,22 @@ func _ready() -> void:
 	skill_fx = BoomSkillFx.new()
 	world.add_child(skill_fx)
 	_build_hud()
+	_build_weapon_select()
 	_connect_signals()
 	_started = true
 	_hud_refresh()
+	if _is_test_mode():
+		# CI / vision-e2e：跳过选单，直接默认武器开战（design §3.3 测试路径）。
+		_start_match_with(BoomWeapons.default_id())
+	else:
+		_open_weapon_select()
 
 
 func _physics_process(_delta: float) -> void:
 	if not _started or sim == null:
 		return
-	sim.input_move = joystick.output
+	# M5 选武器期间：摇杆输入不落入 sim（面板 STOP 已挡 gui 事件，双保险归零）。
+	sim.input_move = Vector2.ZERO if _in_select else joystick.output
 	if skill_sys != null:
 		skill_sys.tick(_delta)
 	_dmg_flash = maxf(0.0, _dmg_flash - _delta * 2.4)
@@ -102,11 +110,51 @@ func _physics_process(_delta: float) -> void:
 	_kill_white_a = maxf(0.0, _kill_white_a - _delta * 3.0)
 	if _kill_white != null:
 		_kill_white.color.a = _kill_white_a
-	# M3 结算慢镜头：0.3× 持续 0.35s（真实时钟），到点恢复并进结算序列。
-	if _slowmo_until_ms > 0 and Engine.time_scale < 1.0:
-		if Time.get_ticks_msec() >= _slowmo_until_ms:
-			_end_slowmo()
+	# M3 结算慢镜头：0.3× 持续 0.35s（真实时钟），由 BoomResultPanel 轮询收尾。
+	if _over_panel is BoomResultPanel:
+		(_over_panel as BoomResultPanel).tick()
 	_hud_refresh()
+
+
+# ------------------------------------------------------------------ M5 选武器流程
+
+
+## 构建选武器面板（隐藏态加入 HUD，开局/重开时显示）。
+func _build_weapon_select() -> void:
+	if _hud == null:
+		return
+	_select = BoomWeaponSelect.new()
+	_hud.add_child(_select)
+	_select.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_select.confirmed.connect(_on_weapon_confirmed)
+	_select.visible = false
+
+
+## 打开选单（默认高亮泡泡枪）；sim 处于"未开战"纯重置态。
+func _open_weapon_select() -> void:
+	_in_select = true
+	if _select != null:
+		_select.show()
+		_select.set_selected(BoomWeapons.default_id())
+
+
+## 选单【开战】确认回调：注入武器 → 按 max_hp 重建血条 → 开战发波。
+func _on_weapon_confirmed(weapon_id: String) -> void:
+	if weapon_id == "" or sim == null:
+		return
+	_start_match_with(weapon_id)
+
+
+## 测试路径与选单确认共用：先落武器数值，再开战（design §3.3 关键工程点 1/2）。
+func _start_match_with(weapon_id: String) -> void:
+	_in_select = false
+	if _select != null:
+		_select.hide()
+	if sim == null:
+		return
+	sim.set_weapon(weapon_id)
+	_rebuild_hp()
+	sim.begin_match()
 
 
 # ------------------------------------------------------------------ M2 技能手势
@@ -133,6 +181,9 @@ func _skill_button_at(cp: Vector2) -> String:
 ## 左侧触点不在此处理——交给虚拟摇杆(DYNAMIC,已设 exclude_right_x)。
 func _input(event: InputEvent) -> void:
 	if skill_sys == null or sim == null:
+		return
+	# M5 选武器期间：手势识别全部挂起（面板内控件自行处理点击）。
+	if _in_select:
 		return
 	if event is InputEventScreenTouch:
 		var idx: int = event.index
@@ -210,6 +261,8 @@ func _test_hook_get_state() -> Dictionary:
 		"enemies": sim.enemies.size(),
 		"bullets": _active_bullet_count(),
 		"over": sim.is_over,
+		"weapon": sim.player.weapon_id,
+		"match_started": sim.match_started,
 		"x": sim.player.position.x,
 		"z": sim.player.position.z,
 		"joy_pressed": jg["pressed"],
@@ -550,6 +603,7 @@ func _build_hud() -> void:
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
+	_hud = hud
 	_build_battle_frame(hud)
 
 	_vignette = ColorRect.new()
@@ -701,6 +755,7 @@ func _build_hp(hud: Control) -> void:
 	slot.position = Vector2(14, 111)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(slot)
+	_hp_slot = slot
 	for i in sim.player.max_hp:
 		var block := ColorRect.new()
 		block.color = COL_CREAM
@@ -709,6 +764,19 @@ func _build_hp(hud: Control) -> void:
 		block.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		hud.add_child(block)
 		_hp_blocks.append(block)
+
+
+## M5：换武器后 max_hp 变化，按新上限重建血条（design §3.3 工程点 2，开波前重建一次）。
+func _rebuild_hp() -> void:
+	if _hp_slot != null and is_instance_valid(_hp_slot):
+		_hp_slot.free()
+		_hp_slot = null
+	for block in _hp_blocks:
+		if is_instance_valid(block):
+			block.free()
+	_hp_blocks.clear()
+	if _hud != null:
+		_build_hp(_hud)
 
 
 func _build_joystick(hud: Control) -> void:
@@ -741,148 +809,56 @@ func _trigger_kill_flash(peak: float = 0.15) -> void:
 
 
 func _build_game_over(hud: Control) -> void:
-	_over_panel = Control.new()
-	_over_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_over_panel.visible = false
-	_over_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	hud.add_child(_over_panel)
-	var dim := ColorRect.new()
-	dim.color = Color(1.0, 0.44, 0.24, 0.30)
-	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
-	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_over_panel.add_child(dim)
-	var backdrop_path := "res://assets/images/backgrounds/carnival_arena.png"
-	if ResourceLoader.exists(backdrop_path):
-		var backdrop := TextureRect.new()
-		backdrop.texture = load(backdrop_path) as Texture2D
-		backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
-		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		backdrop.modulate = Color(1.0, 1.0, 1.0, 0.92)
-		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_over_panel.add_child(backdrop)
-		_over_panel.move_child(backdrop, 0)
-
-	_over_title = _make_label(_over_panel, "BUBBLE BREAK!", 52, COL_ORANGE, Vector2(100, 360))
-	_over_title.size = Vector2(520, 70)
-	_over_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-
-	_over_stats = _make_label(_over_panel, "", 24, Color.WHITE, Vector2(0, 430))
-	_over_stats.size = Vector2(720, 110)
-	_over_stats.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-
-	# M3 结算星级：依次弹出（初始隐藏，_start_result_sequence 里按序过冲弹出）。
-	for i in 3:
-		var star := _make_label(
-			_over_panel, "\u2605", 64, Color(1.0, 0.85, 0.3), Vector2(238.0 + float(i) * 90.0, 580)
-		)
-		star.size = Vector2(80, 90)
-		star.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		star.pivot_offset = star.size * 0.5
-		star.visible = false
-		_result_stars.append(star)
-
-	var restart := Button.new()
-	restart.text = "TAP TO RETRY"
-	restart.add_theme_font_size_override("font_size", 30)
-	restart.position = Vector2(190, 720)
-	restart.size = Vector2(340, 90)
-	restart.pressed.connect(_on_retry)
-	_over_panel.add_child(restart)
+	var panel := BoomResultPanel.new()
+	hud.add_child(panel)
+	panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.setup_score_label(_score_label)
+	panel.retry_pressed.connect(_on_retry)
+	_over_panel = panel
+	_result_stars = panel.stars
 
 
+## M5 重开闭环（design §3.3 工程点 4）：不再 reload_current_scene——
+## 隐藏结算 → sim 纯重置 → 弹回选武器（保留"失败后快速换武器再战"的节奏）。
 func _on_retry() -> void:
-	get_tree().reload_current_scene()
+	var panel := _over_panel as BoomResultPanel
+	if panel != null:
+		panel.reset_for_retry()
+		panel.visible = false
+	_slowmo_until_ms = 0
+	Engine.time_scale = 1.0
+	_kill_white_a = 0.0
+	_dmg_flash = 0.0
+	if _vignette != null:
+		_vignette.color.a = 0.0
+	if _hint_label != null:
+		_hint_label.visible = true
+	if sim == null:
+		return
+	sim.restart()
+	_rebuild_hp()
+	_open_weapon_select()
 
 
-## M3 结算状态机（design_boom.md §7.2）：最后一击 0.3× 慢镜头(0.35s)
-## → 星级依次弹出 → 金币飞向计数器 + 分数数字滚动。
+## M3 结算状态机入口（design_boom.md §7.2）：表现细节收进 BoomResultPanel。
 func _on_game_over(score: int) -> void:
 	audio.play("over", -4.0)
 	cam.add_trauma(0.8)
-	_result_final_score = score
-	_over_stats.text = "SCORE  %d\nKILLS  %d" % [score, sim.kills]
-	_over_panel.visible = true
 	if _hint_label != null:
 		_hint_label.visible = false
-	Engine.time_scale = 0.3
-	_slowmo_until_ms = Time.get_ticks_msec() + 350
-
-
-## 结束慢镜头并启动结算序列（星级 → 金币 → 数字滚动）。
-func _end_slowmo() -> void:
-	if Engine.time_scale >= 1.0 and _slowmo_until_ms <= 0:
+	var panel := _over_panel as BoomResultPanel
+	if panel == null:
 		return
-	Engine.time_scale = 1.0
+	panel.show_game_over(score, sim.kills, sim.wave)
+	_slowmo_until_ms = panel.slowmo_deadline_ms
+
+
+## 结束慢镜头并启动结算序列（委托 BoomResultPanel，幂等）。
+func _end_slowmo() -> void:
+	var panel := _over_panel as BoomResultPanel
+	if panel != null:
+		panel.end_slowmo()
 	_slowmo_until_ms = 0
-	_start_result_sequence()
-
-
-## 慢镜头恢复后调用：星级逐个过冲弹出 → 金币飞计数器 → 分数滚动。
-func _start_result_sequence() -> void:
-	# 星级：按已达成的阈值亮金色，未达成的暗色占位；依次 0.25s 过冲弹出。
-	var earned: int = BoomGame.result_stars(sim.wave)
-	for i in _result_stars.size():
-		var star := _result_stars[i] as Label
-		if star == null:
-			continue
-		star.add_theme_color_override(
-			"font_color", Color(1.0, 0.85, 0.3) if i < earned else Color(0.28, 0.3, 0.36)
-		)
-		var tw := create_tween()
-		tw.tween_interval(0.25 * float(i + 1))
-		tw.tween_callback(_pop_star.bind(star))
-	# 金币飞向计数器 + 分数滚动（在星级之后）。
-	var coin_tw := create_tween()
-	coin_tw.tween_interval(0.25 * float(_result_stars.size()) + 0.15)
-	coin_tw.tween_callback(_fly_coins)
-	var roll := create_tween()
-	roll.tween_interval(0.25 * float(_result_stars.size()) + 0.3)
-	roll.tween_callback(_roll_score)
-
-
-func _pop_star(star: Label) -> void:
-	star.visible = true
-	star.scale = Vector2(1.8, 1.8)
-	star.modulate = Color(1.0, 1.0, 1.0, 0.0)
-	var tw := create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(star, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(
-		Tween.EASE_OUT
-	)
-	tw.tween_property(star, "modulate:a", 1.0, 0.15)
-
-
-## 金币粒子从面板中央飞向左上分数计数器。
-func _fly_coins() -> void:
-	var target: Vector2 = _score_label.position + Vector2(10.0, 10.0)
-	for i in 8:
-		var coin := _make_label(_over_panel, "\u25cf", 26, Color(1.0, 0.85, 0.3), Vector2.ZERO)
-		coin.size = Vector2(32, 32)
-		coin.z_index = 10
-		var start := (
-			Vector2(360, 660) + Vector2(randf_range(-130.0, 130.0), randf_range(-90.0, 90.0))
-		)
-		coin.position = start
-		var tw := create_tween()
-		tw.tween_interval(0.06 * float(i))
-		tw.tween_property(coin, "position", target, 0.45).set_trans(Tween.TRANS_QUAD).set_ease(
-			Tween.EASE_IN
-		)
-		tw.tween_property(coin, "modulate:a", 0.0, 0.1)
-		tw.tween_callback(coin.queue_free)
-
-
-## 分数数字滚动 0→final（滚动期间 _hud_refresh 不覆盖 _score_label）。
-func _roll_score() -> void:
-	_result_counting = true
-	var tw := create_tween()
-	tw.tween_method(_set_score_text, 0.0, float(_result_final_score), 0.9)
-	tw.tween_callback(func() -> void: _result_counting = false)
-
-
-func _set_score_text(v: float) -> void:
-	_score_label.text = str(int(v))
 
 
 func _make_label(parent: Node, text: String, font_size: int, color: Color, pos: Vector2) -> Label:
@@ -949,8 +925,9 @@ func _show_announce(text: String, color: Color) -> void:
 func _hud_refresh() -> void:
 	if sim == null:
 		return
-	# 结算数字滚动期间由 tween 写分数，避免每帧覆盖造成回跳。
-	if not _result_counting:
+	# 结算数字滚动期间由 BoomResultPanel 的 tween 写分数，避免每帧覆盖造成回跳。
+	var rp := _over_panel as BoomResultPanel
+	if rp == null or not rp.counting:
 		_score_label.text = str(sim.score)
 	_kills_label.text = "KILLS %d   COMBO x%d" % [sim.kills, maxi(1, sim.combo)]
 	_wave_label.text = "WAVE %d" % sim.wave

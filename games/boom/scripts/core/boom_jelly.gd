@@ -19,6 +19,10 @@ const KNOCK_SPEED: float = 4.6
 const HIT_RADIUS: float = 0.95
 const MAX_HP: int = 3
 const RADIUS: float = 0.6
+# ---- M5 表现时序常量（design_m5_weapons.md §6.2 / R3）----
+const SPAWN_POP_TIME: float = 0.18  # 出生弹出 0.18s（scale 0→1 TRANS_BACK 过冲）
+const FLASH_TIME: float = 0.10  # 受击白闪持续时间（_art.modulate 拉白）
+const DEATH_WINDOW: float = 0.2  # 死亡表现窗（压扁/淡出后移除）
 
 const PALETTES: Array[Color] = [
 	Color(0.45, 0.85, 0.45),  # 草绿
@@ -47,6 +51,11 @@ var _body: MeshInstance3D
 var _art: Sprite3D
 var _telegraph: MeshInstance3D
 var _dead: bool = false
+## M5 出生弹出 / 受击白闪 / R3 死亡窗 计时状态（时长常量见顶部 const 块）。
+var _spawn_ttl: float = 0.0
+var _flash_left: float = 0.0
+var _dying: bool = false
+var _death_t: float = 0.0
 
 
 func _init() -> void:
@@ -145,10 +154,50 @@ func _add_eye(local_pos: Vector3, r: float, mat: StandardMaterial3D) -> void:
 
 func _ready() -> void:
 	body_mat.emission_energy_multiplier = 0.2
+	# M5 出生弹出（§6.2）：scale 0→1 + 透明→不透明；之后由 physics_update 驱动衰减。
+	_spawn_ttl = SPAWN_POP_TIME
+	scale = Vector3.ZERO
+	if _art != null:
+		_art.modulate.a = 0.0
 
 
 func is_dead() -> bool:
 	return _dead
+
+
+func is_dying() -> bool:
+	return _dying
+
+
+func death_elapsed() -> float:
+	return _death_t
+
+
+## M5 R3：进入死亡表现窗（由 BoomGame._finalize_kill 调用）。
+func begin_death() -> void:
+	if _dying:
+		return
+	_dying = true
+	_death_t = 0.0
+	if _telegraph != null:
+		_telegraph.visible = false
+
+
+## M5 R3：死亡窗帧驱动（压扁 + 上抛淡出，§6.2 jelly_die）。
+func tick_death(delta: float) -> void:
+	if not _dying:
+		return
+	_death_t += delta
+	var k := clampf(_death_t / DEATH_WINDOW, 0.0, 1.0)
+	# 前 0.15s 压扁（scale 横向张开、纵向压扁），尾段轻微上抛淡出。
+	var k_squash := clampf(k / 0.75, 0.0, 1.0)
+	var s := Vector3(1.0 + 0.35 * k_squash, 1.0 - 0.55 * k_squash, 1.0 + 0.35 * k_squash)
+	scale = s * base_scale
+	position.y = sin(k * PI) * 0.25
+	if _art != null:
+		_art.modulate.a = 1.0 - k * k
+	if _body != null and body_mat != null:
+		body_mat.emission_energy_multiplier = 0.2
 
 
 ## 轻微弹开（玩家近身反推敌人用，不造成伤害）。
@@ -160,18 +209,25 @@ func knock_back(dir: Vector3) -> void:
 	squash_impact = maxf(squash_impact, 0.55)
 
 
-## 返回 true 表示本次受伤致死。
-func take_damage(dmg: int, knock_dir: Vector3) -> bool:
+## 返回 true 表示本次受伤致死。knock_speed_override>0 时用它替代默认 KNOCK_SPEED
+## （大剑斩击 6.0 > 默认 4.6，design §4.1）。
+func take_damage(dmg: int, knock_dir: Vector3, knock_speed_override: float = -1.0) -> bool:
 	if _dead or hp <= 0:
 		return false
 	hp -= dmg
 	squash_impact = 1.0
+	# 受击白闪：贴图态（_art 激活时 body 隐藏）走 modulate 拉白——修复"材质 emission
+	# 白闪在贴图态不可见"缺口（design §6.2）；程序化回退仍走 body 材质 emission。
+	_flash_left = FLASH_TIME
 	body_mat.emission_enabled = true
 	body_mat.emission = Color(1.0, 1.0, 1.0)
 	body_mat.emission_energy_multiplier = 3.0
+	if _art != null:
+		_art.modulate = Color(4.0, 4.0, 4.0, 1.0)
 	var flat := Vector3(knock_dir.x, 0.0, knock_dir.z)
 	if flat.length_squared() > 0.0001:
-		knock_vel += flat.normalized() * KNOCK_SPEED
+		var speed := KNOCK_SPEED if knock_speed_override <= 0.0 else knock_speed_override
+		knock_vel += flat.normalized() * speed
 	# 受击打断前摇并小幅重置攻击节奏，避免站着挨打出不完招。
 	if phase == Phase.WINDUP:
 		phase = Phase.CHASE
@@ -193,9 +249,19 @@ func physics_update(
 	phase_t += delta
 	attack_cd -= delta
 	hit_cd -= delta
+	# M5 出生弹出衰减（§6.2）：scale 0→1 TRANS_BACK 由 _apply_scale 末尾乘因子。
+	if _spawn_ttl > 0.0:
+		_spawn_ttl = maxf(0.0, _spawn_ttl - delta)
 	if squash_impact > 0.0:
 		squash_impact = maxf(0.0, squash_impact - delta * 4.5)
-	# 受击白闪衰减。
+	# 受击白闪衰减：modulate 回常态（贴图态主路径，§6.2）；程序化 emission 同步衰减。
+	if _flash_left > 0.0:
+		_flash_left = maxf(0.0, _flash_left - delta)
+		if _art != null:
+			var k := clampf(_flash_left / FLASH_TIME, 0.0, 1.0)
+			_art.modulate = Color(1.0 + 3.0 * k, 1.0 + 3.0 * k, 1.0 + 3.0 * k, 1.0)
+	elif _art != null and _art.modulate != Color.WHITE:
+		_art.modulate = Color.WHITE
 	if body_mat.emission_energy_multiplier > 0.3:
 		var e: float = body_mat.emission_energy_multiplier - delta * 16.0
 		body_mat.emission_energy_multiplier = maxf(0.3, e)
@@ -273,7 +339,7 @@ func physics_update(
 	position.z = clampf(position.z, -bounds_half_z, bounds_half_z)
 
 
-## 果冻颤 + squash&stretch（击退时压扁回弹）。
+## 果冻颤 + squash&stretch（击退时压扁回弹）。M5 出生弹出因子叠加在最终 scale。
 func _apply_scale(target: Vector3) -> void:
 	var wobble := 1.0 + sin(anim_t * 7.0) * 0.06
 	var squash: float = squash_impact
@@ -282,4 +348,15 @@ func _apply_scale(target: Vector3) -> void:
 		lerpf(target.y, 0.5, squash) / wobble,
 		lerpf(target.z, 1.35, squash) * wobble
 	)
+	# 出生弹出：进度反推 ttl，TRANS_BACK 式过冲（1.15→1）随 wobble 一起乘。
+	if _spawn_ttl > 0.0:
+		var p := 1.0 - _spawn_ttl / SPAWN_POP_TIME
+		var overshoot := 1.70158
+		var t := p - 1.0
+		var back := t * t * ((overshoot + 1.0) * t + overshoot) + 1.0
+		# TRANS_BACK 过冲后收敛到 1，故乘缩放量 = max(back, 1) 的 sqrt 近似，避免 0 起跳突兀。
+		var scale_mul := clampf(back, 0.0, 1.0)
+		if p >= 1.0:
+			scale_mul = 1.0
+		s *= scale_mul
 	scale = s * base_scale

@@ -49,10 +49,19 @@ jobs:
           gdformat --check games/ shared/
       - name: Asset size gate (docs/asset_pipeline.md)
         run: |
-          # 素材体积红线：单张 PNG 超过 512KB 视为不合格
-          oversized=$(find shared/assets games/*/assets/images -name "*.png" -size +512k 2>/dev/null || true)
+          # 素材体积红线（分级，design_m5_weapons.md §6/§7 横条动画放宽）：
+          #   默认：shared/assets 与 games/*/assets/images 单张 PNG >512KB 不合格；
+          #   放宽：games/*/assets/images/characters|icons 下允许至 1536KB（1.5MB），
+          #        因为 2048×256 透明底 256 色横条压后可能到 800KB-1.2MB。
+          oversized=$({
+            find shared/assets games/*/assets/images -name "*.png" -size +512k \
+              -not -path "games/*/assets/images/characters/*" \
+              -not -path "games/*/assets/images/icons/*" 2>/dev/null
+            find games/*/assets/images/characters games/*/assets/images/icons \
+              -name "*.png" -size +1536k 2>/dev/null
+          } | sort -u)
           if [ -n "$oversized" ]; then
-            echo "Asset(s) too large (>512KB):"
+            echo "Asset(s) too large (default >512KB; characters/ & icons/ >1536KB):"
             echo "$oversized"
             exit 1
           fi

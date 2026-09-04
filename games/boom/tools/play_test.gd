@@ -24,6 +24,13 @@ extends SceneTree
 ##              4. 精英标记 W5 最后一只/W4 否；精英 HP12/radius 0.84/速度 ×0.85
 ##              5. 精英死亡金币雨 8×5=40 逐枚入账；波奖励查表 + 台阶 ×2
 ##              6. 同屏上限 12 封顶；auto_spawn=false 手动刷怪回归
+##   [m5-weapon] M5 武器系统（design_m5_weapons.md §3/§4/§6）：
+##              1. 注册表 BoomWeapons：两把武器、默认恒为泡泡、未知 id 回退
+##              2. set_weapon 注入机体数值：大剑 HP 5→7、移速 ×0.85、形态 sword
+##              3. 大剑弧斩：150°×2.9m 内 4 敌一斩各 3 伤、blade_hit、致死计数
+##              4. 无目标不空挥：近战待机保持 NONE，不消耗挥斩
+##              5. 选武器 UX（main 层）：选单默认泡泡、确认后开战/隐藏选单/
+##                 max_hp 血条上限重建 7
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -67,6 +74,7 @@ func _process(_delta: float) -> bool:
 		_test_m3_logic()
 		_test_m3_settlement()
 		_test_m4_waves()
+		_test_m5_weapons()
 		_finish()
 	return false
 
@@ -117,22 +125,20 @@ func _test_smoke() -> void:
 		return
 	var sim := _main.get("sim") as BoomGame
 	_check(sim.player != null, "sim.player 存在")
-	var frog_model := sim.player.find_child("MilkFrog3D", true, false)
-	_check(frog_model != null, "原生 3D 奶蛙场景已实例化")
-	_check(
-		frog_model != null and frog_model.find_child("Body", true, false) is MeshInstance3D,
-		"原生 3D 奶蛙包含真实网格身体",
-	)
+	# M5：玩家动画管线 2D 化（design §6/§7）——默认泡泡形态 + AnimatedSprite3D 激活。
+	_check(sim.player.anim_form == "bubble", "默认武器形态 = 泡泡")
 	_check(sim.player.hp == sim.player.max_hp, "开局满血 hp=5")
+	_check(sim.player.is_2d_form(), "玩家 2D 动画管线已激活（AnimatedSprite3D）")
 	_check(sim.wave == 1, "初始波次 1")
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
 	for asset_path in [
-		"res://assets/images/characters/milk_frog_hero.png",
 		"res://assets/images/characters/jelly_scout.png",
 		"res://assets/images/characters/water_gunner.png",
 		"res://assets/images/floors/carnival_tiles.png",
 		"res://assets/images/icons/skill_nuke.png",
+		"res://assets/images/icons/weapon_bubble.png",
+		"res://assets/images/icons/weapon_sword.png",
 	]:
 		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
 
@@ -223,6 +229,8 @@ func _test_hitnum() -> void:
 func _test_art_and_props() -> void:
 	print("[art-props]")
 	var g := _new_game()
+	# M5：props 改由 begin_match 生成（R9 把开波从构造拆出），先开战再断言。
+	g.begin_match()
 	_check(g.props.size() == 3, "场景创建 3 个可破坏物")
 	var prop := g.props[0] as BoomProp
 	_check(prop != null and not prop.broken, "可破坏物初始可见")
@@ -241,6 +249,7 @@ func _test_wave_advance() -> void:
 	print("[wave-advance]")
 	var g := _new_game()
 	g.player.invuln_left = 10.0
+	g.begin_match()
 	var jelly := g.spawn_enemy_at(Vector3(0.0, 0.0, -5.5))
 	g.force_wave_spawned_done()
 	var guard := 0
@@ -527,6 +536,7 @@ func _test_m4_waves() -> void:
 	# §7.1/§7.3 波次推进：清波信号查表 bonus → 间歇 2.4s 不换波 → 越 2.5s 换波。
 	var g4 := _new_game()
 	g4.player.invuln_left = 10.0
+	g4.begin_match()
 	var jelly := g4.spawn_enemy_at(Vector3(0.0, 0.0, -5.5))
 	g4.force_wave_spawned_done()
 	var cleared: Array = []
@@ -552,6 +562,111 @@ func _test_m4_waves() -> void:
 	var manual := g4.spawn_enemy_at(Vector3(0.0, 0.0, -6.0))
 	_check(manual != null and g4.enemies.size() == 1, "手动 spawn_enemy_at 正常入列")
 	g4.free()
+
+
+# ------------------------------------------------------------------ M5 武器系统
+
+
+func _test_m5_weapons() -> void:
+	print("[m5-weapon]")
+	# 1) 注册表：两武器 / 默认恒泡泡 / 未知 id 回退 / 关键参数。
+	var defs: Array = BoomWeapons.all()
+	_check(defs.size() == 2, "注册表登记 2 把武器 (n=%d)" % defs.size())
+	_check(BoomWeapons.default_id() == "bubble", "默认武器恒为泡泡枪")
+	var bubble: BoomWeaponDef = BoomWeapons.get_def("bubble")
+	var sword: BoomWeaponDef = BoomWeapons.get_def("greatsword")
+	_check(
+		bubble != null and bubble.kind == BoomWeaponDef.AttackKind.RANGED,
+		"泡泡枪 = RANGED",
+	)
+	_check(
+		sword != null and sword.kind == BoomWeaponDef.AttackKind.MELEE,
+		"大剑 = MELEE",
+	)
+	_check(bubble != null and absf(bubble.fire_cd - 0.22) < 0.001, "泡泡 fire_cd=0.22")
+	_check(
+		(
+			sword != null
+			and sword.swing_dmg == 3
+			and sword.swing_max_targets == 6
+			and absf(sword.swing_range - 2.9) < 0.001
+			and absf(sword.swing_arc_deg - 150.0) < 0.001
+		),
+		"大剑弧斩参数 3伤/6敌/2.9m/150°",
+	)
+	_check(
+		sword != null and sword.max_hp_bonus == 2 and absf(sword.move_mult - 0.85) < 0.001,
+		"大剑机体 +2HP / 移速×0.85",
+	)
+	_check(BoomWeapons.get_def("nope").id == "bubble", "未知武器 id 回退泡泡枪")
+
+	# 2) 默认武器与 set_weapon 机体注入。
+	var g0 := _new_game()
+	_check(g0.player.weapon_id == "bubble", "BoomGame 默认武器注入泡泡")
+	_check(g0.player.max_hp == 5 and g0.player.hp == 5, "泡泡默认 max_hp=5 满血")
+	_check(absf(g0.player.move_speed - 5.4) < 0.001, "泡泡移速 = 5.4")
+	g0.free()
+	var g := _new_game()
+	g.player.invuln_left = 10.0
+	g.set_weapon("greatsword")
+	_check(g.player.max_hp == 7 and g.player.hp == 7, "set_weapon 大剑 max_hp=7 满血")
+	_check(absf(g.player.move_speed - 5.4 * 0.85) < 0.001, "set_weapon 大剑移速 ×0.85")
+	_check(g.player.anim_form == "sword", "set_weapon 大剑切 sword 形态")
+	g.set_weapon("bubble")
+	_check(g.player.max_hp == 5 and g.player.anim_form == "bubble", "切回泡泡形态/HP 复位")
+
+	# 3) 大剑弧斩：无目标不空挥（挥斩状态保持 NONE）。
+	g.set_weapon("greatsword")
+	g.input_move = Vector2.ZERO
+	_run(g, 90)
+	_check(
+		g._swing_state == BoomGame.SwingState.NONE,
+		"无目标近战待机不空挥 (state=%d)" % g._swing_state,
+	)
+	_check(g.kills == 0, "无目标不产生击杀")
+
+	# 4) 弧斩命中：前方 150°×2.9m 内 4 敌一斩各 3 伤致死 + blade_hit。
+	var targets: Array = [
+		Vector3(-0.8, 0.0, 1.8),
+		Vector3(0.8, 0.0, 1.8),
+		Vector3(-1.2, 0.0, 2.2),
+		Vector3(1.2, 0.0, 2.2),
+	]
+	for p in targets:
+		g.spawn_enemy_at(p)
+	var blade_box: Array = [0]
+	g.blade_hit.connect(func(_pos: Vector3, _dmg: int) -> void: blade_box[0] += 1)
+	var guard := 0
+	while guard < MAX_FRAMES and not g.enemies.is_empty():
+		guard += 1
+		g.player.invuln_left = 10.0
+		g.step(DT)
+	_check(g.enemies.is_empty(), "弧斩清空扇区 4 敌")
+	_check(g.kills == 4, "弧斩致死计数 4 (kills=%d)" % g.kills)
+	_check(blade_box[0] >= 4, "blade_hit 命中 ≥4 次 (hits=%d)" % blade_box[0])
+	_check(g.combo == 4, "弧斩多杀 combo 累积到 4")
+	g.free()
+
+	# 5) 选武器 UX（main 层）：选单默认泡泡 → 确认开战/隐藏/血条上限重建。
+	var sel := _main.get("_select") as BoomWeaponSelect
+	_check(sel != null, "选武器面板已构建")
+	if sel != null:
+		_check(sel.get_child_count() > 0, "选单已渲染控件树")
+		_check(sel.selected_weapon() == "bubble", "选单默认高亮泡泡枪")
+	var sim := _main.get("sim") as BoomGame
+	if sim == null or sel == null:
+		return
+	if _main.call("_is_test_mode"):
+		_check(sim.match_started, "测试模式自动开战")
+	else:
+		_check(sel.visible, "开局停留选单（无头桌面态）")
+		_check(not sim.match_started, "确认前对局未开战")
+		_check(sim.player.max_hp == 5, "选单期机体默认 5HP")
+		_main.call("_on_weapon_confirmed", "greatsword")
+		_check(sim.match_started, "确认【开战】后对局开始")
+		_check(sim.player.max_hp == 7 and sim.player.hp == 7, "选大剑开战 max_hp=7 血条上限重建")
+		_check(sim.player.anim_form == "sword", "确认大剑后形态切换 sword")
+		_check(not sel.visible, "开战后选单隐藏")
 
 
 # ------------------------------------------------------------------ helpers
