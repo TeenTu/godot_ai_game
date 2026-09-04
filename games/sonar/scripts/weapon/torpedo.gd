@@ -16,6 +16,12 @@ extends RefCounted
 ## 授权自主与开主动 → 预设扇区 SEARCH）。命令全部记 CommandLog，绝不改写
 ## 发射程序快照。
 ##
+## Seeker 采样（S1-07 §6.3/§6.5，Commit 6）：发射并安全出管后被动接收机默认
+## ON（REQ-DECISION-01），经 ctx 注入的 TorpedoSensorAdapter 周期采样并收集
+## 净化 SeekerReturn（无 target_id / 无被动真实 range）；主动 Ping 的回波按
+## tau=2R/c 延迟到达。本类只消费净化 Return，绝不接触 Truth targets；转向 /
+## 捕获 / 跟踪（SeekerTrack）为 Commit 7，本批仅"监听并记录"。
+##
 ## 正交状态模型（S1-07 §3，REQ-DECISION-02）：不再用一个 State 同时暗含
 ## "主动开机、已锁定、导线断裂、引信已解保"。任务/Seeker/主动发射机/制导
 ## 权限/导线/深度/引信各自独立状态机，见下方 enum。
@@ -40,6 +46,8 @@ enum FuzeState { SAFE, ARMED, TRIGGERED, INERT }
 const RUNNING_NOISE_CADENCE_S: float = 1.0
 const DEFAULT_TURN_RATE_DEG_S: float = 6.0
 const LAUNCH_TRANSITION_S: float = 1.0
+# Commit 6（§6.3）：被动采样周期（固定间隔，不必每帧扫全部声源，§15.1）。
+const PASSIVE_SAMPLE_INTERVAL_S: float = 1.0
 # 深度带占位 hold 深度（Commit 2 起由 DepthLayerModel 配置覆盖）。
 const DEFAULT_UPPER_HOLD_DEPTH_M: float = 70.0
 const DEFAULT_LOWER_HOLD_DEPTH_M: float = 180.0
@@ -83,6 +91,11 @@ var trail: Array = []  # [{e, n, t}] 供海图画轨迹（自身状态，非 Tru
 # Commit 4 命令日志（S1-07 §5.1：线控命令另记 CommandLog，绝不悄悄改写原始
 # 发射程序）。_fallback_active：导线断/切后进入 fallback 执行态。
 var command_log: Array = []  # [{t, cmd, detail}] 已接受线控命令（封顶 256）
+# Commit 6（§6.5）：净化后的 SeekerReturn 记录（被动周期采样 + 主动回波到达）。
+# 只存 SeekerReturn 对象/其 to_dict——不含 target_id / Truth（可直供 UI/日志）。
+var seeker_returns: Array = []
+# Commit 6（REQ-DECISION-01）：被动接收机默认 ON；发射并安全出管后开始监听。
+var passive_receiver_on: bool = true
 var _cmd_course_deg: float = -1.0  # <0 = 无航向命令（保持当前航向）
 var _launch_t: float = 0.0
 var _sim_time: float = 0.0
@@ -93,6 +106,10 @@ var _fallback_active: bool = false
 # Commit 5：ctx 注入的声学事件总线（null=无总线，如直接单测不发射）。
 var _emission_bus: AcousticEmissionBus = null
 var _noise_timer_s: float = 0.0
+# Commit 6：ctx 注入的传感器采样适配器（仿真内核唯一可触 Truth 的武器侧对象，
+# 输出净化 SeekerReturn）与被动采样计时。
+var _sensor_adapter: TorpedoSensorAdapter = null
+var _passive_sample_timer_s: float = 0.0
 
 
 ## 发射：装入 WeaponProgram 快照并进入 LAUNCHING。from_depth = 发射平台深度。
@@ -115,6 +132,11 @@ func launch(
 	command_log.clear()
 	wire_link.reset()
 	_noise_timer_s = 0.0
+	# Commit 6：被动接收机默认 ON、采样记录清空（安全出管后开始监听）。
+	passive_receiver_on = true
+	seeker_returns.clear()
+	_passive_sample_timer_s = 0.0
+	_sensor_adapter = null
 	if program != null:
 		wire_link.enabled = program.wire_guidance_enabled
 		guidance_authority = program.guidance_authority
@@ -395,6 +417,10 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 	trail.append({"e": pos_east_m, "n": pos_north_m, "t": sim_time})
 	if trail.size() > 4000:
 		trail.pop_front()
+	# Commit 6（§6.3/§6.4）：被动周期采样 + 主动回波（TOF）到点收集。只把净化
+	# SeekerReturn 记入 seeker_returns；不触发转向/捕获（Commit 7）。
+	_advance_seeker_passive(dt, sim_time)
+	_collect_active_returns(sim_time)
 	return fired_event
 
 
@@ -406,6 +432,9 @@ func _bind_ctx(ctx: RefCounted) -> void:
 	# Commit 5：声学事件总线（null=无总线，跳过声源广播）。
 	if ctx.emission_bus != null:
 		_emission_bus = ctx.emission_bus
+	# Commit 6：传感器采样适配器（输出净化 SeekerReturn，无 Truth）。
+	if ctx.sensor_adapter != null:
+		_sensor_adapter = ctx.sensor_adapter
 
 
 func _advance_mission(dt: float, sim_time: float) -> bool:
@@ -523,23 +552,29 @@ func _emit_motor_start() -> void:
 	)
 
 
-## 主动 Ping（每次进入 PINGING 记录；TOF/回波由 Commit 6 PingSession 消费）。
+## 主动 Ping（每次进入 PINGING 记录；TOF/回波由 adapter 按 tau=2R/c 延迟结算，
+## §6.4——绝不瞬时返回）。
 func _emit_active_ping() -> void:
-	if _emission_bus == null:
-		return
-	(
-		_emission_bus
-		. record(
-			AcousticEmissionEvent.TORPEDO_ACTIVE_PING,
-			torpedo_id,
-			_sim_time,
-			Vector3(pos_east_m, pos_north_m, actual_depth_m),
-			acoustic_profile.active_center_frequency_hz,
-			acoustic_profile.active_bandwidth_hz,
-			acoustic_profile.active_source_level_db,
-			acoustic_profile.active_pulse_duration_s,
+	if _emission_bus != null:
+		(
+			_emission_bus
+			. record(
+				AcousticEmissionEvent.TORPEDO_ACTIVE_PING,
+				torpedo_id,
+				_sim_time,
+				Vector3(pos_east_m, pos_north_m, actual_depth_m),
+				acoustic_profile.active_center_frequency_hz,
+				acoustic_profile.active_bandwidth_hz,
+				acoustic_profile.active_source_level_db,
+				acoustic_profile.active_pulse_duration_s,
+			)
 		)
-	)
+	# Commit 6：登记各接触回波（Ping 时刻几何为测距基准；到点后净化为
+	# ACTIVE SeekerReturn）。仅当 adapter 存在（ctx 注入）时登记。
+	if _sensor_adapter != null:
+		_sensor_adapter.schedule_active_echoes(
+			torpedo_id, pos_east_m, pos_north_m, acoustic_profile, _sim_time
+		)
 
 
 ## 航行噪声（持续声源）：按 RUNNING_NOISE_CADENCE_S 周期性广播，源级随速度
@@ -599,6 +634,73 @@ func _advance_wire(dt: float, v_ms: float) -> bool:
 	)
 	_enter_fallback()
 	return true
+
+
+## ---- Seeker 采样（§6.3/§6.4，Commit 6）----
+## 被动接收机默认 ON（REQ-DECISION-01），安全出管后按 PASSIVE_SAMPLE_INTERVAL_S
+## 周期经 adapter 采样。返回只记净化 SeekerReturn；miss 帧无 return（不产生
+## 记录）。adapter 为 null（直接单测 ctx 不含）时跳过，行为与旧版一致。
+
+
+func _advance_seeker_passive(dt: float, sim_time: float) -> void:
+	if _sensor_adapter == null or not passive_receiver_on:
+		return
+	if not _in_water():
+		return
+	_passive_sample_timer_s -= dt
+	if _passive_sample_timer_s > 0.0:
+		return
+	_passive_sample_timer_s = PASSIVE_SAMPLE_INTERVAL_S
+	var returns: Array = (
+		_sensor_adapter
+		. sample_passive(
+			pos_east_m,
+			pos_north_m,
+			actual_depth_m,
+			speed_kn,
+			course_deg,
+			acoustic_profile,
+			sim_time,
+		)
+	)
+	_record_seeker_returns(returns)
+
+
+## 主动回波（§6.4）：adapter 到点（tau=2R/c）结算的 ACTIVE return 收集。
+func _collect_active_returns(sim_time: float) -> void:
+	if _sensor_adapter == null:
+		return
+	if not _in_water():
+		return
+	var returns: Array = (
+		_sensor_adapter
+		. collect_due_active_returns(
+			torpedo_id,
+			pos_east_m,
+			pos_north_m,
+			actual_depth_m,
+			speed_kn,
+			acoustic_profile,
+			sim_time,
+		)
+	)
+	_record_seeker_returns(returns)
+
+
+func _record_seeker_returns(returns: Array) -> void:
+	for r in returns:
+		seeker_returns.append(r)
+	while seeker_returns.size() > 256:
+		seeker_returns.pop_front()
+
+
+func _in_water() -> bool:
+	return (
+		mission_state == MissionState.WIRE_RUN
+		or mission_state == MissionState.SEARCH
+		or mission_state == MissionState.ATTACK
+		or mission_state == MissionState.TERMINAL
+	)
 
 
 ## 垂直运动（S1-07A）：命令与实际分离，z 按 Vz_max 速率逼近命令深度。

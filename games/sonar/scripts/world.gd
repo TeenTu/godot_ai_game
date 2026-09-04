@@ -84,6 +84,17 @@ func load_scenario(scenario: Dictionary) -> void:
 	active_emissions = emission_bus.events
 	weapons.emission_bus = emission_bus
 	torpedo_ctx.emission_bus = emission_bus
+	# S1-07 §6.5（Commit 6）：鱼雷传感器采样适配器——仿真内核唯一可触 Truth
+	# 的武器侧对象。采样经统一 AcousticService/DepthLayerModel，输出净化
+	# SeekerReturn（无 target_id / 被动无 range）；本艇主动 Ping/鱼雷发射声等
+	# 事件仍走 emission_bus，两路互不混淆（§15.3）。
+	var adapter := TorpedoSensorAdapter.new()
+	adapter.env = world.get("env", null)
+	adapter.depth_model = world.get("depth_model", null)
+	adapter.rng = world.get("rng", null)
+	adapter.contacts = world.get("targets", [])
+	adapter.contact_acs = world.get("target_acs", {})
+	torpedo_ctx.sensor_adapter = adapter
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0

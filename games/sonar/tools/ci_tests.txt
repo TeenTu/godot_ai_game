@@ -21,6 +21,7 @@
 #   weapon_program_test     S1-07 Commit3 MANUAL/BEARING_ONLY/SOLUTION 发射模式 + tube EMPTY
 #   wire_guidance_test      S1-07 Commit4 WireLink 长度/断裂 + 命令门 + fallback 执行（WPN-WIRE-01..04）
 #   torpedo_acoustic_test   S1-07 Commit5 声学画像模式表 + EmissionBus 瞬态/噪声/主动 Ping（WPN-ACOU-01..03）
+#   torpedo_seeker_test     S1-07 Commit6 TorpedoSensorAdapter + SeekerReturn（被动无 range/TOF/净化/误报，WPN-SEEK-01..05）
 play_test
 stage1_test
 stage2_test
@@ -38,3 +39,4 @@ depth_layer_test
 weapon_program_test
 wire_guidance_test
 torpedo_acoustic_test
+torpedo_seeker_test
