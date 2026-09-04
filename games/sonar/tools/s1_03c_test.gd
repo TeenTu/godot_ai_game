@@ -34,6 +34,8 @@ func _initialize() -> void:
 	_c2_autocrew_no_split(fails)
 	_c3_evidence_gate(fails)
 	_c4_array_center_bearing(fails)
+	_c5_mirror_symmetry(fails)
+	_c6_stowed_no_features(fails)
 	if fails.is_empty():
 		print("S1_03C_TEST result=PASS")
 		quit(0)
@@ -81,15 +83,19 @@ func _mk_own() -> TruthEntity:
 
 
 func _mk_op(seed: int) -> OperatorSonar:
+	return _mk_op_own(seed, _mk_own())
+
+
+func _mk_op_own(seed: int, own: TruthEntity) -> OperatorSonar:
 	var op := OperatorSonar.new()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed
-	op.setup({"env": _mk_env(), "own": _mk_own(), "rng": rng})
+	op.setup({"env": _mk_env(), "own": own, "rng": rng})
 	op.set_array("TOWED")
 	return op
 
 
-## 高 SL 目标（保证每行稳定出 A/B 峰，pd≈1）。
+## 高 SL 目标（保证每行稳定出 A/B 峰，pd≈1）；带一根 NB 音线供 STOWED/方向测试。
 func _mk_target(east: float, north: float) -> Dictionary:
 	var tgt := TruthEntity.new()
 	tgt.id = "T1"
@@ -98,7 +104,15 @@ func _mk_target(east: float, north: float) -> Dictionary:
 	tgt.speed_kn = 6.0
 	tgt.depth_m = 0.0
 	var ac := AcousticProfile.new()
-	ac.from_dict({"broadband_base_level_db": 195.0})
+	(
+		ac
+		. from_dict(
+			{
+				"broadband_base_level_db": 195.0,
+				"tonal_lines": [{"freq_hz": 120.0, "level_db": 160.0}],
+			}
+		)
+	)
 	return {"targets": [tgt], "acs": {"T1": ac}}
 
 
@@ -295,3 +309,88 @@ func _c4_array_center_bearing(fails: Array) -> void:
 	_assert_close(fails, "C4 LOB passes target", closest.distance_to(tgt_pos), 0.0, 60.0)
 	# TL 距离基准 = 阵心距离 ~2000m（非艇心 ~1896m）
 	_assert_close(fails, "C4 observer range to target", obs.distance_to(tgt_pos), 2000.0, 20.0)
+
+
+# ------------------------------------------------------------------
+#  C5：镜像严格对称 + Mark 峰方位一致（P1-01 / 评审 TEST-06）
+# ------------------------------------------------------------------
+
+
+func _c5_mirror_symmetry(fails: Array) -> void:
+	var op := _mk_op(404)
+	var td: Dictionary = _mk_target(1500.0, 3500.0)
+	op.update(10.0, td["targets"], td["acs"])
+	if op.bb_rows.is_empty():
+		fails.append("C5 no TOWED row")
+		return
+	var row: Dictionary = op.bb_rows[-1]
+	var brgs: Dictionary = {}  # branch -> display bearing
+	for pk in row.get("peaks", []):
+		var b: int = int(pk.get("ambiguity_branch", 0))
+		if b != 0 and not brgs.has(b):
+			brgs[b] = float(pk["bearing_deg"])
+	if brgs.size() != 2:
+		fails.append("C5 expected both A/B peaks (got %d)" % brgs.size())
+		return
+	# own course=0、阵轴 psi=0 → display 帧阵轴=0；要求 wrap360(A+B)≈2*psi=0
+	var sum_ab: float = float(brgs[1]) + float(brgs[-1])
+	_assert_close(fails, "C5 A+B symmetric about axis", absf(NavUtils.wrap180(sum_ab)), 0.0, 0.6)
+	# 点击 A 峰 → Mark 方位必须等于峰方位（转真北），不得二次抽样
+	var grp: Array = op.create_mark_group(float(brgs[1]), 10.0, "", false, row)
+	if grp.is_empty():
+		fails.append("C5 mark empty")
+		return
+	var m: Measurement = grp[0] as Measurement
+	var true_a: float = NavUtils.rel_to_true(0.0, float(brgs[1]))
+	var m_b: float = m.measured_bearing_deg
+	_assert_close(
+		fails,
+		"C5 mark bearing == displayed peak",
+		absf(NavUtils.wrap180(m_b - true_a)),
+		0.0,
+		0.1,
+	)
+	# 镜像支严格镜像：theta_B = 2*psi - theta_A（转真北后）
+	var sib: Measurement = grp[1] as Measurement
+	var psi: float = 0.0
+	_assert_close(
+		fails,
+		"C5 sibling mirrors primary",
+		absf(NavUtils.wrap180(sib.measured_bearing_deg - (2.0 * psi - m_b))),
+		0.0,
+		0.1,
+	)
+	_assert_bool(fails, "C5 A/B share evidence", sib.evidence_id == m.evidence_id, true)
+	_assert_bool(
+		fails, "C5 A/B share sigma", absf(sib.bearing_sigma_deg - m.bearing_sigma_deg) < 1e-6, true
+	)
+
+
+# ------------------------------------------------------------------
+#  C6：STOWED / 孔径不足时严格无目标特征（P1-03 / 评审 TEST-09）
+# ------------------------------------------------------------------
+
+
+func _c6_stowed_no_features(fails: Array) -> void:
+	var own := _mk_own()
+	own.towed.actual_tow_length_m = 0.0  # 收回（≤dead_length）→ is_acoustically_active=false
+	var op := _mk_op_own(505, own)
+	var td: Dictionary = _mk_target(1500.0, 3500.0)
+	op.update(10.0, td["targets"], td["acs"])
+	if op.bb_rows.is_empty():
+		fails.append("C6 stowed should still emit background row")
+		return
+	var row: Dictionary = op.bb_rows[-1]
+	_assert_bool(fails, "C6 stowed no BB peaks", row.get("peaks", []).is_empty(), true)
+	var nbrow: Dictionary = op.nb_rows[-1] if not op.nb_rows.is_empty() else {}
+	_assert_bool(fails, "C6 stowed no NB tonals", nbrow.get("tonals", []).is_empty(), true)
+	# 对照：部署态同 seed 应出现目标峰与音线
+	var op2 := _mk_op(506)
+	op2.update(10.0, td["targets"], td["acs"])
+	if op2.bb_rows.is_empty():
+		fails.append("C6 deployed row missing")
+		return
+	var row2: Dictionary = op2.bb_rows[-1]
+	_assert_bool(fails, "C6 deployed has BB peaks", not row2.get("peaks", []).is_empty(), true)
+	var nbrow2: Dictionary = op2.nb_rows[-1] if not op2.nb_rows.is_empty() else {}
+	_assert_bool(fails, "C6 deployed has NB tonals", not nbrow2.get("tonals", []).is_empty(), true)

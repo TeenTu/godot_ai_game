@@ -294,8 +294,14 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var ac: RefCounted = acs.get(tgt.id, null)
 		if ac == null:
 			continue
-		if active_array_id == "TOWED" and tow == null:
-			continue  # 未安装拖曳硬件：严格无 TOWED 测量
+		if active_array_id == "TOWED":
+			if tow == null:
+				continue  # 未安装拖曳硬件：严格无 TOWED 测量
+			# P1-03/REQ-09：STOWED 或有效孔径≤死区 → 本行只出背景噪声，不产生
+			# 任何目标 peak/tonal/DEMON 特征（与 DESIGN.md is_acoustically_active
+			# 语义一致）；部分布放超过 dead_length 后由 usable_fraction 连续恢复。
+			if not tow.is_acoustically_active():
+				continue
 		var d: Vector2 = Vector2(tgt.position_east_m - obs_e, tgt.position_north_m - obs_n)
 		var rng_m: float = d.length()
 		var true_brg: float = rad_to_deg(atan2(d.x, d.y))
@@ -335,19 +341,18 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		if mirror_lr and active_array_id == "TOWED":
 			_ambiguity_counter += 1
 			pair_id = "AMB%04d" % _ambiguity_counter
-			var theta_a: float = NavUtils.wrap360(array_heading + array_rel)
-			var theta_b: float = NavUtils.wrap360(array_heading - array_rel)
+			# P1-01/REQ-06：单次离轴角噪声 → 两支严格关于阵轴对称。
+			# 旧实现两支加同号 brg_noise：(A+B)/2 = psi+e ≠ psi，破坏对称。
+			# 正确：alpha_hat = 离轴角 + 一次噪声；theta_A = psi+alpha_hat、
+			# theta_B = psi-alpha_hat，则 wrap360(theta_A + theta_B) = 2*psi。
+			var alpha_hat: float = array_rel + brg_noise
+			var theta_a: float = NavUtils.wrap360(array_heading + alpha_hat)
+			var theta_b: float = NavUtils.wrap360(array_heading - alpha_hat)
 			disp_brgs.append(
-				{
-					"bearing_deg": NavUtils.true_to_display(own_course, theta_a) + brg_noise,
-					"branch": 1
-				}
+				{"bearing_deg": NavUtils.true_to_display(own_course, theta_a), "branch": 1}
 			)
 			disp_brgs.append(
-				{
-					"bearing_deg": NavUtils.true_to_display(own_course, theta_b) + brg_noise,
-					"branch": -1
-				}
+				{"bearing_deg": NavUtils.true_to_display(own_course, theta_b), "branch": -1}
 			)
 		else:
 			# 瀑布/玩家看到的方位 = 艇艏相对方位（问题2）
@@ -381,7 +386,9 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				continue
 			var tl_f: float = AcousticService.propagation_loss(rng_m, f_hz, _env)
 			var noise_f: float = _env.effective_noise_db(f_hz, own_speed)
-			var lvl: float = float(line_v["level_db"]) + gain - tl_f - noise_f
+			# P1-03/REQ-08：NB tonal 也吃方向增益 + 部署/弯曲/超速损失——与 BB 同源，
+			# 不得只进 BB se_db（否则 FLANK 扇区边缘谱线强度不随方向衰减）。
+			var lvl: float = float(line_v["level_db"]) + gain + dir_gain - tl_f - noise_f
 			var p_line: float = AcousticService.detection_probability(lvl)
 			if _rng.randf() >= p_line:
 				continue
@@ -612,10 +619,19 @@ func create_mark(
 	else:
 		m.observer_east_m = own_e
 		m.observer_north_m = own_n
+	# P1-01/REQ-06：谱图峰与 Mark 候选使用同一组方位——点击命中谱图峰时
+	# （matched 非空）直接用峰方位转帧，不再二次抽样（峰已含测量噪声，二次
+	# 抽样会让 Measurement 方位 ≠ 玩家所见峰方位）。仅无峰上下文
+	# （测试/直接调用）保留一次加噪模拟测量误差。
+	var brg_in: float = bearing_deg
+	if matched.is_empty():
+		brg_in = bearing_deg + _randn() * sigma
+	elif matched.has("bearing_deg"):
+		brg_in = float(matched["bearing_deg"])
 	if as_true:
-		m.measured_bearing_deg = NavUtils.wrap360(bearing_deg + _randn() * sigma)
+		m.measured_bearing_deg = NavUtils.wrap360(brg_in)
 	else:
-		m.measured_bearing_deg = NavUtils.rel_to_true(own_course, bearing_deg + _randn() * sigma)
+		m.measured_bearing_deg = NavUtils.rel_to_true(own_course, brg_in)
 	m.bearing_sigma_deg = sigma
 	m.signal_excess_db = se_db
 	m.snr_db = se_db
