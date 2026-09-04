@@ -38,10 +38,11 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-2 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-3 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
-首批任务包（§17）= **Commit 0～2**，已全部合入 sonar-dev：
+首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
+Commit 3（任意条件发射）**，均已合入 sonar-dev：
 
 - **Commit 0**：旧武器缺陷行为刻画测试（Truth 直读 / 单一 ENABLE_RANGE /
   target_id 进 UI / DEAD 自动补装）——重构后已删除，由新契约测试接管。
@@ -57,10 +58,24 @@
   TRANSITION + smoothstep w_cross + TL_layer=TL_base+w·L(f)）；本艇/敌艇/
   鱼雷统一连续升降（command/actual 分离、Vz 限速、禁瞬移）；跨层只降 Pd 不
   硬置零。旧二维场景无 `depth_layers` → disabled → 额外损失恒 0（零回归）。
-- **遗留项**（后续 Commit 3-12）：MANUAL/BEARING_ONLY 发射、WireLink+fallback
-  执行、TorpedoAcousticProfile+EmissionBus、TorpedoSensorAdapter+SeekerReturn、
-  SeekerTrack 捕获/丢失/重搜/制导、诱饵干扰、敌方感知/Doctrine、引信/伤害
-  净化反馈、UI（在水控制/深度条/告警）。
+- **S1-07A UI（本艇深度控制，§4.2 明示项补缺）**：右侧 Own Ship Maneuver 区
+  抽成 `ui/own_maneuver_panel.gd`（Own Course/Speed/**Depth (m)** + ▲Upper/
+  ▼Lower 层按钮 + ACT→CMD/换层 ETA/层带状态行）。层按钮只写
+  `commanded_depth_m`（hold 70/180m 来自场景 depth_model，未启用回退默认）；
+  实际深度按 Vz 限速逼近、无瞬移。`stage1_basic_passive.json` 启用
+  `depth_layers`（旧场景缺省 disabled 兼容不变）；D7 场景集成测试（loader
+  挂 depth_model / 本艇下潜 130m 按 2m/s / 跨层附加 TL>0 非零且不硬断）。
+- **Commit 3（任意条件发射，§5.2）**：SystemSolution 变成可选预填——
+  `WeaponProgram.make_manual/make_bearing_only` 工厂 + `WeaponSystem.
+  fire_manual/fire_bearing_only`（无解、无距离概念，不触发射程联锁）；
+  SOLUTION 保留 fire(sys) 射程联锁。UI：Fire 只要有装填管即可点，main_ui
+  按上下文自动选 SOLUTION（有解）/ BEARING_ONLY（选中接触 LOB）/
+  MANUAL（沿本艇艏向），weapon_panel 显示模式与风险提示；weapon_test w6
+  翻转（无解 MANUAL 可发射）；`weapon_program_test` WPN-PROG-01..04。
+- **遗留项**（后续 Commit 4-12）：WireLink+fallback 执行、TorpedoAcousticProfile+
+  EmissionBus、TorpedoSensorAdapter+SeekerReturn、SeekerTrack 捕获/丢失/重搜/
+  制导、诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/告警/在水
+  控制 UI（Commit 4/11）。
 
 ---
 

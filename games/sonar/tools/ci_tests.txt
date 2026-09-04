@@ -18,6 +18,7 @@
 #   s1_03c_test          S1-03C 拖曳证据组关联不分裂 + 阵列中心几何/TMA evidence 门槛
 #   s1_07_state_model_test  S1-07 Commit1 正交状态模型 + WeaponProgram 快照 + Truth 隔离
 #   depth_layer_test        S1-07A Commit2 双层伪三维深度层 + 连续升降 + 跨层 TL
+#   weapon_program_test     S1-07 Commit3 MANUAL/BEARING_ONLY/SOLUTION 发射模式 + tube EMPTY
 play_test
 stage1_test
 stage2_test
@@ -32,3 +33,4 @@ s1_03b_scope_test
 s1_03c_test
 s1_07_state_model_test
 depth_layer_test
+weapon_program_test

@@ -137,6 +137,45 @@ static func _valid_band(b: String) -> bool:
 	return b == DEPTH_BAND_UPPER or b == DEPTH_BAND_LOWER
 
 
+## S1-07 §5.2 MANUAL：无 Track/解，玩家直接给航向/深度带；无距离概念，
+## 因此不触发射程联锁。搜索沿用航向、宽扇区。仅数据，无 Truth 引用。
+static func make_manual(
+	initial_course_deg: float, initial_depth_band: String = DEPTH_BAND_UPPER
+) -> WeaponProgram:
+	var p := WeaponProgram.new()
+	p.fire_mode = FireMode.MANUAL
+	p.initial_course_deg = initial_course_deg
+	p.initial_depth_band = initial_depth_band
+	p.search_depth_band = initial_depth_band
+	p.search_center_deg = initial_course_deg
+	p.search_half_angle_deg = 60.0
+	p.guidance_authority = GuidanceAuthority.WIRE_ONLY
+	p.wire_guidance_enabled = true
+	p.active_enable_mode = ActiveEnableMode.MANUAL
+	p.autonomy_enable_mode = AutonomyEnableMode.MANUAL
+	p.warhead_arm_distance_m = 300.0
+	p.fallback_program = p.make_default_fallback()
+	return p
+
+
+## S1-07 §5.2 BEARING_ONLY：只有玩家可见方位。初始航向=方位、搜索中心=方位、
+## 宽搜索半角；不携带任何隐藏距离（程序无 range 字段）。仅数据。
+static func make_bearing_only(bearing_deg: float) -> WeaponProgram:
+	var p := WeaponProgram.new()
+	p.fire_mode = FireMode.BEARING_ONLY
+	p.initial_course_deg = bearing_deg
+	p.search_center_deg = bearing_deg
+	p.search_half_angle_deg = 60.0
+	p.speed_mode = SpeedMode.CRUISE
+	p.guidance_authority = GuidanceAuthority.WIRE_ONLY
+	p.wire_guidance_enabled = true
+	p.active_enable_mode = ActiveEnableMode.MANUAL
+	p.autonomy_enable_mode = AutonomyEnableMode.MANUAL
+	p.warhead_arm_distance_m = 300.0
+	p.fallback_program = p.make_default_fallback()
+	return p
+
+
 ## UI/日志用：speed_mode / fire_mode / 深度带等转可读字符串。
 static func fire_mode_name(m: int) -> String:
 	match m:

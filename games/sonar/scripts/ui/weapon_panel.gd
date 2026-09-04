@@ -2,9 +2,9 @@ class_name WeaponPanelUI
 extends VBoxContainer
 ## weapon_panel.gd — 武器发射面板（阶段四，从 main_ui 拆出控制行数）。
 ##
-## 信息链纪律：Fire 只用已提交的 SystemSolution（玩家火控解），绝不读 Truth。
-## 本面板只负责「展示 + 触发」，fire_requested 交由 main_ui 用自身位置执行发射，
-## 因此本面板不持有 Truth own、也不直接调用 weapons.fire。
+## 信息链纪律：Fire 请求交由 main_ui 执行——有 SystemSolution 走 SOLUTION；
+## 无解但有选中接触走 BEARING_ONLY；否则 MANUAL（沿本艇艏向）。本面板不持有
+## Truth own、不直接调用 weapons.fire，只负责「展示 + 触发 + 模式提示」。
 
 signal fire_requested
 signal status(msg: String)
@@ -15,6 +15,7 @@ var weapons: WeaponSystem = null
 var chart: ChartView = null
 
 var _btn_fire: Button = null
+var _lbl_fire_hint: Label = null
 var _lbl_weapons: Label = null
 var _weapon_log: Array = []
 var _chart_dirty: Callable = Callable()
@@ -26,10 +27,15 @@ func _init() -> void:
 
 func _build() -> void:
 	_btn_fire = Button.new()
-	_btn_fire.text = "🚀 Fire Torpedo (System Solution)"
+	_btn_fire.text = "🚀 Fire Torpedo"
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
+	_lbl_fire_hint = Label.new()
+	_lbl_fire_hint.text = ""
+	_lbl_fire_hint.add_theme_font_size_override("font_size", 12)
+	_lbl_fire_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_lbl_fire_hint)
 	_lbl_weapons = Label.new()
 	_lbl_weapons.text = "Tubes: -"
 	_lbl_weapons.add_theme_font_size_override("font_size", 14)
@@ -46,10 +52,11 @@ func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> 
 	_refresh()
 
 
-## 解被提交后启用 Fire；无解时禁用。
-func set_solution_available(available: bool) -> void:
-	if _btn_fire != null:
-		_btn_fire.disabled = not available
+## 发射上下文提示（S1-07 §5.2）：SOLUTION / BEARING_ONLY / MANUAL + 风险说明。
+## Fire 可用性不依赖解，只依赖有装填管（_refresh 内判定）。
+func set_fire_context(text: String) -> void:
+	if _lbl_fire_hint != null:
+		_lbl_fire_hint.text = text
 
 
 func _on_weapon_event(tid: String, kind: String, detail: Dictionary) -> void:
@@ -80,6 +87,9 @@ func _refresh() -> void:
 		"Tubes: %d/%d loaded  In-water: %d"
 		% [weapons.loaded_count(), weapons.tubes.size(), weapons.torpedoes.size()]
 	)
+	if _btn_fire != null:
+		# Commit 3：随时可发射 = 有装填管（无解也允许 MANUAL/BEARING_ONLY）。
+		_btn_fire.disabled = weapons.loaded_count() == 0
 	if not _weapon_log.is_empty():
 		_lbl_weapons.text += "\n" + " | ".join(_weapon_log)
 	if chart == null:
