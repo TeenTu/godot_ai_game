@@ -16,6 +16,7 @@
 #   s100_integrity_test  S1-00 信息链完整性验收（D1-D8）
 #   s1_03b_scope_test    S1-03B 阵列缓冲作用域 + 拖曳歧义呈现隔离
 #   s1_03c_test          S1-03C 拖曳证据组关联不分裂 + 阵列中心几何/TMA evidence 门槛
+#   s1_07_legacy_characterization_test  S1-07 Commit0 旧武器缺陷行为刻画（Commit1 重构后删除）
 play_test
 stage1_test
 stage2_test
@@ -28,3 +29,4 @@ weapon_test
 s100_integrity_test
 s1_03b_scope_test
 s1_03c_test
+s1_07_legacy_characterization_test

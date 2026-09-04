@@ -57,6 +57,9 @@ func _initialize() -> void:
 	sys.confidence = 0.9
 
 	# w6a 无解时不发射
+	# S1-07 遗留契约（Commit 3 翻转）：无 System Solution 必须拒绝发射 →
+	# 新需求 REQ-DECISION-03 改为 MANUAL/BEARING_ONLY 可发射，System Solution
+	# 只是可选预填来源。此断言保留至 Commit 3 落地时翻转。
 	var n_fired0: int = world.weapons.torpedoes.size()
 	world.weapons.fire(
 		null, float(own.position_east_m), float(own.position_north_m), world.sim_time
@@ -95,6 +98,9 @@ func _initialize() -> void:
 	if not kinds.has("HIT"):
 		fails.append("w4b no HIT event")
 	# w5 管重装填
+	# S1-07 遗留契约（Commit 1 翻转）：鱼雷结束后发射管自动 LOADED →
+	# 新需求 §3.1 阶段一规则：发射后保持 EMPTY，真实再装填时间与库存后移，
+	# 不得因鱼雷命中/耗尽/自毁而自动补回。此断言在 Commit 1 改为 tube=EMPTY。
 	var reloaded: bool = false
 	for t in world.weapons.tubes:
 		if t["state"] == "LOADED":
