@@ -247,6 +247,26 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   PB-06 WIRE_ONLY 不 ATTACK/PB-07 主动链 ping_id+FOV+NO_RETURN；AT-03..07/
   AT-18 子集）。
 
+- **Patch C（评审统一声场，2026-09-04）**：
+  - P0-06 统一声场（阶段 1）：World `_acoustic_scene_emitters/_acoustic_scene_acs`
+    内核侧注册表（双方在水鱼雷影子 + 活动诱饵）；`main_ui._op_step` 用同一
+    合并声场喂 OperatorSonar——auto_measurements=false 的 UI 路径也能按概率
+    探测到鱼雷（BB 峰/NB/测量候选/告警同一物理到达）。武器采样集含本艇声源。
+  - P1-04.5：OperatorSonar.display_amp_db 显示对比度下限 1.5dB（已探测样本
+    SE<=0 不再隐形；弱接触低幅度+高抖动表达，不改 P_d）。
+  - P1-06：`_spectral_features` 逐谱线独立声学（TL(f)+跨层+N_eff 含鱼雷接收
+    自噪+P_d 丢线+频偏/幅度噪声），绝不复制 Truth 声纹；`truth_range_m` 仅
+    内核谱线计算用，绝不入 return。
+  - P1-07：主动回波测量历元统一——pending echo 快照发射几何，反射历元 =
+    emit + R/c（鱼雷按发射航向/航速外推），方位/SE/测距全用反射历元；
+    return 携带 timestamp（反射）/available_time（到达）。
+  - P1-12：contact_tokens 内核边界安全过滤（OWN/HOSTILE/FRIENDLY）；本艇
+    return 可在传感器内部产生但 torpedo 资格过滤拒绝（CONTACT_REJECTED_
+    SAFETY 事件、不进航迹/制导）；引信独立安全保险 FUZE_SAFETY_INHIBIT
+    （对发射方本侧平台绝不起爆，与 seeker 过滤互相独立）。
+  - 回归 `tools/patch_c_test.gd`（PC-01 统一声场含敌雷+UI 出峰/PC-02 显示
+    下限/PC-03 谱线净化不复制 Truth/PC-04 回波历元/PC-05 己方可见但安全）。
+
 ---
 
 ## 1. 单位与坐标约定（全局唯一，禁止改）

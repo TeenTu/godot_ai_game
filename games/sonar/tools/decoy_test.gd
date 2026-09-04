@@ -211,9 +211,20 @@ func _world_integration(fails: Array) -> void:
 	prog.lifetime_s = 8.0
 	_assert_bool(fails, "WI-a launch ok", w._launch_decoy(prog), true)
 	_assert_bool(fails, "WI-b in decoys list", w.decoys.size() == 1, true)
-	# 激活前不进武器采样集（静默）。
+	# 激活前不进武器采样集（静默）。P0-06：采样集含本艇声源（统一声场），
+	# 按成员断言而非计数。
 	w.run_steps(1)
-	_assert_bool(fails, "WI-c silent before activation", w._weapon_contacts.size() == 1, true)
+	var decoy_id: String = str(w.decoys[0].id)
+	var decoy_in: bool = false
+	for c in w._weapon_contacts:
+		if str(c.id) == decoy_id:
+			decoy_in = true
+	_assert_bool(
+		fails,
+		"WI-c silent before activation",
+		not decoy_in and w._weapon_contacts.size() >= 1,
+		true,
+	)
 	# 推进至激活（dt 以场景为准）：出现 DECOY_ACTIVATION 事件并进入采样集。
 	for i in range(40):
 		w.run_steps(1)
@@ -225,14 +236,22 @@ func _world_integration(fails: Array) -> void:
 		not w.emission_bus.events_of_kind(AcousticEmissionEvent.DECOY_ACTIVATION).is_empty(),
 		true,
 	)
-	_assert_bool(fails, "WI-e decoy enters sampling set", w._weapon_contacts.size() == 2, true)
+	decoy_in = false
+	for c2 in w._weapon_contacts:
+		if str(c2.id) == decoy_id:
+			decoy_in = true
+	_assert_bool(fails, "WI-e decoy enters sampling set", decoy_in, true)
 	# 推进至寿命到期：移出活动列表与采样集。
 	for i in range(60):
 		if w.decoys.is_empty():
 			break
 		w.run_steps(1)
 	_assert_bool(fails, "WI-f expired removed", w.decoys.is_empty(), true)
-	_assert_bool(fails, "WI-g contacts pruned", w._weapon_contacts.size() == 1, true)
+	decoy_in = false
+	for c3 in w._weapon_contacts:
+		if str(c3.id) == decoy_id:
+			decoy_in = true
+	_assert_bool(fails, "WI-g contacts pruned", not decoy_in, true)
 	# 等发射器冷却走完（首射后 10s），ready_rounds 还有 1 发 → 第二发可用。
 	for i in range(40):
 		if w.countermeasures.cooldown_left(w.sim_time) <= 0.0:

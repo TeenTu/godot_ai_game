@@ -989,7 +989,12 @@ func _update_status(msg: String) -> void:
 func _op_step() -> void:
 	if op == null or _op_panel == null:
 		return
-	op.update(world.sim_time, world.world["targets"], world.world["target_acs"])
+	# P0-06：UI 路径同一声场——targets + 统一声场注册表（双方鱼雷影子/诱饵），
+	# 经同一 OperatorSonar 概率采样出峰/测量候选/告警派生。
+	var scene: Array = world._acoustic_scene_emitters()
+	var scene_acs: Dictionary = world.world["target_acs"].duplicate()
+	scene_acs.merge(world._acoustic_scene_acs())
+	op.update(world.sim_time, world.world["targets"] + scene, scene_acs)
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():

@@ -279,6 +279,7 @@ godot --headless --path games/sonar --script res://tools/weapon_ui_test.gd      
 godot --headless --path games/sonar --script res://tools/s107_integrated_test.gd     # INT-A/B/C
 godot --headless --path games/sonar --script res://tools/patch_a_test.gd             # PA-01..03
 godot --headless --path games/sonar --script res://tools/patch_b_test.gd             # PB-01..07
+godot --headless --path games/sonar --script res://tools/patch_c_test.gd             # PC-01..05
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -415,7 +416,10 @@ target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-0
 真方位来自几何 bearing 绝不用深度冒充（深度≠方位刻意组合）/双方鱼雷 ID 前缀
 唯一（T01 vs ET01）/敌方在水计数结算释放可再反击，PA-01..03）、`patch_b_test`（评审 Patch B：alpha-beta 滤波恒速收敛+跨界无跳变/
 扫描级一对一关联/accept→ASSISTED/authorize 无锁→SEARCH 扫掠/无导线程序自主可达
-/WIRE_ONLY 不 ATTACK/主动链 ping_id+FOV 门+NO_RETURN 完成，PB-01..07）。
+/WIRE_ONLY 不 ATTACK/主动链 ping_id+FOV 门+NO_RETURN 完成，PB-01..07）、
+`patch_c_test`（评审 Patch C：统一声场 UI 路径可探测鱼雷+已探测样本显示下限/
+谱线逐线声学净化不复制 Truth/主动回波反射历元一致+timestamp/available_time/
+己方声源 OWN token 资格拒绝+引信独立安全保险，PC-01..05）。
 
 ### S1-00 信息链热修状态（2026-09）
 

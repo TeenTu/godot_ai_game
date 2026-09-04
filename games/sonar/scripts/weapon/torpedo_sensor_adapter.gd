@@ -27,6 +27,9 @@ var rng: RandomNumberGenerator = null  # 注入 RNG（无 rng 时采样视为全
 ## 区分诱饵——§6.6/§8.4）。仿真内核持有，绝不下发玩法层。
 var contacts: Array = []
 var contact_acs: Dictionary = {}  # id -> AcousticProfile
+# P1-12：id -> source token（OWN/HOSTILE/FRIENDLY）。内核边界安全过滤数据；
+# 缺省 ""= 未分类（旧场景无 token，行为不变）。
+var contact_tokens: Dictionary = {}
 ## 每次被动采样产生一条虚假 return 的概率（独立生成器；默认 0）。
 var false_alarm_rate: float = 0.0
 var max_active_listen_range_m: float = 15000.0
@@ -125,8 +128,11 @@ func sample_passive(
 						"ac": ac,
 						"contact_depth": float(c.depth_m),
 						"receiver_depth": tp_depth,
+						"receiver_speed_kn": tp_speed_kn,
+						"truth_range_m": range_m,  # 仅内核谱线声学用，绝不入 return
 						"range_m": -1.0,
 						"range_sigma_m": -1.0,
+						"source_token": str(contact_tokens.get(cid, "")),
 					},
 				)
 			)
@@ -149,6 +155,8 @@ func schedule_active_echoes(
 	profile: TorpedoAcousticProfile,
 	emit_time: float,
 	ping_id: String = "",
+	tp_depth: float = 0.0,
+	tp_speed_kn: float = 0.0,
 ) -> void:
 	if profile == null or env == null:
 		return
@@ -175,9 +183,21 @@ func schedule_active_echoes(
 				{
 					"torpedo_id": tp_id,
 					"arrive_t": emit_time + tau,
+					"emit_time": emit_time,
 					"contact": c,
 					"range_ref_m": range_m,
+					# P1-07：发射/反射历元几何快照——方位与 SE 全用同一历元，
+					# 绝不与到达时当前几何混用。
+					"tp_e": tp_e,
+					"tp_n": tp_n,
+					"tp_depth": tp_depth,
+					"tp_course_deg": tp_course_deg,
+					"tp_speed_kn": tp_speed_kn,
+					"c_e": float(c.position_east_m),
+					"c_n": float(c.position_north_m),
+					"c_depth": float(c.depth_m),
 					"ping_id": ping_id,
+					"source_token": str(contact_tokens.get(str(c.id), "")),
 				}
 			)
 		)
@@ -209,16 +229,28 @@ func collect_due_active_returns(
 			keep.append(e)
 			continue
 		# 到点：结算（RNG null 时按 miss 处理——只清 pending，不出 return）。
+		# P1-07：方位/SE/测距全部使用发射历元快照（e["tp_e"] 等），绝不与
+		# 到达时当前几何混用（旧实现 tb/range_at 用当前几何 = 历元混用）。
 		var c: RefCounted = e["contact"]
 		var cid: String = str(c.id)
 		if rng != null and contact_acs.has(cid):
 			var ac: RefCounted = contact_acs[cid]
-			var range_at: float = NavUtils.distance(
-				tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)
-			)
-			var tb: float = NavUtils.bearing_to_true(
-				tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)
-			)
+			var tp_e0: float = float(e.get("tp_e", tp_e))
+			var tp_n0: float = float(e.get("tp_n", tp_n))
+			var tp_d0: float = float(e.get("tp_depth", tp_depth))
+			var c_e0: float = float(e.get("c_e", float(c.position_east_m)))
+			var c_n0: float = float(e.get("c_n", float(c.position_north_m)))
+			var c_d0: float = float(e.get("c_depth", float(c.depth_m)))
+			# P1-07 反射历元：反射发生在 emit + R/c（tau 的一半）。鱼雷位置按
+			# 发射时航向/航速外推到反射时刻——绝不用到达时当前几何。
+			var r0: float = float(e.get("range_ref_m", 0.0))
+			var half_leg_s: float = 0.5 * AcousticService.echo_travel_time_s(r0)
+			var v_ms: float = float(e.get("tp_speed_kn", 0.0)) * 0.5144
+			var cr: float = deg_to_rad(float(e.get("tp_course_deg", 0.0)))
+			var tp_er: float = tp_e0 + sin(cr) * v_ms * half_leg_s
+			var tp_nr: float = tp_n0 + cos(cr) * v_ms * half_leg_s
+			var range_at: float = NavUtils.distance(tp_er, tp_nr, c_e0, c_n0)
+			var tb: float = NavUtils.bearing_to_true(tp_er, tp_nr, c_e0, c_n0)
 			var se: float = (
 				AcousticService
 				. active_se_layer(
@@ -228,9 +260,9 @@ func collect_due_active_returns(
 					profile.active_center_frequency_hz,
 					env,
 					tp_speed_kn,
-					tp_depth,
-					tp_depth,
-					float(c.depth_m),
+					tp_d0,
+					tp_d0,
+					c_d0,
 					ag,
 					dt_db,
 					profile.receiver_self_noise_db(tp_speed_kn),
@@ -249,7 +281,7 @@ func collect_due_active_returns(
 					. append(
 						_build_return(
 							"ACTIVE",
-							sim_time,
+							float(e.get("emit_time", sim_time)),
 							float(e["arrive_t"]),
 							tb,
 							se,
@@ -257,8 +289,9 @@ func collect_due_active_returns(
 							profile,
 							{
 								"ac": ac,
-								"contact_depth": float(c.depth_m),
-								"receiver_depth": tp_depth,
+								"contact_depth": c_d0,
+								"receiver_depth": tp_d0,
+								"source_token": str(e.get("source_token", "")),
 								"range_m":
 								(
 									float(e["range_ref_m"])
@@ -312,7 +345,8 @@ func _build_return(
 	sr.range_sigma_m = float(extra.get("range_sigma_m", -1.0))
 	sr.signal_excess_db = se
 	sr.detection_probability = pd
-	sr.spectral_features = _spectral_features(extra.get("ac", null), profile)
+	sr.source_token = str(extra.get("source_token", ""))
+	sr.spectral_features = _spectral_features(extra.get("ac", null), profile, extra)
 	sr.depth_relation = _depth_relation(
 		float(extra.get("contact_depth", 0.0)), float(extra.get("receiver_depth", 0.0))
 	)
@@ -321,17 +355,46 @@ func _build_return(
 
 
 ## 频带 + 落在带内的窄带谱线（不含任何 Truth 身份）。
-func _spectral_features(ac: RefCounted, profile: TorpedoAcousticProfile) -> Dictionary:
+## P1-06：谱线观测绝不复制 Truth 声纹——每条谱线独立经 TL(f)、跨层附加、
+## N_eff(f)（含鱼雷接收自噪）、P_d（丢线），再叠频率/幅度噪声。仅把观测特征
+## 送入 SeekerTrack。无 RNG/无距离（旧路径兼容）时退化为带通过滤（不产噪声）。
+func _spectral_features(
+	ac: RefCounted, profile: TorpedoAcousticProfile, extra: Dictionary = {}
+) -> Dictionary:
 	var f_min: float = profile.passive_frequency_min_hz
 	var f_max: float = profile.passive_frequency_max_hz
 	var tonals: Array = []
 	if ac != null:
 		var tls: Variant = ac.get("tonal_lines")
 		if tls != null:
+			var range_m: float = float(extra.get("truth_range_m", -1.0))
+			var z_s: float = float(extra.get("contact_depth", 0.0))
+			var z_r: float = float(extra.get("receiver_depth", 0.0))
+			var recv_kn: float = float(extra.get("receiver_speed_kn", 0.0))
+			var full: bool = rng != null and env != null and range_m >= 0.0
 			for tl in tls:
 				var f: float = float(tl.get("freq_hz", 0.0))
-				if f >= f_min and f <= f_max:
-					tonals.append({"freq_hz": f, "level_db": float(tl.get("level_db", 0.0))})
+				if f < f_min or f > f_max:
+					continue
+				var lvl: float = float(tl.get("level_db", 0.0))
+				if not full:
+					tonals.append({"freq_hz": f, "level_db": lvl})
+					continue
+				var tl_db: float = AcousticService.propagation_loss(range_m, f, env)
+				tl_db += env.cross_layer_extra_db(f, z_s, z_r)
+				var n_eff: float = env.effective_noise_db_with_self(
+					f, profile.receiver_self_noise_db(recv_kn)
+				)
+				var se_line: float = lvl - tl_db - n_eff
+				var pd_line: float = AcousticService.detection_probability(
+					se_line, profile.detection_k_d
+				)
+				if rng.randf() >= pd_line:
+					continue  # 丢线（dropout）
+				var f_jitter: float = maxf(f * 0.0015, 0.5)
+				var f_obs: float = maxf(f + rng.randfn(0.0, f_jitter), 1.0)
+				var lvl_obs: float = se_line + rng.randfn(0.0, 1.5)
+				tonals.append({"freq_hz": f_obs, "level_db": lvl_obs})
 	return {"band_min_hz": f_min, "band_max_hz": f_max, "tonal_hz": tonals}
 
 

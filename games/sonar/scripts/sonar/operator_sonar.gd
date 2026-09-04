@@ -29,6 +29,9 @@ const NOISE_FLOOR_DB: float = -28.0
 # 不再用固定纯色噪声底代替声学噪声（G-04：噪声始终存在，确定性种子可复现）。
 const NOISE_TEXTURE_DB: float = 2.5  # 背景起伏幅度（dB）
 const NOISE_TEXTURE_RHO: float = 0.75  # 帧间相关系数
+# P1-04.5：已探测样本的显示对比度下限（SE<=0 时旧实现 amp=SE*0.6<=0 →
+# 逻辑上探测到、画面上隐形）。弱接触用低幅度+高抖动表达，不改 P_d。
+const MIN_DISPLAY_AMP_DB: float = 1.5
 const ROW_INTERVAL_S: float = 2.0
 const AUTOCREW_INTERVAL_S: float = 10.0
 const AUTOCREW_PD_MIN: float = 0.85
@@ -121,6 +124,13 @@ var _own_ref: RefCounted = null
 var _bb_noise_tex: PackedFloat32Array = PackedFloat32Array()
 var _nb_noise_tex: PackedFloat32Array = PackedFloat32Array()
 var _demon_noise_tex: PackedFloat32Array = PackedFloat32Array()
+
+
+## P1-04.5：显示幅度 = clamp(max(SE*scale, MIN_DISPLAY_AMP_DB), 下限, 上限)。
+## 仅作用于已通过 P_d 的样本；下限保证弱接触可见（配合高方位抖动表达不确定）。
+static func display_amp_db(se_db: float, scale: float = 0.6, cap_db: float = 30.0) -> float:
+	var raw: float = maxf(se_db * scale, MIN_DISPLAY_AMP_DB)
+	return clampf(raw, MIN_DISPLAY_AMP_DB, cap_db)
 
 
 func _init() -> void:
@@ -335,7 +345,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var brg_noise: float = (
 			_randn() * maxf(float(def["sigma_min"]) * pow(2.0, -se_db / 6.0), 0.2)
 		)
-		var amp: float = minf(se_db * 0.6, 30.0)
+		var amp: float = display_amp_db(se_db)
 		# TOWED 单线阵：对阵轴两侧等角响应 → 生成共享证据的 A/B 镜像候选
 		# （S1-03A：pair 同 ID/同 SE/同噪声样本，消歧前对玩家等价，不标真假）。
 		var pair_id: String = ""
@@ -404,7 +414,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var rpm_hz: float = speed_kn * float(ac.turns_per_knot) / 60.0
 		var blade_rate: float = rpm_hz * float(ac.blade_count)
 		if blade_rate > 0.5 and blade_rate < DEMON_FMAX_HZ:
-			var d_amp: float = minf(se_db * 0.5, 24.0)
+			var d_amp: float = display_amp_db(se_db, 0.5, 24.0)
 			for k in range(1, 6):
 				var fh: float = blade_rate * k
 				if fh >= DEMON_FMAX_HZ:
