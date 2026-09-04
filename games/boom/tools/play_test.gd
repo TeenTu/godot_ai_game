@@ -335,13 +335,13 @@ func _test_skill_float_text() -> void:
 	print("[skill-float]")
 	# 文案/颜色/字号映射（§4.2 规格表：fan 黄小字 / chain 紫大字 / nuke 金巨型）。
 	var fan_spec: Dictionary = BoomSkillSystem.float_text_for("fan")
-	_check(fan_spec["text"] == "嘭!", "fan 飘字文案 = 嘭!")
+	_check(fan_spec["text"] == "POP!", "fan 飘字文案 = 嘭!")
 	_check(fan_spec["color"] == BoomSkillSystem.TEXT_COLOR_FAN, "fan 飘字颜色 = 黄")
 	var chain_spec: Dictionary = BoomSkillSystem.float_text_for("chain")
-	_check(chain_spec["text"] == "链!", "chain 飘字文案 = 链!")
+	_check(chain_spec["text"] == "ZAP!", "chain 飘字文案 = 链!")
 	_check(chain_spec["color"] == BoomSkillSystem.TEXT_COLOR_CHAIN, "chain 飘字颜色 = 紫")
 	var nuke_spec: Dictionary = BoomSkillSystem.float_text_for("nuke")
-	_check(nuke_spec["text"] == "轰!", "nuke 飘字文案 = 轰!")
+	_check(nuke_spec["text"] == "BOOM!", "nuke 飘字文案 = 轰!")
 	_check(nuke_spec["color"] == BoomSkillSystem.TEXT_COLOR_NUKE, "nuke 飘字颜色 = 金")
 	# 字号阶梯：小字 < 大字 < 巨型。
 	var fan_sc: float = fan_spec["scale"]
@@ -372,7 +372,7 @@ func _test_skill_float_text() -> void:
 		g.step(DT)
 	_check(hn.active_count() > 0, "fan 命中后技能飘字入池")
 	var lbl: Label3D = hn.first_active()
-	_check(lbl != null and lbl.text == "嘭!", "fan 命中飘字文本 = 嘭!")
+	_check(lbl != null and lbl.text == "POP!", "fan 命中飘字文本 = 嘭!")
 	root.remove_child(hn)
 	hn.free()
 	g.free()
