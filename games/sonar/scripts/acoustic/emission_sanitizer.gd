@@ -57,7 +57,9 @@ func consume_events(
 		var own_side: bool = own_emitter_refs.has(emitter)
 		if own_side:
 			# 本艇事实：自己的武器/诱饵事件直接转录（无 Truth 目标信息）。
-			out.append(_make_fact(ev, kind, emitter))
+			# 方位与接收 SE 由本艇位置对事件源计算（己方武器状态合法信息，
+			# 确定性计算、不消耗 RNG、不做探测门限判定）。
+			out.append(_make_fact(ev, kind, emitter, own))
 			continue
 		# 敌方事件：单程概率截获（§9.3）。
 		var src: Dictionary = ev.get("source_position_internal", {})
@@ -162,8 +164,9 @@ func _alert_for(kind: String) -> String:
 	return "ACOUSTIC_EVENT"
 
 
-## 本艇事实转录（无探测判定、无 Truth）。
-func _make_fact(ev: Dictionary, kind: String, emitter: String) -> Dictionary:
+## 本艇事实转录（无探测判定、无 Truth）。bearing_deg/se_db 为本艇声学
+## 接收端的确定性计算值，供 classify_detonation() 做战果层级判定（§10.4）。
+func _make_fact(ev: Dictionary, kind: String, emitter: String, own: RefCounted) -> Dictionary:
 	var fact := {
 		"evidence_id": _next_evidence_id,
 		"timestamp": float(ev.get("emit_time", 0.0)),
@@ -173,5 +176,43 @@ func _make_fact(ev: Dictionary, kind: String, emitter: String) -> Dictionary:
 		"own_emitter_ref": emitter,  # 己方武器 id（非敌方身份，合法）
 		"confidence": 1.0,
 	}
+	if env != null:
+		var src: Dictionary = ev.get("source_position_internal", {})
+		var brg: float = (
+			NavUtils
+			. bearing_to_true(
+				float(own.position_east_m),
+				float(own.position_north_m),
+				float(src.get("e", 0.0)),
+				float(src.get("n", 0.0)),
+			)
+		)
+		var range_m: float = (
+			NavUtils
+			. distance(
+				float(own.position_east_m),
+				float(own.position_north_m),
+				float(src.get("e", 0.0)),
+				float(src.get("n", 0.0)),
+			)
+		)
+		var freq: float = float(ev.get("center_frequency_hz", 1000.0))
+		fact["bearing_deg"] = NavUtils.wrap360(brg)
+		fact["bearing_sigma_deg"] = 0.0  # 本艇事实无方位误差
+		fact["se_db"] = (
+			AcousticService
+			. passive_se_layer(
+				float(ev.get("source_level_db", 0.0)),
+				range_m,
+				freq,
+				env,
+				float(own.speed_kn),
+				float(ev.get("source_depth_internal", 0.0)),
+				float(own.depth_m),
+				receiver_ag_db,
+				receiver_dt_db,
+			)
+		)
+		fact["freq_hz"] = freq
 	_next_evidence_id += 1
 	return fact
