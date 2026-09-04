@@ -38,7 +38,7 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-6 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-7 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
@@ -116,9 +116,23 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   targets）。`torpedo_seeker_test` WPN-SEEK-01/02/04/05 + miss/cross/speed/FA
   （被动默认 ON 收到 return / 被动无 range 且净化 / miss 确定性无 return /
   跨层 SE 降 / HIGH 自噪降被动 SE / 主动 TOF 延迟与测距 / 误报独立）。
-- **遗留项**（后续 Commit 7-12）：SeekerTrack 捕获/丢失/重搜/制导（多目标
-  score 竞争）、诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/
-  告警/在水控制 UI（Commit 11）。
+- **Commit 7（§7，SeekerTrack + Guidance）**：新增 `seeker_track.gd`（§7.1
+  航迹：平滑方位/方位率估计、可选主动测距、简化协方差、consecutive hits/
+  misses、lock_quality 按 §7.3 示例模型 q+=α·meas_q−γ·innovation / miss
+  −β，参数全配置化；score=w_q·q+w_se·SE+w_k·运动一致−w_i·创新+continuity
+  bonus，§7.4）+ `torpedo_seeker.gd`（§7.2 关联：未钳位预测方位差过绝对
+  门限+主动测距+深度层关系，绝不用 target_id；§7.3 滞回 SEARCH→ACQUIRING
+  →TRACKING→LOST→REACQUIRE→SEARCH；§7.6 重搜扇区围绕最后预测方位扩大）
+  + `torpedo_guidance.gd`（§7.7 纯函数制导：lead=方位率×提前时间追踪，只有
+  被动方位绝不补 Truth range；§7.5 SNAKE/CIRCLE 搜索扫掠）。Torpedo 接入：
+  净化 return 同步喂航迹机；期望航向优先级 制导>线控命令>搜索扫掠，全部
+  限 max_turn_rate（绝无瞬时指向，WPN-SEEK-13）；TRACKING→ATTACK、LOST→
+  SEARCH、主动测距近程→TERMINAL；WIRE_ONLY 恒不接管（听到也不擅自转向）；
+  ASSISTED 经 ACCEPT_SEEKER_TRACK 接受候选。`torpedo_track_test` WPN-SEEK-
+  06..13（单次不锁/连续捕获/miss 丢失/重搜不跟 Truth/重捕获/score 竞争与
+  翻转/净化 API/限转向率）+ WIRE_ONLY 不转 + SEARCH 扇区扫掠。
+- **遗留项**（后续 Commit 8-12）：诱饵干扰、敌方感知/Doctrine、引信/伤害
+  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）。
 
 ---
 
