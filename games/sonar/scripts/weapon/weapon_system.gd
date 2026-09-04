@@ -1,10 +1,16 @@
 class_name WeaponSystem
 extends RefCounted
-## weapon_system.gd — 发射管 / 武器管理（S1-07 正交 TubeState 版，Commit 1）。
+## weapon_system.gd — 发射管 / 武器管理（S1-07 正交 TubeState 版，Commit 3）。
 ##
 ## 信息链纪律（S1-07 §2.1）：fire() 只接受 SystemSolution（玩家提交的火控解）
 ## 或已构造的 WeaponProgram，绝不接受 TruthEntity。瞄准点 = 解位置按解航速
 ## 航向外推 age 秒（只用解数据，非 Truth）。
+##
+## 发射模式（S1-07 §5.2，Commit 3）：SystemSolution 变成可选预填——
+##   SOLUTION       fire(sys, ...)（保留射程联锁）；
+##   MANUAL         fire_manual(course,...)（无解，无射程概念）；
+##   BEARING_ONLY   fire_bearing_only(bearing,...)（无解只有方位，无隐藏距离）。
+## 三者最终都走 fire_program（管 LOADED + 程序合法 → 发射 → 管 EMPTY）。
 ##
 ## 发射管状态（S1-07 §3.1）：
 ##   LOADED → FIRING → EMPTY →（RELOADING 预留）→ LOADED
@@ -61,8 +67,7 @@ func reload_tube(idx: int) -> bool:
 	return true
 
 
-## 按 SystemSolution 发射（S1-07 遗留门禁：Commit 3 起 sys 变成可选预填，
-## 支持 MANUAL/BEARING_ONLY；本批仍要求解存在并构建 SOLUTION 程序）。
+## 按 SystemSolution 发射（SOLUTION 模式，保留射程联锁：解有射程概念）。
 ## own_depth_m：发射平台当前深度（鱼雷初始深度）。
 func fire(
 	sys: SystemSolution, own_e: float, own_n: float, sim_time: float, own_depth_m: float = 50.0
@@ -74,6 +79,28 @@ func fire(
 		weapon_event.emit("", "RANGE_INVALID", {"range_m": sys.range_m})
 		return null
 	var program: WeaponProgram = _build_solution_program(sys, own_e, own_n, sim_time)
+	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
+
+
+## S1-07 §5.2 MANUAL：无 SystemSolution 也可发射（随时可发射 = 解不是许可）。
+## 无距离概念 → 不触发射程联锁，只受 fire_program 的管/程序联锁约束。
+func fire_manual(
+	course_deg: float,
+	own_e: float,
+	own_n: float,
+	sim_time: float,
+	own_depth_m: float = 50.0,
+	initial_depth_band: String = WeaponProgram.DEPTH_BAND_UPPER,
+) -> Torpedo:
+	var program: WeaponProgram = WeaponProgram.make_manual(course_deg, initial_depth_band)
+	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
+
+
+## S1-07 §5.2 BEARING_ONLY：只有玩家可见方位即可发射；程序不含任何隐藏距离。
+func fire_bearing_only(
+	bearing_deg: float, own_e: float, own_n: float, sim_time: float, own_depth_m: float = 50.0
+) -> Torpedo:
+	var program: WeaponProgram = WeaponProgram.make_bearing_only(bearing_deg)
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 

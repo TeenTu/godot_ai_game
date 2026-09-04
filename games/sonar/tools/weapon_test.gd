@@ -1,5 +1,5 @@
 extends SceneTree
-## weapon_test.gd — 武器系统无头验收（S1-07 Commit 1 更新版）。
+## weapon_test.gd — 武器系统无头验收（S1-07 Commit 3 更新版）。
 ##
 ## 流程：场景 → 玩家操作链产出 System Solution → Fire → 鱼雷入水默认
 ## 状态断言 → 线控/引信 → 燃料耗尽 TERMINAL → 发射管保持 EMPTY（不再自动
@@ -10,13 +10,12 @@ extends SceneTree
 ##   w2  默认正交状态：PASSIVE_LISTEN / ACTIVE_TX OFF / WIRE CONNECTED /
 ##       WIRE_ONLY / FUZE SAFE（REQ-DECISION-01/02）
 ##   w3  引信按 arm distance 独立解保（FUZE_ARMED），与自主/主动解耦
-##   w4  [S1-07 翻转] 鱼雷结束后发射管保持 EMPTY，不自动 LOADED
+##   w4  鱼雷结束后发射管保持 EMPTY，不自动 LOADED
 ##   w5  reload_tube 显式装填后仍可发射
-##   w6  无解仍拒绝发射（S1-07 遗留门禁，Commit 3 翻转为 MANUAL 可发射）
+##   w6  [Commit 3 翻转] 无 SystemSolution 也可 MANUAL 发射（管 EMPTY 语义保留）
 ##
 ## 注：测试中构造 SystemSolution 使用测试作者权限读取 Truth 一次，模拟
-##     "玩家已完美解算"；武器与鱼雷代码本身绝不读 Truth（本批鱼雷无 Truth
-##      路径可读——step 只收 TorpedoContext）。
+##     "玩家已完美解算"；武器与鱼雷代码本身绝不读 Truth（step 只收 TorpedoContext）。
 
 const DT: float = 0.5
 const FIRE_AT: float = 60.0
@@ -59,13 +58,7 @@ func _initialize() -> void:
 	sys.estimated_position_north_m = float(tgt.position_north_m)
 	sys.confidence = 0.9
 
-	# w6 无解时不发射（S1-07 遗留门禁，Commit 3 翻转为 MANUAL/BEARING_ONLY）
-	var n_fired0: int = world.weapons.torpedoes.size()
-	world.weapons.fire(
-		null, float(own.position_east_m), float(own.position_north_m), world.sim_time
-	)
-	if world.weapons.torpedoes.size() != n_fired0:
-		fails.append("w6 fire without solution must be rejected")
+	# w6 无解 MANUAL 发射移到文件尾（避免占用发射管影响 w1-w5 流程）
 
 	var tp: Torpedo = (
 		world
@@ -161,6 +154,26 @@ func _initialize() -> void:
 	)
 	if tp2 == null:
 		fails.append("w5 reloaded tube cannot fire again")
+
+	# w6 [Commit 3 翻转] 无 SystemSolution 也可 MANUAL 发射（解非发射许可）
+	var n_fired0: int = world.weapons.torpedoes.size()
+	var tp_manual: Torpedo = (
+		world
+		. weapons
+		. fire_manual(
+			float(own.course_deg),
+			float(own.position_east_m),
+			float(own.position_north_m),
+			world.sim_time,
+			float(own.depth_m),
+		)
+	)
+	if tp_manual == null:
+		fails.append("w6 MANUAL fire without solution must succeed")
+	elif world.weapons.torpedoes.size() != n_fired0 + 1:
+		fails.append("w6b MANUAL fire did not add a torpedo")
+	elif tp_manual.program.fire_mode != WeaponProgram.FireMode.MANUAL:
+		fails.append("w6c MANUAL fire program fire_mode wrong")
 
 	_finish(fails)
 

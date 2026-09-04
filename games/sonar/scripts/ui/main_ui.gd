@@ -50,11 +50,9 @@ var _spin_bearing: SpinBox = null
 var _spin_range: SpinBox = null
 var _spin_course: SpinBox = null
 var _spin_speed: SpinBox = null
-var _spin_own_course: SpinBox = null
-var _spin_own_speed: SpinBox = null
+var _own_panel: OwnManeuverPanel = null  # 本艇机动/深度控制簇（拆出控行数）
 var _contact_rows: Dictionary = {}  # track_id -> Button
 var _chk_layers: Dictionary = {}  # layer key -> CheckButton
-var _lbl_own_cmd: Label = null  # S1-02：ACT→CMD 航向/航速显示
 
 var _time_scale: float = 2.0
 var _sim_accum: float = 0.0
@@ -114,15 +112,13 @@ func _ready() -> void:
 	system_sol = null
 	dot_stack = DotStack.new()
 
-	# 武器面板依赖 world.weapons（此时已就绪），补绑定并默认无解禁火
+	# 武器面板依赖 world.weapons（此时已就绪），补绑定；无解也可 MANUAL 发射
 	if _weapon_panel != null and world.weapons != null:
 		_weapon_panel.bind(world.weapons, _chart, func(): _dirty = true)
-		_weapon_panel.set_solution_available(false)
+		_weapon_panel.set_fire_context("No FC solution — MANUAL / BEARING_ONLY allowed")
 
-	if _spin_own_course != null:
-		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
-	if _spin_own_speed != null:
-		_spin_own_speed.set_value_no_signal(world.world["own"].speed_kn)
+	if _own_panel != null:
+		_own_panel.bind_world(world)
 
 	_update_status("ready: click a contact, then Auto Fit TMA")
 
@@ -271,31 +267,9 @@ func _build_panel() -> void:
 
 	_panel.add_child(HSeparator.new())
 
-	# 本艇机动
-	var own_title := Label.new()
-	own_title.text = "Own Ship Maneuver"
-	own_title.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(own_title)
-	_spin_own_course = _add_spin("Own Course (°)", 0, 359, 1, 0)
-	_spin_own_speed = _add_spin("Own Speed (kn)", 0, 30, 0.5, 0)
-	_lbl_own_cmd = Label.new()
-	_lbl_own_cmd.add_theme_font_size_override("font_size", 13)
-	_panel.add_child(_lbl_own_cmd)
-	_spin_own_course.value_changed.connect(_on_own_course)
-	_spin_own_speed.value_changed.connect(_on_own_speed)
-	var row_turn := HBoxContainer.new()
-	row_turn.add_theme_constant_override("separation", 4)
-	_panel.add_child(row_turn)
-	for cfg in [
-		["Left 5°", _on_turn_left],
-		["Right 5°", _on_turn_right],
-		["+2kn", _on_speed_up],
-		["-2kn", _on_slow_down]
-	]:
-		var b := Button.new()
-		b.text = cfg[0] as String
-		b.pressed.connect(cfg[1] as Callable)
-		row_turn.add_child(b)
+	# 本艇机动/深度控制（航向/航速/深度 + 层带按钮，独立面板控行数）
+	_own_panel = OwnManeuverPanel.new()
+	_panel.add_child(_own_panel)
 
 	_panel.add_child(HSeparator.new())
 	# 相机控制
@@ -722,23 +696,9 @@ func _update_panel() -> void:
 			_spin_course.set_value_no_signal(trial.course_deg)
 		if not _spin_speed.has_focus():
 			_spin_speed.set_value_no_signal(trial.speed_kn)
-	if _spin_own_course != null and not _spin_own_course.has_focus():
-		_spin_own_course.set_value_no_signal(world.world["own"].course_deg)
-	if _spin_own_speed != null and not _spin_own_speed.has_focus():
-		_spin_own_speed.set_value_no_signal(world.world["own"].speed_kn)
-	# S1-02：CMD/ACT 显示（实际值 → 命令值，含预计稳定时间）
-	if _lbl_own_cmd != null:
-		var o: TruthEntity = world.world["own"]
-		var cmd_txt: String = "ACT %.0f° %.1fkn" % [o.course_deg, o.speed_kn]
-		if o.has_course_command():
-			var err: float = absf(NavUtils.wrap180(o.commanded_course_deg - o.course_deg))
-			var rate: float = maxf(o.turn_rate_deg_s, TruthEntity.DEFAULT_TURN_RATE_DEG_S)
-			cmd_txt += " → CMD %.0f° (%.0fs)" % [o.commanded_course_deg, err / rate]
-		if o.has_speed_command():
-			var dv: float = absf(o.commanded_speed_kn - o.speed_kn)
-			var acc: float = maxf(o.acceleration_kn_s, TruthEntity.DEFAULT_ACCEL_KN_S)
-			cmd_txt += " → CMD %.1fkn (%.0fs)" % [o.commanded_speed_kn, dv / acc]
-		_lbl_own_cmd.text = cmd_txt
+	# 本艇 ACT/CMD + 深度/层带/ETA 由 OwnManeuverPanel 每帧同步
+	if _own_panel != null:
+		_own_panel.sync()
 
 
 ## 接触列表（可点击按钮，选中高亮）。集合变化时才重建按钮。
@@ -822,51 +782,6 @@ func _on_pause() -> void:
 	_paused = not _paused
 	world.set_paused(_paused)
 	_btn_pause.text = "▶ Resume" if _paused else "⏸ Pause"
-
-
-func _on_own_course(deg: float) -> void:
-	if world == null:
-		return
-	# S1-02/G-05：UI 只写命令值，实际艏向按转向率逼近
-	world.world["own"].command_course(NavUtils.wrap360(deg))
-
-
-func _on_own_speed(kn: float) -> void:
-	if world == null:
-		return
-	world.world["own"].command_speed(maxf(kn, 0.0))
-
-
-func _on_turn_left() -> void:
-	_change_own_course(-5.0)
-
-
-func _on_turn_right() -> void:
-	_change_own_course(5.0)
-
-
-func _change_own_course(delta_deg: float) -> void:
-	if world == null or _spin_own_course == null:
-		return
-	var new_deg: float = NavUtils.wrap360(_spin_own_course.value + delta_deg)
-	_spin_own_course.set_value_no_signal(new_deg)
-	world.world["own"].command_course(new_deg)
-
-
-func _on_speed_up() -> void:
-	_change_own_speed(2.0)
-
-
-func _on_slow_down() -> void:
-	_change_own_speed(-2.0)
-
-
-func _change_own_speed(delta_kn: float) -> void:
-	if world == null or _spin_own_speed == null:
-		return
-	var new_kn: float = clampf(_spin_own_speed.value + delta_kn, 0.0, 30.0)
-	_spin_own_speed.set_value_no_signal(new_kn)
-	world.world["own"].command_speed(new_kn)
 
 
 func _on_speed(index: int) -> void:
@@ -961,37 +876,69 @@ func _on_enter_solution() -> void:
 	var st: String = str(last_fit.get("status", "CONVERGED")) if not last_fit.is_empty() else "NONE"
 	system_sol = trial.commit(world.sim_time)
 	if _weapon_panel != null:
-		_weapon_panel.set_solution_available(true)
+		_weapon_panel.set_fire_context("SOLUTION ready — %s" % st)
 	if st in ["INSUFFICIENT_GEOMETRY", "MULTIMODAL", "STALE"]:
 		_update_status("Submitted (%s - LOW confidence, maneuver and refit!)" % st)
 	else:
 		_update_status("System Solution submitted (%s)" % st)
 
 
-## 武器面板 Fire 请求：用已提交的 SystemSolution（绝不读 Truth）真实发射。
+## S1-07 Commit 3：任意条件发射。有解 → SOLUTION；有选中接触 → BEARING_ONLY；
+## 都无 → MANUAL（沿本艇艏向）。绝不读 Truth（接触方位来自玩家测量链）。
 func _on_fire_torpedo() -> void:
 	if world == null or world.weapons == null:
 		return
-	if system_sol == null:
-		_update_status("No System Solution — Auto Fit then Accept first")
-		return
 	var own: RefCounted = world.world["own"]
 	var ws: WeaponSystem = world.weapons
-	var tp: Torpedo = (
-		ws
-		. fire(
-			system_sol,
-			float(own.position_east_m),
-			float(own.position_north_m),
-			world.sim_time,
-			float(own.depth_m),
+	var tp: Torpedo = null
+	var mode: String = ""
+	if system_sol != null:
+		tp = (
+			ws
+			. fire(
+				system_sol,
+				float(own.position_east_m),
+				float(own.position_north_m),
+				world.sim_time,
+				float(own.depth_m),
+			)
 		)
-	)
+		mode = "SOLUTION"
+	else:
+		var track: Track = _selected_track()
+		var lm: Measurement = track.latest_measurement() if track != null else null
+		if lm != null:
+			tp = (
+				ws
+				. fire_bearing_only(
+					lm.measured_bearing_deg,
+					float(own.position_east_m),
+					float(own.position_north_m),
+					world.sim_time,
+					float(own.depth_m),
+				)
+			)
+			mode = "BEARING_ONLY"
+		else:
+			tp = (
+				ws
+				. fire_manual(
+					own.course_deg,
+					float(own.position_east_m),
+					float(own.position_north_m),
+					world.sim_time,
+					float(own.depth_m),
+				)
+			)
+			mode = "MANUAL"
 	if tp != null:
-		_update_status("Torpedo away (%s)" % tp.torpedo_id)
+		_update_status("Torpedo away (%s / %s)" % [tp.torpedo_id, mode])
 		_dirty = true
 		if _weapon_panel != null:
+			_weapon_panel.set_fire_context("In-water: %s (%s)" % [tp.torpedo_id, mode])
 			_weapon_panel.refresh()
+	else:
+		_update_status("Fire rejected — no LOADED tube or invalid program (%s)" % mode)
 
 
 func _update_status(msg: String) -> void:
