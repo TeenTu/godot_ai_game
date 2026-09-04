@@ -100,6 +100,15 @@ func effective_noise_db(freq_hz: float, own_speed_kn: float) -> float:
 	return 10.0 * log(sum_linear) / log(10.0)
 
 
+## P1-05：环境噪声 + 显式自噪（dB 线性域合成）。供平台专用接收机自噪模型
+## （鱼雷 receiver_self_noise_db）替代潜艇级 own_noise_db 参与同一 SE 方程。
+func effective_noise_db_with_self(freq_hz: float, self_noise_db: float) -> float:
+	var sum_linear: float = 0.0
+	for src_db in [ambient_noise_db(freq_hz), self_noise_db]:
+		sum_linear += pow(10.0, src_db / 10.0)
+	return 10.0 * log(sum_linear) / log(10.0)
+
+
 func from_dict(d: Dictionary) -> void:
 	environment_type = str(d.get("environment_type", environment_type))
 	sea_state = int(d.get("sea_state", sea_state))

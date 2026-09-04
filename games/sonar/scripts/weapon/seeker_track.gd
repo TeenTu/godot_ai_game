@@ -12,12 +12,17 @@ extends RefCounted
 ## 滞回阈值（acquire/stable/drop）由 TorpedoSeeker 统一配置，本类只维护 q。
 
 const MAX_SOURCE_HISTORY: int = 32
+## P0-03：方位率物理合理上限（度/秒）——防异常 return 群制造离谱提前量。
+const MAX_RATE_ABS: float = 25.0
 
 static var _next_id: int = 1
 
 var seeker_track_id: int = 0
 var bearing_estimate_deg: float = 0.0
 var bearing_rate_deg_s: float = 0.0
+## 惯性视线率 = 相对方位率 + 本艇/鱼雷自转率（P0-03 约束 3 / CM-05 修正）：
+## 相对率混入自身转向，kine 一致性与制导提前量都应消费惯性率。
+var los_rate_deg_s: float = 0.0
 var range_estimate_m: float = -1.0  # <0 = 纯被动无测距（绝不补 Truth 距离）
 var bearing_var_deg2: float = 100.0  # 简化协方差：方位方差（§7.1 covariance）
 var last_update_time: float = -1.0
@@ -56,15 +61,23 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 	var innov: float = 0.0
 	if last_update_time >= 0.0:
 		var dt: float = maxf(now - last_update_time, 0.001)
-		var predicted: float = bearing_estimate_deg + bearing_rate_deg_s * dt
-		innov = NavUtils.wrap180(r.bearing_deg - predicted)
-		if dt > 0.05:
-			bearing_rate_deg_s = lerp(bearing_rate_deg_s, innov / dt, rate_smoothing)
-		else:
-			bearing_rate_deg_s = lerp(bearing_rate_deg_s, 0.0, rate_smoothing)
-		bearing_estimate_deg = NavUtils.wrap360(bearing_estimate_deg + innov * smoothing)
+		# P0-03：标准 alpha-beta 滤波——方位率是速度状态、innovation 是修正量
+		# （旧实现漏预测项且把 residual/dt 当完整速度，恒速序列下方位率被
+		# 系统性拉向 0）。跨 359°/0° 由 wrap180/wrap360 保证无跳变。
+		var theta_pred: float = NavUtils.wrap360(bearing_estimate_deg + bearing_rate_deg_s * dt)
+		innov = NavUtils.wrap180(r.bearing_deg - theta_pred)
+		bearing_estimate_deg = NavUtils.wrap360(theta_pred + smoothing * innov)
+		bearing_rate_deg_s = clampf(
+			bearing_rate_deg_s + (rate_smoothing / dt) * innov, -MAX_RATE_ABS, MAX_RATE_ABS
+		)
+		los_rate_deg_s = clampf(
+			bearing_rate_deg_s + float(cfg.get("own_turn_rate_deg_s", 0.0)),
+			-MAX_RATE_ABS,
+			MAX_RATE_ABS,
+		)
 	else:
-		bearing_estimate_deg = r.bearing_deg
+		bearing_estimate_deg = NavUtils.wrap360(r.bearing_deg)
+		los_rate_deg_s = float(cfg.get("own_turn_rate_deg_s", 0.0))
 	var sigma: float = maxf(r.bearing_sigma_deg, 0.5)
 	bearing_var_deg2 = lerp(bearing_var_deg2, sigma * sigma, 0.30)
 	if r.range_m >= 0.0:
@@ -176,7 +189,10 @@ func score(cfg: Dictionary, selected: bool) -> float:
 	var w_k: float = float(cfg.get("w_kinematic", 0.25))
 	var w_i: float = float(cfg.get("w_innovation", 0.5))
 	var bonus: float = float(cfg.get("continuity_bonus", 0.15))
-	var se_ref: float = float(cfg.get("score_se_ref_db", 20.0))
+	# P1-05.3 校准：se_ref=20 时常见接触 SE(40~75dB) 全部饱和为 1.0，声源
+	# 强弱差异对竞争不可见（旧实现靠方位率塌缩 bug 掩盖）。改为 60dB 使
+	# SE 差异进入 score（更响/更近声源在公平竞争中占优）。
+	var se_ref: float = float(cfg.get("score_se_ref_db", 60.0))
 	var kine_ref_rate: float = float(cfg.get("kine_ref_rate_deg_s", 5.0))
 	var innov_ref_var: float = float(cfg.get("innov_ref_var_deg2", 100.0))
 
@@ -186,7 +202,7 @@ func score(cfg: Dictionary, selected: bool) -> float:
 		else clampf(mean_signal_excess_db / maxf(se_ref, 1.0), 0.0, 1.0)
 	)
 	# 运动一致性：方位率越大越不一致（真实目标切向运动有限）。
-	var kine: float = clampf(1.0 - absf(bearing_rate_deg_s) / maxf(kine_ref_rate, 0.1), 0.0, 1.0)
+	var kine: float = clampf(1.0 - absf(los_rate_deg_s) / maxf(kine_ref_rate, 0.1), 0.0, 1.0)
 	# 创新惩罚：方位方差大 → 关联不稳。
 	var innov: float = clampf(bearing_var_deg2 / maxf(innov_ref_var, 1.0), 0.0, 1.0)
 	var continuity: float = bonus if (selected and lock_quality >= 0.5) else 0.0

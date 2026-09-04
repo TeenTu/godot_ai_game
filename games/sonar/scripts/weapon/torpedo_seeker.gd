@@ -20,6 +20,9 @@ const MAX_TRACKS: int = 8
 var phase: int = Phase.SEARCH
 var tracks: Array = []  # SeekerTrack
 var selected_track_id: int = -1
+## 载体（鱼雷）当前自转率（度/秒，自身运动学合法数据）：相对方位率 + 自转
+## = 惯性视线率（kine 一致性与提前量消费）。
+var own_turn_rate_deg_s: float = 0.0
 
 var _cfg: Dictionary = {}
 var _phase_since: float = 0.0
@@ -38,37 +41,68 @@ func _c(key: String, def: float) -> float:
 	return float(_cfg.get(key, def))
 
 
-## 喂入一批新 return（§7.2 关联：预测方位差/方位率/主动测距/时间连续性；
-## 绝不用 target_id）。返回 {new_track_ids: [..]}。
+## 喂入一批新 return（§7.2 关联：预测方位差/主动测距/深度层连续性；
+## 绝不用 target_id）。P0-04：先构造 Return×Track 代价矩阵再做一对一分配
+## （贪心按代价升序、各用一次）——旧实现逐条贪心允许同一 scan 双 return
+## 重复更新同一航迹（dt 夹到 0.001 制造方位率尖峰）。返回 {new_track_ids: [..]}。
 func process_returns(returns: Array, now: float) -> Dictionary:
 	var new_ids: Array = []
-	for r in returns:
+	var gate: float = _c("bearing_gate_deg", 12.0)
+	var w_theta: float = _c("assoc_w_theta", 1.0)
+	var w_r: float = _c("assoc_w_range", 0.5)
+	# ---- 代价矩阵（无量纲创新）：d_theta² / d_r²；纯被动无虚构距离项。
+	var pairs: Array = []
+	for ri in range(returns.size()):
+		var r = returns[ri]
 		if not (r is SeekerReturn) or not r.detected:
 			continue
-		var best: SeekerTrack = null
-		var best_cost: float = INF
-		var gate: float = _c("bearing_gate_deg", 12.0)
 		for t in tracks:
-			# §7.2 关联：未钳位的预测方位差过绝对门限（防止不同源误并入）。
 			var innov_deg: float = absf(
 				NavUtils.wrap180(r.bearing_deg - t.predicted_bearing_deg(now))
 			)
-			var cost: float = innov_deg
-			# 主动测距同时作为关联证据（§7.2）。
-			cost += 2.0 * t.normalized_range_innovation(r) * gate
+			if innov_deg > gate:
+				continue
+			var d_theta: float = innov_deg / maxf(r.bearing_sigma_deg, 0.5)
+			var cost: float = w_theta * d_theta * d_theta
+			# 主动测距同时作为关联证据（§7.2）；双方都有距离才计（P0-04.3）。
+			if t.range_estimate_m >= 0.0 and r.range_m >= 0.0:
+				var d_r: float = absf(r.range_m - t.range_estimate_m) / maxf(r.range_sigma_m, 10.0)
+				cost += w_r * d_r * d_r
 			# 深度层突变提高关联代价（§7.2 深度层关系）。
 			if t.depth_relation != "" and str(r.depth_relation) != t.depth_relation:
-				cost += gate * 0.5
-			if cost <= gate and cost < best_cost:
-				best_cost = cost
-				best = t
-		if best == null:
-			if tracks.size() >= MAX_TRACKS:
-				_evict_weakest()
-			best = SeekerTrack.create()
-			tracks.append(best)
-			new_ids.append(best.seeker_track_id)
-		best.update_with_return(r, now, _cfg)
+				cost += 0.5
+			pairs.append({"ri": ri, "track": t, "cost": cost})
+	# ---- 一对一分配：代价升序贪心，return 与 track 各最多用一次。
+	pairs.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool: return float(a["cost"]) < float(b["cost"])
+	)
+	var used_returns: Dictionary = {}
+	var used_tracks: Dictionary = {}
+	for p in pairs:
+		var ri: int = int(p["ri"])
+		var t: SeekerTrack = p["track"]
+		if used_returns.has(ri) or used_tracks.has(t.seeker_track_id):
+			continue
+		used_returns[ri] = true
+		used_tracks[t.seeker_track_id] = true
+		var uc: Dictionary = _cfg.duplicate()
+		uc["own_turn_rate_deg_s"] = own_turn_rate_deg_s
+		t.update_with_return(returns[ri], now, uc)
+	# ---- 未分配 return 才创建新航迹（满编先淘汰最弱）。
+	for ri in range(returns.size()):
+		var r2 = returns[ri]
+		if not (r2 is SeekerReturn) or not r2.detected:
+			continue
+		if used_returns.has(ri):
+			continue
+		if tracks.size() >= MAX_TRACKS:
+			_evict_weakest()
+		var nt := SeekerTrack.create()
+		tracks.append(nt)
+		var nc: Dictionary = _cfg.duplicate()
+		nc["own_turn_rate_deg_s"] = own_turn_rate_deg_s
+		nt.update_with_return(r2, now, nc)
+		new_ids.append(nt.seeker_track_id)
 	return {"new_track_ids": new_ids}
 
 

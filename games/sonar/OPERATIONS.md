@@ -278,6 +278,7 @@ godot --headless --path games/sonar --script res://tools/fuze_evidence_test.gd  
 godot --headless --path games/sonar --script res://tools/weapon_ui_test.gd           # UIW-01..06
 godot --headless --path games/sonar --script res://tools/s107_integrated_test.gd     # INT-A/B/C
 godot --headless --path games/sonar --script res://tools/patch_a_test.gd             # PA-01..03
+godot --headless --path games/sonar --script res://tools/patch_b_test.gd             # PB-01..07
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -412,7 +413,9 @@ target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-0
 集成：全链击杀 INT-A/敌方反击告警+来袭雷可听 INT-B/固定 seed 复现 INT-C，
 无 UI 直读 Truth、证据无 target_id）、`patch_a_test`（评审 Patch A：敌方感知
 真方位来自几何 bearing 绝不用深度冒充（深度≠方位刻意组合）/双方鱼雷 ID 前缀
-唯一（T01 vs ET01）/敌方在水计数结算释放可再反击，PA-01..03）。
+唯一（T01 vs ET01）/敌方在水计数结算释放可再反击，PA-01..03）、`patch_b_test`（评审 Patch B：alpha-beta 滤波恒速收敛+跨界无跳变/
+扫描级一对一关联/accept→ASSISTED/authorize 无锁→SEARCH 扫掠/无导线程序自主可达
+/WIRE_ONLY 不 ATTACK/主动链 ping_id+FOV 门+NO_RETURN 完成，PB-01..07）。
 
 ### S1-00 信息链热修状态（2026-09）
 

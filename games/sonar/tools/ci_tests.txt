@@ -54,3 +54,5 @@ weapon_ui_test
 s107_integrated_test
 #   patch_a_test            评审 Patch A：敌方方位几何/鱼雷 ID 唯一/在水计数释放（PA-01..03）
 patch_a_test
+#   patch_b_test            评审 Patch B：alpha-beta 滤波/一对一关联/状态机/主动链（PB-01..07）
+patch_b_test

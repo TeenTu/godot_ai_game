@@ -91,8 +91,21 @@ func sample_passive(
 			tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)
 		)
 		var sl: float = ac.broadband_sl_db(float(c.speed_kn), float(c.depth_m))
-		var se: float = AcousticService.passive_se_layer(
-			sl, range_m, freq, env, tp_speed_kn, float(c.depth_m), tp_depth, ag, dt_db
+		# P1-05：鱼雷专用接收自噪（与辐射噪声/潜艇级 own_noise 分离）。
+		var se: float = (
+			AcousticService
+			. passive_se_layer(
+				sl,
+				range_m,
+				freq,
+				env,
+				tp_speed_kn,
+				float(c.depth_m),
+				tp_depth,
+				ag,
+				dt_db,
+				profile.receiver_self_noise_db(tp_speed_kn),
+			)
 		)
 		var pd: float = AcousticService.detection_probability(se, k_d)
 		if rng.randf() >= pd:
@@ -129,15 +142,29 @@ func sample_passive(
 ## 时刻几何为基准（测距同源，REQ-19 纪律）；超出监听窗/最大距离的不登记。
 ## 回波按各自 arrive_t 延迟到达，绝不瞬时返回。
 func schedule_active_echoes(
-	tp_id: String, tp_e: float, tp_n: float, profile: TorpedoAcousticProfile, emit_time: float
+	tp_id: String,
+	tp_e: float,
+	tp_n: float,
+	tp_course_deg: float,
+	profile: TorpedoAcousticProfile,
+	emit_time: float,
+	ping_id: String = "",
 ) -> void:
 	if profile == null or env == null:
 		return
+	# P0-09/P0-10：主动发射门 = 被动/主动同一 FOV 参数（单一真源）。
+	# 扇区外目标不排程回波——UI 画的扇区与物理一致。
+	var beam_half: float = 0.5 * profile.horizontal_beamwidth_deg
 	for c in contacts:
 		var range_m: float = NavUtils.distance(
 			tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)
 		)
 		if range_m > max_active_listen_range_m:
+			continue
+		var tb: float = NavUtils.bearing_to_true(
+			tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)
+		)
+		if not _in_fov(tb, tp_course_deg, beam_half):
 			continue
 		var tau: float = AcousticService.echo_travel_time_s(range_m)
 		if tau > active_listen_window_s:
@@ -150,6 +177,7 @@ func schedule_active_echoes(
 					"arrive_t": emit_time + tau,
 					"contact": c,
 					"range_ref_m": range_m,
+					"ping_id": ping_id,
 				}
 			)
 		)
@@ -205,6 +233,7 @@ func collect_due_active_returns(
 					float(c.depth_m),
 					ag,
 					dt_db,
+					profile.receiver_self_noise_db(tp_speed_kn),
 				)
 			)
 			var pd: float = AcousticService.detection_probability(se, k_d)
@@ -236,6 +265,7 @@ func collect_due_active_returns(
 									+ (rng.randfn(0.0, range_sigma) if rng != null else 0.0)
 								),
 								"range_sigma_m": range_sigma,
+								"ping_id": str(e.get("ping_id", "")),
 							},
 						)
 					)
@@ -286,6 +316,7 @@ func _build_return(
 	sr.depth_relation = _depth_relation(
 		float(extra.get("contact_depth", 0.0)), float(extra.get("receiver_depth", 0.0))
 	)
+	sr.ping_id = str(extra.get("ping_id", ""))
 	return sr
 
 
