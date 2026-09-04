@@ -38,6 +38,32 @@
 
 ---
 
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-2 已合入，2026-09）
+
+需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
+首批任务包（§17）= **Commit 0～2**，已全部合入 sonar-dev：
+
+- **Commit 0**：旧武器缺陷行为刻画测试（Truth 直读 / 单一 ENABLE_RANGE /
+  target_id 进 UI / DEAD 自动补装）——重构后已删除，由新契约测试接管。
+- **Commit 1（正交状态 + WeaponProgram）**：鱼雷拆成七个正交状态机——
+  MissionState / SeekerState / ActiveTxState / GuidanceAuthority / WireState /
+  DepthState / FuzeState，禁止一个 ENABLE 同时代表开机/主动/自主/解保。
+  `WeaponProgram` 发射瞬间不可变快照（SOLUTION 预填；BEARING_ONLY/MANUAL
+  入口已留，Commit 3 启用）。发射默认 **PASSIVE_LISTEN / ACTIVE_TX=OFF**
+  （REQ-DECISION-01/02）。鱼雷 step 只收 `TorpedoContext`（无 Truth targets，
+  类型级隔离）；发射管 LOADED→FIRING→EMPTY，**不自动补装**（reload_tube
+  显式）。Seeker 目标选择属 Commit 6，本批鱼雷为"线导直航 + 被动监听"中间态。
+- **Commit 2（S1-07A 双层伪三维）**：`DepthLayerModel`（UPPER/LOWER/
+  TRANSITION + smoothstep w_cross + TL_layer=TL_base+w·L(f)）；本艇/敌艇/
+  鱼雷统一连续升降（command/actual 分离、Vz 限速、禁瞬移）；跨层只降 Pd 不
+  硬置零。旧二维场景无 `depth_layers` → disabled → 额外损失恒 0（零回归）。
+- **遗留项**（后续 Commit 3-12）：MANUAL/BEARING_ONLY 发射、WireLink+fallback
+  执行、TorpedoAcousticProfile+EmissionBus、TorpedoSensorAdapter+SeekerReturn、
+  SeekerTrack 捕获/丢失/重搜/制导、诱饵干扰、敌方感知/Doctrine、引信/伤害
+  净化反馈、UI（在水控制/深度条/告警）。
+
+---
+
 ## 1. 单位与坐标约定（全局唯一，禁止改）
 
 - 内部距离：**米**；地图坐标：二维笛卡尔，**x 向东，y 向北**。

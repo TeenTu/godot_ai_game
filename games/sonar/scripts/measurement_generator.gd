@@ -66,6 +66,8 @@ func generate_passive(
 	var se: float = sensor.passive_signal_excess(
 		target_sl, rng_range, freq_hz, _env, observer.speed_kn
 	)
+	# S1-07A（Commit 2）：跨温跃层附加 TL（同层/旧场景 = 0，零行为变化）。
+	se -= _env.cross_layer_extra_db(freq_hz, float(observer.depth_m), float(target.depth_m))
 
 	# 概率探测
 	var pd: float = sensor.detection_probability(se)
@@ -140,6 +142,11 @@ func generate_active(
 	var se: float = sensor.active_signal_excess(
 		ping_sl_db, target_ac.active_target_strength_db, rng_range, freq_hz, _env, observer.speed_kn
 	)
+	# S1-07A：主动双程跨层（去程+回程同源同深度对 → 2×单程附加；旧场景 = 0）。
+	var xl: float = _env.cross_layer_extra_db(
+		freq_hz, float(observer.depth_m), float(target.depth_m)
+	)
+	se -= 2.0 * xl
 	var pd: float = sensor.detection_probability(se)
 	var detected: bool = _rng.randf() < pd
 

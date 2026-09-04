@@ -19,6 +19,10 @@ var tl_spreading_k: float = 20.0  # K：球面扩散 20 / 圆柱 10
 var tl_absorption_alpha: float = 0.5  # alpha(f)：频率相关吸收系数（dB/km 基准）
 var tl_environment_loss: float = 0.0  # L_environment：跃变层/海底/阴影区附加损失
 
+# S1-07A（Commit 2）：双层伪三维深度层模型。null/disabled = 旧二维场景，
+# cross_layer_extra_db 恒 0（零行为变化）。
+var depth_model: RefCounted = null  # DepthLayerModel
+
 
 ## 传播损失 TL = K*log10(max(r,1)) + alpha(f)*r_km + L_environment
 func propagation_loss(range_m: float, freq_hz: float) -> float:
@@ -73,6 +77,19 @@ func ambient_key_at(f_hz: float) -> Variant:
 ## 本艇自噪（dB），随航速上升。
 func own_noise_db(speed_kn: float) -> float:
 	return own_noise_base_db + own_noise_speed_coeff * maxf(speed_kn, 0.0)
+
+
+## 跨温跃层附加 TL（S1-07A §4.3）：TL_layer = TL_base + w_cross*L_thermocline(f)。
+## 无深度模型或模型 disabled → 0（旧二维场景零行为变化）。
+func cross_layer_extra_db(freq_hz: float, z_s: float, z_r: float) -> float:
+	if depth_model == null:
+		return 0.0
+	return depth_model.cross_layer_loss_db(freq_hz, depth_model.cross_layer_weight(z_s, z_r))
+
+
+## 深度化传播损失（单程）：TL_base + 跨层附加。供 layer 版声呐方程使用。
+func propagation_loss_layer(range_m: float, freq_hz: float, z_s: float, z_r: float) -> float:
+	return propagation_loss(range_m, freq_hz) + cross_layer_extra_db(freq_hz, z_s, z_r)
 
 
 ## 有效噪声 N_eff：多个 dB 源先转线性求和再转回 dB（不得直接相加）。

@@ -81,6 +81,48 @@ static func active_se(
 	return ping_sl_db - 2.0 * tl + target_ts_db - n_eff + ag_db - dt_db
 
 
+## ---- S1-07A（Commit 2）：双层伪三维 layer 版声呐方程 ----
+## 传播损失带深度：被动/截获单程 TL_layer(f,R,z_s,z_r)；
+## 主动分别算去程（发射端深度→目标）与回程（目标→接收端深度），推广
+## "2*TL 同路径近似"（S1-07 §4.3：SE_active=SL - TL_out - TL_ret + TS - N + AG - DT）。
+## env 无 depth_model（旧二维）时退化为同层 base，与 passive_se/active_se 一致。
+
+
+static func passive_se_layer(
+	sl_db: float,
+	range_m: float,
+	freq_hz: float,
+	env: RefCounted,
+	own_speed_kn: float,
+	z_s: float,
+	z_r: float,
+	ag_db: float = 0.0,
+	dt_db: float = 0.0
+) -> float:
+	var tl: float = env.propagation_loss_layer(range_m, freq_hz, z_s, z_r)
+	var n_eff: float = env.effective_noise_db(freq_hz, own_speed_kn)
+	return sl_db - tl - n_eff + ag_db - dt_db
+
+
+static func active_se_layer(
+	ping_sl_db: float,
+	target_ts_db: float,
+	range_m: float,
+	freq_hz: float,
+	env: RefCounted,
+	own_speed_kn: float,
+	z_tx: float,
+	z_rx: float,
+	z_tgt: float,
+	ag_db: float = 0.0,
+	dt_db: float = 0.0
+) -> float:
+	var tl_out: float = env.propagation_loss_layer(range_m, freq_hz, z_tx, z_tgt)
+	var tl_ret: float = env.propagation_loss_layer(range_m, freq_hz, z_rx, z_tgt)
+	var n_eff: float = env.effective_noise_db(freq_hz, own_speed_kn)
+	return ping_sl_db - tl_out - tl_ret + target_ts_db - n_eff + ag_db - dt_db
+
+
 ## 概率探测 P_d = 1/(1+exp(-SE/k_d))：连续、无 SE>0 硬门限。
 static func detection_probability(se_db: float, k_d: float = DEFAULT_K_D) -> float:
 	return 1.0 / (1.0 + exp(-se_db / maxf(k_d, 1e-6)))

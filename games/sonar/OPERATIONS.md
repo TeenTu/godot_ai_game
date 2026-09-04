@@ -235,20 +235,28 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-2 已合入，Seeker 重构中）
 
-提交 System Solution 后 🚀 Fire 按钮亮起。鱼雷自决策（不读玩家位置/Truth）：
+提交 System Solution 后 🚀 Fire 按钮亮起。S1-07 重构后鱼雷为**正交状态机 +
+线导直航中间态**（Seeker 目标选择/声自导捕获属 Commit 6+）：
 
 ```
-Fire（仅读 SystemSolution）→ 直航 → 安全距离后 seeker ENABLED
-→ 蛇形 SEARCH → 主动声自导 ACQUIRE（变橙色）
-→ PURSUIT 追踪 → 命中（damage_state=sunk，紫色环消失）
+Fire（读 SystemSolution → WeaponProgram 快照）
+→ LAUNCHING → WIRE_RUN（PASSIVE_LISTEN 默认 ON / ACTIVE_TX 默认 OFF）
+→ 线控命令（course/speed/depth band/active_tx/autonomy/cut_wire，按 WireState 门控）
+→ 引信按 arm_distance 独立 SAFE→ARMED（与主动/自主解耦）
+→ DEAD（燃料耗尽；发射管保持 EMPTY，不自动补装）
 ```
+
+信息链：鱼雷 `step(dt, sim_time, TorpedoContext)` **不接收 Truth targets**
+（类型级隔离）；UI/事件不含 target_id。深度（S1-07A）：本艇/敌艇/鱼雷
+commanded/actual 分离、Vz 限速升降，跨温跃层 TL 只降 Pd 不硬置零。
 
 无头验收：
 ```bash
-godot --headless --path games/sonar --script res://tools/weapon_test.gd
-# 看到 WEAPON_TEST result=PASS
+godot --headless --path games/sonar --script res://tools/weapon_test.gd   # WEAPON_TEST result=PASS
+godot --headless --path games/sonar --script res://tools/s1_07_state_model_test.gd  # SM1-SM7
+godot --headless --path games/sonar --script res://tools/depth_layer_test.gd        # D1-D6
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Tubes 标签 / 鱼雷日志（5 行），main_ui
@@ -283,13 +291,15 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 12 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 14 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
 `s100_integrity_test`（S1-00 信息链完整性验收 D1-D8）、`s1_03b_scope_test`
 （S1-03B 阵列作用域 + 拖曳歧义呈现）、`s1_03c_test`（S1-03C 证据组关联 +
-阵列中心几何 + coverage/发射扇区接入，C1-C8）。
+阵列中心几何 + coverage/发射扇区接入，C1-C8）、`s1_07_state_model_test`
+（S1-07 正交状态模型/WeaponProgram/Truth 隔离，SM1-SM7）、`depth_layer_test`
+（S1-07A 双层深度 + 跨层 TL，D1-D6）。
 
 ### S1-00 信息链热修状态（2026-09）
 

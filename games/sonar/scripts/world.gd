@@ -22,6 +22,8 @@ var measurements: Array = []  # 全部生成的 Measurement
 # 测量只能由玩家 Mark / 已分配 Tracker / Autocrew 产生。
 var auto_measurements: bool = true
 var weapons: WeaponSystem = null  # 阶段四：发射管与在水鱼雷
+# S1-07 §12.1：鱼雷 step 上下文（只含服务接口，绝不含 Truth targets）。
+var torpedo_ctx: TorpedoContext = null
 
 # ---- 主动声呐 Ping（S1-04B PingSession）----
 # 玩家发一次脉冲 → 按往返传播延迟 τ=2R/c 结算单次在途 PingSession
@@ -72,6 +74,9 @@ func load_scenario(scenario: Dictionary) -> void:
 	sim_time = 0.0
 	measurements.clear()
 	weapons = WeaponSystem.new()
+	torpedo_ctx = TorpedoContext.new()
+	torpedo_ctx.env = world.get("env", null)
+	torpedo_ctx.depth_model = world.get("depth_model", null)
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -130,9 +135,10 @@ func tick() -> void:
 			_sensor_timers[sensor.sensor_id] = sim_time + sensor.update_interval_s
 
 ## 仅推进实体运动（Operator 模式：无自动测量）。
-	# 3) 推进在水鱼雷（自导/命中为仿真引擎内部行为）
+	# 3) 推进在水鱼雷（S1-07：ctx 只含服务接口；自导/命中为后续 Commit 的
+	#    Seeker 链，本批鱼雷为线导直航 + 默认被动监听）
 	if weapons != null and not weapons.torpedoes.is_empty():
-		weapons.step(dt, sim_time, world["targets"])
+		weapons.step(dt, sim_time, torpedo_ctx)
 	# 4) 推进 PingSession（结算到点回波 + 状态转移，与自动测量无关）
 	_advance_ping_session()
 
@@ -144,7 +150,7 @@ func _advance_only() -> void:
 	for t in world["targets"]:
 		t.advance(dt)
 	if weapons != null and not weapons.torpedoes.is_empty():
-		weapons.step(dt, sim_time, world["targets"])
+		weapons.step(dt, sim_time, torpedo_ctx)
 	_advance_ping_session()
 
 
