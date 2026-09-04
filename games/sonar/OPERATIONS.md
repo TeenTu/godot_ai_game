@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-9 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-10 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -274,6 +274,7 @@ godot --headless --path games/sonar --script res://tools/torpedo_seeker_test.gd 
 godot --headless --path games/sonar --script res://tools/torpedo_track_test.gd       # WPN-SEEK-06..13
 godot --headless --path games/sonar --script res://tools/decoy_test.gd               # CM-01..05 + 谱线分类
 godot --headless --path games/sonar --script res://tools/enemy_ai_test.gd            # AI-01..09
+godot --headless --path games/sonar --script res://tools/fuze_evidence_test.gd       # FUZE-01..07
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -320,6 +321,16 @@ WeaponSystem+TorpedoContext（seeker 声源 = 本艇+蓝方诱饵），其主动
 噪声同样落事件总线、可被玩家被动链截获（玩家声呐可听到来袭鱼雷）。未探测到
 事件时 AI 行为绝不变。
 
+Commit 10 引信与净化反馈（§10）：`FuzeController`（CONTACT/ACOUSTIC/MAGNETIC
+简化几何触发半径；解保双保险 warhead_arm_distance + min_time，SAFE 绝不起爆，
+与 Seeker/制导彻底分离）+ `EmissionSanitizer`（事件净化：敌方声学事件单程
+概率截获 → noisy bearing 告警证据 POSSIBLE_LAUNCH_TRANSIENT/POSSIBLE_TORPEDO/
+TORPEDO_ACTIVE_PING/DECOY_DEPLOYED/DETONATION_HEARD；己方武器事件为本艇事实；
+战果层级 classify_detonation 只基于证据+玩家航迹方位）。World 引信引擎结算
+爆炸：EXPLOSION 事件入总线（双方可截获）+ Truth 伤害（敌 sunk / 本艇
+damaged）+ 最近通过距离台账；普通 UI 只见 `world.player_evidence` 净化证据
+队列，命中确认（CONFIRMED_KILL）只经 `_debrief_summary()` 调试通道（Debrief）。
+
 ---
 
 ## 4. 常见问题
@@ -349,7 +360,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 21 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 22 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -373,7 +384,10 @@ tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）、`torpedo_track_tes
 复现，CM-01..05；含鱼雷谱线随模式 + 谱一致性分类稀释 JAMMER 假峰）、
 `enemy_ai_test`（S1-07 Commit9 敌方：出生确定性/合法性、无证据不感知、Ping 与
 发射瞬态截获只产 noisy bearing、反应延迟 ∈[3,15]s、BEARING_ONLY 宽扇区反击、
-AI 主动 Ping 同样暴露、规避命令值限速率、World 集成，AI-01..09）。
+AI 主动 Ping 同样暴露、规避命令值限速率、World 集成，AI-01..09）、`fuze_evidence_test`（S1-07
+Commit10 引信：SAFE 双保险不起爆/直航命中爆炸/Truth 伤害/Debrief 台账/战果
+层级纯函数/敌方鱼雷命中本艇→净化 DETONATION_HEARD/净化扫描/未命中零台账，
+FUZE-01..07）。
 
 ### S1-00 信息链热修状态（2026-09）
 

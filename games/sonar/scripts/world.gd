@@ -59,6 +59,9 @@ var active_emissions: Array = []
 var countermeasures: CountermeasureSystem = null
 var decoys: Array = []  # 活动诱饵（Truth 实体，随 tick 推进/寿命到期移除）
 
+var emission_sanitizer: EmissionSanitizer = null
+var player_evidence: Array = []  # 净化证据（告警/爆炸/本艇武器事实，可进 UI）
+
 var enemy_ai: EnemyDoctrineController = null
 var enemy_weapons: WeaponSystem = null
 var enemy_torpedo_ctx: TorpedoContext = null
@@ -97,6 +100,14 @@ var _enemy_shadow_acs: Dictionary = {}
 # 敌方感知/敌方鱼雷 seeker 的采样声源（每 tick 重建内容，数组实例稳定）。
 var _enemy_perception_contacts: Array = []
 var _enemy_perception_acs: Dictionary = {}
+
+# ---- S1-07 §10（Commit 10）：引信引擎 / 净化战果证据 / Debrief ----
+# 普通玩法层只收净化 EvidenceEvent（player_evidence）；Truth 命中对象与
+# 最近通过距离只留在 _detonations（Debrief/调试通道），UI 绝不即时显示
+# CONFIRMED KILL（§10.4）。
+var _detonations: Array = []  # 内核 Debrief 记录（含 internal target 引用）
+var _fuze_min_pass: Dictionary = {}  # torpedo_id -> 最近通过距离（内核台账）
+var _fuze_alive: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
 
 
 ## 从场景 JSON 构建并初始化世界。
@@ -137,6 +148,18 @@ func load_scenario(scenario: Dictionary) -> void:
 	# S1-07 §9（Commit 9）：敌方随机出生 + 感知 + Doctrine（有 enemy_spawn
 	# 块才启用；旧场景零行为变化）。
 	_setup_enemy_ai(scenario)
+	# S1-07 §10（Commit 10）：事件净化器（独立派生 RNG，确定性且不扰动玩家
+	# 测量流随机序列）+ 证据/Debrief 台账清空。
+	emission_sanitizer = EmissionSanitizer.new()
+	emission_sanitizer.bind(
+		world.get("env", null),
+		world.get("depth_model", null),
+		_derived_rng(int(scenario.get("seed", 12345)) + 5000)
+	)
+	player_evidence.clear()
+	_detonations.clear()
+	_fuze_min_pass.clear()
+	_fuze_alive.clear()
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -204,6 +227,9 @@ func tick() -> void:
 	_advance_ping_session()
 	# 5) 敌方感知/Doctrine（Commit 9）：证据 → 航迹 → 状态机 → 动作。
 	_advance_enemy_ai(dt)
+	# 6) 引信引擎（Commit 10）：几何触发 → 爆炸事件 → Truth 伤害 → 净化证据。
+	_advance_fuze_engine()
+	_advance_player_evidence()
 
 
 func _advance_only() -> void:
@@ -217,6 +243,8 @@ func _advance_only() -> void:
 	_advance_decoys(dt)
 	_advance_ping_session()
 	_advance_enemy_ai(dt)
+	_advance_fuze_engine()
+	_advance_player_evidence()
 
 
 ## 推进活动诱饵：激活瞬间记 DECOY_ACTIVATION 事件（§9.1）并进入武器采样集
@@ -321,6 +349,7 @@ func _setup_enemy_ai(scenario: Dictionary) -> void:
 	# 敌方鱼雷武器链（独立 ctx；seeker 声源 = 本艇 + 蓝方诱饵，_rebuild 时刷新）。
 	enemy_weapons = WeaponSystem.new()
 	enemy_weapons.emission_bus = emission_bus
+	enemy_weapons.id_prefix = "ET"  # 敌方鱼雷 id 前缀（净化器判别本艇事实）
 	enemy_torpedo_ctx = TorpedoContext.new()
 	enemy_torpedo_ctx.env = world.get("env", null)
 	enemy_torpedo_ctx.depth_model = world.get("depth_model", null)
@@ -902,3 +931,126 @@ func _ping_sensor() -> SensorArray:
 	)
 	s.set_rng(world["rng"])
 	return s
+
+
+# ------------------------------------------------------------------
+#  S1-07 §10（Commit 10）：引信引擎 / 净化战果证据 / Debrief
+#  - 引信与制导解耦：FuzeController 纯几何触发（SAFE 绝不起爆）；
+#  - 爆炸结算在本引擎（内核允许接触 Truth 几何）：EXPLOSION 事件 + Truth
+#    伤害（敌=sunk / 本艇=damaged）；
+#  - 普通玩法层只收净化 EvidenceEvent（emission_sanitizer）：DETONATION_HEARD
+#    / PROBABLE_HIT / PROBABLE_KILL 由证据+玩家航迹方位推导，绝无 target_id；
+#  - CONFIRMED_KILL 只经 debrief_summary()（调试通道）。
+# ------------------------------------------------------------------
+
+
+## 引信引擎（每 tick）：双方在水鱼雷 vs 对方 Truth 接触的几何触发。
+## 玩家鱼雷 → 敌方 targets；敌方鱼雷 → 本艇。诱饵不参与触发（近炸简化版）。
+func _advance_fuze_engine() -> void:
+	if weapons != null:
+		for tp in weapons.torpedoes:
+			_fuze_step_torpedo(tp, world["targets"], true)
+	if enemy_weapons != null:
+		for tp in enemy_weapons.torpedoes:
+			_fuze_step_torpedo(tp, [world["own"]], false)
+
+
+func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> void:
+	if tp.is_dead() or not tp._in_water():
+		_fuze_alive.erase(str(tp.torpedo_id))
+		return
+	_fuze_alive[str(tp.torpedo_id)] = true
+	# 最近通过距离台账（Debrief 用；内核侧）。
+	var min_d: float = INF
+	for c in contacts:
+		if str(c.damage_state) == "sunk":
+			continue
+		min_d = minf(
+			min_d,
+			NavUtils.distance(
+				tp.pos_east_m, tp.pos_north_m, float(c.position_east_m), float(c.position_north_m)
+			),
+		)
+	if min_d < float(_fuze_min_pass.get(str(tp.torpedo_id), INF)):
+		_fuze_min_pass[str(tp.torpedo_id)] = min_d
+	# 引信解保（§10.2 双保险：arm distance + min_time）。
+	var since_launch: float = sim_time - float(tp._launch_t)
+	var fc := FuzeController.new()
+	var prog: WeaponProgram = tp.program
+	fc.configure(prog.fuze_mode, prog.warhead_arm_distance_m)
+	if not fc.is_armed(tp.traveled_m, since_launch):
+		if (
+			tp.fuze_state == tp.FuzeState.SAFE
+			and tp.traveled_m >= prog.warhead_arm_distance_m
+			and since_launch >= FuzeController.FUZE_MIN_ARM_TIME_S
+		):
+			tp.fuze_state = tp.FuzeState.ARMED
+			tp.event_occurred.emit(tp.torpedo_id, "FUZE_ARMED", {"traveled_m": tp.traveled_m})
+		return
+	# 几何触发判定。
+	var res: Dictionary = fc.check_trigger(tp, contacts)
+	if not bool(res["triggered"]):
+		return
+	# 爆炸结算（内核）：EXPLOSION 声学事件（可被双方被动链截获）+ Truth 伤害。
+	var contact: RefCounted = res["contact"]
+	(
+		emission_bus
+		. record(
+			AcousticEmissionEvent.EXPLOSION,
+			str(tp.torpedo_id),
+			sim_time,
+			Vector3(tp.pos_east_m, tp.pos_north_m, tp.actual_depth_m),
+			500.0,
+			4000.0,
+			180.0,
+			2.0,
+		)
+	)
+	if not from_player:
+		# 敌方鱼雷命中本艇（Truth 侧；普通 UI 只会收到 DETONATION_HEARD 证据）。
+		world["own"].damage_state = "damaged"
+	else:
+		contact.damage_state = "sunk"
+	(
+		_detonations
+		. append(
+			{
+				"time": sim_time,
+				"torpedo_id": str(tp.torpedo_id),
+				"target_internal_ref": contact,
+				"target_id_internal": str(contact.id),  # 仅 Debrief/调试通道
+				"min_pass_distance_m": float(_fuze_min_pass.get(str(tp.torpedo_id), min_d)),
+				"detonated": true,
+				"from_player": from_player,
+			}
+		)
+	)
+	tp.detonate({"min_distance_m": float(res["min_distance_m"])})
+	_fuze_alive.erase(str(tp.torpedo_id))
+
+
+## 消费新声学事件 → 净化证据（DETONATION_HEARD / 鱼雷告警 / 本艇武器事实）。
+## 己方 emitter 集合每 tick 重建（本艇 id / 己方鱼雷 id / 己方诱饵 id）。
+func _advance_player_evidence() -> void:
+	if emission_sanitizer == null:
+		return
+	var refs := {"own": true}
+	if weapons != null:
+		for tp in weapons.torpedoes:
+			refs[str(tp.torpedo_id)] = true
+	for d in decoys:
+		if str(d.side) == "blue":
+			refs[str(d.id)] = true
+	var evs: Array = emission_sanitizer.consume_events(
+		emission_bus.events, world["own"], sim_time, refs
+	)
+	for e in evs:
+		player_evidence.append(e)
+	while player_evidence.size() > 256:
+		player_evidence.pop_front()
+
+
+## Debrief（§10.4/§10.5，内部调试通道；外部经 _debrief_summary 调用）：Truth 命中对象/最近通过距离/解误差对照——仅调试
+## 通道（Debrief 面板/无头测试），普通 UI 禁止使用。
+func _debrief_summary() -> Array:
+	return _detonations.duplicate(true)

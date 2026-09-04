@@ -175,6 +175,20 @@ func is_dead() -> bool:
 	return mission_state == MissionState.DEAD
 
 
+## 引信触发起爆（S1-07 §10，Commit 10）：由 World 引信引擎在几何判定通过后
+## 调用（内核边界；本方法绝不接触 Truth）。SAFE 状态拒绝起爆（双保险）。
+## detail 只含自身几何/状态（min_distance_m 等），绝不含 target_id。
+func detonate(detail: Dictionary) -> bool:
+	if mission_state == MissionState.DEAD or mission_state == MissionState.STOWED:
+		return false
+	if fuze_state != FuzeState.ARMED:
+		return false
+	fuze_state = FuzeState.TRIGGERED
+	event_occurred.emit(torpedo_id, "DETONATION", detail)
+	_die("DETONATED", detail)
+	return true
+
+
 ## ---- 状态可读名（UI/事件用） ----
 func mission_state_name() -> String:
 	return _enum_name(MissionState.keys(), mission_state, "STOWED")

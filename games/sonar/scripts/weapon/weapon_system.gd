@@ -29,6 +29,9 @@ var tubes: Array = []  # [{state: TubeState, torpedo_id}]
 var torpedoes: Array = []  # 在水的 Torpedo
 # Commit 5：声学事件总线（由 World 注入；null=无总线跳过发射瞬态广播）。
 var emission_bus: AcousticEmissionBus = null
+## 鱼雷 id 前缀（Commit 10：敌方发射器用 "ET"，与玩家 "T" 区分——净化器
+## 按前缀/集合判定本艇事实 vs 敌方截获）。
+var id_prefix: String = "T"
 var _next_id: int = 1
 
 
