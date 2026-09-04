@@ -14,6 +14,8 @@ extends Control
 ## 数据由 main_ui 在「新测量 / 新拟合 / 视图变化」时注入，不每帧重建。
 
 signal tick_selected(time: float)
+signal threat_selected(evidence_id: int)  # P0-07：点击威胁 LOB → 联动告警卡
+signal torpedo_selected(torpedo_id: String)  # P1-02：点击鱼雷/空白选择
 
 const PRED_HORIZON_S: float = 600.0
 const BACK_HORIZON_S: float = 900.0
@@ -34,6 +36,12 @@ const COL_TRIAL := Color(0.2, 0.95, 0.9)
 const COL_SYSTEM := Color(0.75, 0.5, 1.0)
 const COL_OUTLIER := Color(1.0, 0.25, 0.25)
 const COL_OWN := Color(0.35, 0.7, 1.0)
+# P0-07 威胁证据图层配色（种类区分，透明度随龄期衰减）。
+const COL_THREAT_LAUNCH := Color(1.0, 0.8, 0.25)
+const COL_THREAT_NOISE := Color(1.0, 0.35, 0.3)
+const COL_THREAT_PING := Color(1.0, 0.35, 0.9)
+const THREAT_LOB_LENGTH_M: float = 6000.0  # 有限长度 LOB（非无限射线）
+const THREAT_HALF_LIFE_S: float = 300.0
 
 var layers: Dictionary = {
 	"lob": true,
@@ -43,6 +51,7 @@ var layers: Dictionary = {
 	"trial": true,
 	"system": true,
 	"truth": false,
+	"threat": true,  # P0-07 威胁证据图层
 }
 var show_all_lobs: bool = false  # "All LOB History" 开关（默认关闭=代表性 24 条）
 var show_truth: bool = false  # Show Truth 开关（与 layers.truth 同步）
@@ -79,8 +88,15 @@ var fit_status: String = ""
 # S1-04C-REQ-03/06：选中 Track 最近一次有效测距证据（海图 range ring/带宽）。
 # {center, range_m, sigma_m, bearing_deg, color, track_id}；空 = 不画。
 var range_ring: Dictionary = {}
-# 在水鱼雷：[{trail: [{e, n, t}], state: String}]（自身传感器/状态，非 Truth）
+# 在水鱼雷：[{trail, state, torpedo_id, tx_state, beam, track_bearing_deg,
+#            track_sigma_deg, ...}]（自身传感器/状态，非 Truth）
 var torpedoes: Array = []
+# P0-07 威胁证据 LOB：[{evidence_id, threat_track_id, observer, bearing_deg,
+#   sigma_deg, kind, time, length_m}]（observer = 接收时刻本艇位置快照）。
+var threat_lobs: Array = []
+var selected_torpedo_id: String = ""  # 地图点击选中（P1-02 命中测试）
+var selected_evidence_id: int = -1  # 选中威胁证据（地图/告警交叉联动，P0-07.4）
+var now_time: float = 0.0  # 当前仿真时刻（脉冲动画/龄期衰减）
 
 var _font: Font = null
 var _dragging: bool = false
@@ -124,7 +140,8 @@ func reset_view() -> void:
 	set_view(own_pos, 10000.0)
 
 
-## Auto Frame：包含本艇航迹 / LOB 原点 / 最优解 / 备选解 / 95% 椭圆。
+## Auto Frame：包含本艇航迹 / LOB 原点 / 最优解 / 备选解 / 95% 椭圆 /
+## 己方鱼雷轨迹 + 搜索扇区端点 / 威胁 LOB 起点（P1-02.4）。
 func auto_frame() -> void:
 	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
@@ -144,6 +161,15 @@ func auto_frame() -> void:
 	for p in _ellipse_extent():
 		lo = lo.min(p)
 		hi = hi.max(p)
+	# P1-02：己方鱼雷轨迹与威胁 LOB 原点纳入取景。
+	for tp in torpedoes:
+		for pt in tp.get("trail", []):
+			var w := Vector2(float(pt["e"]), float(pt["n"]))
+			lo = lo.min(w)
+			hi = hi.max(w)
+	for tl in threat_lobs:
+		lo = lo.min(tl["observer"] as Vector2)
+		hi = hi.max(tl["observer"] as Vector2)
 	if lo.x > hi.x:
 		set_view(own_pos, 10000.0)
 		return
@@ -191,6 +217,23 @@ func _on_click(pos: Vector2) -> void:
 			tick_selected.emit(selected_time)
 			queue_redraw()
 			return
+	# P0-07：威胁 LOB 命中 → 交叉联动（告警卡高亮）。
+	for t in threat_click_points():
+		if (t["pos"] as Vector2).distance_to(pos) <= 14.0:
+			selected_evidence_id = int(t["evidence_id"])
+			threat_selected.emit(selected_evidence_id)
+			return
+	# P1-02：鱼雷命中 → 选中武器卡；空白取消。
+	for tp in torpedo_click_points():
+		if (tp["pos"] as Vector2).distance_to(pos) <= 10.0:
+			selected_torpedo_id = str(tp["torpedo_id"])
+			torpedo_selected.emit(selected_torpedo_id)
+			queue_redraw()
+			return
+	if selected_torpedo_id != "":
+		selected_torpedo_id = ""
+		torpedo_selected.emit("")
+		queue_redraw()
 
 
 # ------------------------------------------------------------------
@@ -217,6 +260,8 @@ func _draw() -> void:
 		_draw_system()
 	if bool(layers.get("truth", false)):
 		_draw_truth()
+	if bool(layers.get("threat", true)):
+		_draw_threat_lobs()
 	_draw_torpedoes()
 	_draw_hover_link()
 	_draw_camera_overlays()
@@ -694,7 +739,131 @@ func _ellipse_extent() -> Array:
 	return [c + Vector2(r, r), c - Vector2(r, r)]
 
 
-## 带半透明底板的标签（4px padding），自动错位避免相互覆盖。
+## P0-07：净化证据 → 威胁 LOB 图层数据。observer 用证据内接收时刻本艇快照
+## （本艇机动后 LOB 起点不漂移，AT-09）；无快照的旧证据跳过。
+func set_threat_evidence(evs: Array, sim_now: float) -> void:
+	var out: Array = []
+	for e in evs:
+		if str(e.get("side_hint", "")) != "INTERCEPT":
+			continue
+		if not e.has("observer_e_m"):
+			continue
+		var kind: String = str(e.get("evidence_kind", "ACOUSTIC_EVENT"))
+		if kind == "DETONATION" or kind == "DECOY":
+			continue
+		(
+			out
+			. append(
+				{
+					"evidence_id": int(e.get("evidence_id", 0)),
+					"threat_track_id": str(e.get("threat_track_id", "")),
+					"observer": Vector2(float(e["observer_e_m"]), float(e["observer_n_m"])),
+					"bearing_deg": float(e.get("bearing_deg", 0.0)),
+					"sigma_deg": float(e.get("bearing_sigma_deg", 2.0)),
+					"kind": kind,
+					"time": float(e.get("timestamp", sim_now)),
+					"length_m": THREAT_LOB_LENGTH_M,
+				}
+			)
+		)
+	threat_lobs = out
+	queue_redraw()
+
+
+func _threat_color(kind: String) -> Color:
+	if kind == "LAUNCH_TRANSIENT":
+		return COL_THREAT_LAUNCH
+	if kind == "ACTIVE_PING":
+		return COL_THREAT_PING
+	return COL_THREAT_NOISE  # RUNNING_NOISE / 其他
+
+
+## 威胁 LOB 屏幕点击点（纯函数，供 _on_click 与测试读取绘图输入数据）。
+func threat_click_points() -> Array:
+	var out: Array = []
+	for e in threat_lobs:
+		out.append({"pos": world_to_screen(e["observer"]), "evidence_id": int(e["evidence_id"])})
+	return out
+
+
+## 鱼雷头部屏幕点击点（P1-02 命中测试；纯函数）。
+func torpedo_click_points() -> Array:
+	var out: Array = []
+	for tp in torpedoes:
+		var pts: Array = tp.get("trail", [])
+		if pts.is_empty():
+			continue
+		var head := Vector2(float(pts[-1]["e"]), float(pts[-1]["n"]))
+		out.append({"pos": world_to_screen(head), "torpedo_id": str(tp.get("torpedo_id", ""))})
+	return out
+
+
+## 威胁证据 LOB：有限长度射线 + ±2σ 不确定扇形（从 observer 接收时刻快照
+## 画出），颜色/线型区分种类，透明度随龄期衰减。每条 ThreatTrack 只保留
+## 最新一条（抑制每秒一条线的闪烁，P1-11.3）。
+func _draw_threat_lobs() -> void:
+	for e in _representative_threats():
+		var origin: Vector2 = e["observer"]
+		var col := _threat_color(str(e["kind"]))
+		var age: float = maxf(now_time - float(e["time"]), 0.0)
+		var a: float = clampf(pow(0.5, age / THREAT_HALF_LIFE_S) * 0.7, 0.15, 0.7)
+		var brad: float = deg_to_rad(float(e["bearing_deg"]))
+		var dirv := Vector2(sin(brad), -cos(brad))
+		var s0 := world_to_screen(origin)
+		var s1 := world_to_screen(origin + dirv * float(e.get("length_m", THREAT_LOB_LENGTH_M)))
+		var is_sel: bool = int(e["evidence_id"]) == selected_evidence_id
+		if str(e["kind"]) == "LAUNCH_TRANSIENT":
+			_draw_dashed(s0, s1, Color(col.r, col.g, col.b, a), 1.5)
+		else:
+			draw_line(s0, s1, Color(col.r, col.g, col.b, a), 2.0 if is_sel else 1.2)
+		# ±2σ 不确定扇形（有限长度）。
+		var sig: float = deg_to_rad(2.0 * float(e.get("sigma_deg", 2.0)))
+		var mid := origin + dirv * float(e.get("length_m", THREAT_LOB_LENGTH_M)) * 0.55
+		var l0: float = brad - sig
+		var l1: float = brad + sig
+		var wedge := PackedVector2Array(
+			[
+				s0,
+				world_to_screen(origin + Vector2(sin(l0), -cos(l0)) * float(e["length_m"]) * 0.35),
+				world_to_screen(mid),
+				world_to_screen(origin + Vector2(sin(l1), -cos(l1)) * float(e["length_m"]) * 0.35),
+			]
+		)
+		draw_colored_polygon(wedge, Color(col.r, col.g, col.b, a * 0.16))
+		draw_circle(s0, 2.5, Color(col.r, col.g, col.b, a))
+		if is_sel:
+			draw_arc(s0, 8.0, 0, TAU, 20, Color(1, 1, 1, 0.85), 2.0)
+
+
+## 威胁 LOB 减载：每条 ThreatTrack 最新一条 + 全局最新 8 条，上限 16。
+func _representative_threats() -> Array:
+	if threat_lobs.size() <= 16:
+		return threat_lobs
+	var by_track: Dictionary = {}
+	var newest: Array = []
+	for e in threat_lobs:
+		var tid: String = str(e.get("threat_track_id", ""))
+		if tid == "" or not by_track.has(tid):
+			newest.append(e)
+		by_track[tid] = e
+	if newest.size() > 8:
+		newest = newest.slice(newest.size() - 8)
+	var out: Array = []
+	for v in by_track.values():
+		out.append(v)
+	out.append_array(newest)
+	return out.slice(0, 16)
+
+
+## 鱼雷符号 + 扇区（P0-10/P1-02 重做）：
+##   - 标签用真实 torpedo_id（不用数组序号，消失后其他 ID 不重排）；
+##   - 被动接收扇区：冷色青虚线（receiver ON 才画）；
+##   - 主动发射/接收扇区：由 tx_state 驱动（OFF 不画"正在照射"；PINGING 亮色
+##     脉冲；WAITING_TRIGGER 橙虚线；COOLDOWN 暗红点线）——绝不由
+##     ATTACK/TERMINAL 猜测；
+##   - 程序搜索扇区：黄色边界（保留）；
+##   - 选中 SeekerTrack：方位线 + ±σ 楔形；
+##   - 选中鱼雷高亮圈。
 func _draw_torpedoes() -> void:
 	for i in range(torpedoes.size()):
 		var tp: Dictionary = torpedoes[i]
@@ -711,39 +880,84 @@ func _draw_torpedoes() -> void:
 			if j > 0:
 				draw_line(prev, s, Color(col.r, col.g, col.b, 0.55), 1.5)
 			prev = s
-		if not pts.is_empty():
-			var head := world_to_screen(Vector2(float(pts[-1]["e"]), float(pts[-1]["n"])))
-			# S1-07 §11.3（Commit 11）：线导连线（CONNECTED 虚线，只表示通信链）。
-			if str(tp.get("wire_state", "")) == "CONNECTED":
-				draw_dashed_line(own_pos_screen(), head, Color(0.5, 0.7, 1.0, 0.5), 1.0, 6.0)
-			# 搜索扇区两条边界（细黄，§11.3）。
-			var half: float = deg_to_rad(float(tp.get("search_half_deg", 0.0)))
-			if half > 0.01:
-				var crs: float = deg_to_rad(float(tp.get("search_center_deg", 0.0)))
-				for a in [crs - half, crs + half]:
-					var dir := Vector2(sin(a), cos(a))
-					draw_line(head, head + dir * 46.0, Color(1.0, 1.0, 0.4, 0.5), 1.0)
-			# Seeker FOV（相对实际艏向；被动虚线/主动亮红脉冲，§11.3）。
-			var fh: float = deg_to_rad(float(tp.get("fov_half_deg", 0.0)))
-			var fc: float = deg_to_rad(float(tp.get("course_deg", 0.0)))
-			var fov_col := (
-				Color(1.0, 0.35, 0.2, 0.75)
-				if st == "ATTACK" or st == "TERMINAL"
-				else Color(1.0, 0.35, 0.2, 0.3)
-			)
+		if pts.is_empty():
+			continue
+		var head := world_to_screen(Vector2(float(pts[-1]["e"]), float(pts[-1]["n"])))
+		# S1-07 §11.3（Commit 11）：线导连线（CONNECTED 虚线，只表示通信链）。
+		if str(tp.get("wire_state", "")) == "CONNECTED":
+			draw_dashed_line(own_pos_screen(), head, Color(0.5, 0.7, 1.0, 0.5), 1.0, 6.0)
+		var beam: Dictionary = tp.get("beam", {}) as Dictionary
+		# 搜索扇区两条边界（细黄，§11.3）。
+		var half: float = deg_to_rad(float(tp.get("search_half_deg", 0.0)))
+		if half > 0.01:
+			var crs: float = deg_to_rad(float(tp.get("search_center_deg", 0.0)))
+			for a in [crs - half, crs + half]:
+				var dir := Vector2(sin(a), cos(a))
+				draw_line(head, head + dir * 46.0, Color(1.0, 1.0, 0.4, 0.5), 1.0)
+		# P0-10：扇区由 beam 状态驱动（绘制输入 = 物理门同一参数）。
+		var fh: float = deg_to_rad(float(tp.get("fov_half_deg", 0.0)))
+		var fc: float = deg_to_rad(float(tp.get("course_deg", 0.0)))
+		var tx: String = str(tp.get("tx_state", "OFF"))
+		# 被动接收扇区：冷色青虚线（receiver ON）。
+		if str(beam.get("receiver_state", "PASSIVE_ON")) == "PASSIVE_ON" and fh > 0.01:
 			for a in [fc - fh, fc + fh]:
-				var fdir := Vector2(sin(a), cos(a))
-				draw_dashed_line(head, head + fdir * 30.0, fov_col, 1.0, 4.0)
-			# 选中 SeekerTrack 方位（不确定方位线 ±sigma，绝不画 Truth 目标）。
-			var tb: float = float(tp.get("track_bearing_deg", -1.0))
-			if tb >= 0.0:
-				var ta: float = deg_to_rad(tb)
-				var tdir := Vector2(sin(ta), cos(ta))
-				draw_line(head, head + tdir * 60.0, Color(1.0, 0.4, 1.0, 0.8), 1.5)
-			draw_circle(head, 3.5, col)
-			_draw_label(
-				head + Vector2(6.0, -6.0), "TK%d %s" % [i + 1, str(tp.get("state", ""))], col, 12
-			)
+				var pdir := Vector2(sin(a), cos(a))
+				draw_dashed_line(head, head + pdir * 30.0, Color(0.4, 0.8, 1.0, 0.4), 1.0, 4.0)
+		# 主动发射/接收扇区：tx_state 驱动。
+		if fh > 0.01:
+			if tx == "PINGING":
+				var pulse: float = 0.55 + 0.35 * absf(sin(now_time * 8.0))
+				for a2 in [fc - fh, fc + fh]:
+					var adir := Vector2(sin(a2), cos(a2))
+					draw_dashed_line(
+						head, head + adir * 34.0, Color(1.0, 0.25, 0.15, pulse), 1.5, 5.0
+					)
+			elif tx == "WAITING_TRIGGER":
+				for a3 in [fc - fh, fc + fh]:
+					var adir3 := Vector2(sin(a3), cos(a3))
+					draw_dashed_line(
+						head, head + adir3 * 32.0, Color(1.0, 0.6, 0.2, 0.55), 1.0, 4.0
+					)
+			elif tx == "COOLDOWN":
+				for a4 in [fc - fh, fc + fh]:
+					var adir4 := Vector2(sin(a4), cos(a4))
+					draw_dashed_line(
+						head, head + adir4 * 30.0, Color(0.8, 0.25, 0.2, 0.25), 1.0, 7.0
+					)
+			# OFF：不画任何"正在照射"样式（P0-10.6）。
+		# 选中 SeekerTrack 方位（不确定方位线 ±sigma，绝不画 Truth 目标）。
+		var tb: float = float(tp.get("track_bearing_deg", -1.0))
+		if tb >= 0.0:
+			var ta: float = deg_to_rad(tb)
+			var tdir := Vector2(sin(ta), cos(ta))
+			draw_line(head, head + tdir * 60.0, Color(1.0, 0.4, 1.0, 0.8), 1.5)
+			# P1-02.1：±σ 楔形（真实航迹方差，非硬编码）。
+			var sig_d: float = float(tp.get("track_sigma_deg", 0.0))
+			if sig_d > 0.01:
+				_draw_track_sigma_wedge(head, tb, sig_d)
+		draw_circle(head, 3.5, col)
+		var tid: String = str(tp.get("torpedo_id", "TK%d" % [i + 1]))
+		_draw_label(head + Vector2(6.0, -6.0), "%s %s" % [tid, str(tp.get("state", ""))], col, 12)
+		# P1-02.5：地图选中鱼雷高亮。
+		if tid == selected_torpedo_id and selected_torpedo_id != "":
+			draw_arc(head, 8.0, 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0)
+
+
+## 选中航迹 ±σ 不确定楔形（沿航迹方位线，长度 60px 屏幕空间）。
+func _draw_track_sigma_wedge(head: Vector2, bearing_deg: float, sigma_deg: float) -> void:
+	var brad: float = deg_to_rad(bearing_deg)
+	var s0: float = deg_to_rad(bearing_deg - sigma_deg)
+	var s1: float = deg_to_rad(bearing_deg + sigma_deg)
+	var tip := head + Vector2(sin(brad), -cos(brad)) * 60.0
+	var wedge := PackedVector2Array(
+		[
+			head,
+			head + Vector2(sin(s0), -cos(s0)) * 30.0,
+			tip,
+			head + Vector2(sin(s1), -cos(s1)) * 30.0,
+		]
+	)
+	draw_colored_polygon(wedge, Color(1.0, 0.4, 1.0, 0.10))
 
 
 ## 本艇屏幕坐标（§11.3 线导连线起点）。

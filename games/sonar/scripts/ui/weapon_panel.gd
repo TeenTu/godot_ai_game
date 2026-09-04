@@ -13,6 +13,7 @@ const MAX_LOG: int = 5
 
 var weapons: WeaponSystem = null
 var chart: ChartView = null
+var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰减用）
 
 var _btn_fire: Button = null
 var _lbl_fire_hint: Label = null
@@ -98,15 +99,21 @@ func _refresh() -> void:
 	for tp in weapons.torpedoes:
 		# S1-07 §11.3（Commit 11）：海图叠加——轨迹/任务状态 + 线导连线 +
 		# 搜索扇区/Seeker FOV + 选中航迹方位（全部来自己方武器状态与净化摘要）。
-		var prog: WeaponProgram = tp.program
+		# 评审 P0-10/P1-02：扇区由 SeekerBeamState 单一真源驱动（物理门与
+		# 绘制同参数）；地图用真实 torpedo_id（绝不用数组序号）；主动脉冲由
+		# tx_state 驱动（不由 ATTACK/TERMINAL 猜测）；±σ 用航迹真实方差。
+		var beam: Dictionary = SeekerBeamState.new_from(tp).to_dict()
 		var entry := {
 			"trail": tp.trail,
 			"state": tp.mission_state_name(),
+			"torpedo_id": str(tp.torpedo_id),
 			"course_deg": tp.course_deg,
 			"wire_state": tp.wire_state_name(),
-			"search_center_deg": prog.search_center_deg if prog != null else 0.0,
-			"search_half_deg": prog.search_half_angle_deg if prog != null else 0.0,
-			"fov_half_deg": tp.acoustic_profile.horizontal_beamwidth_deg * 0.5,
+			"tx_state": tp.active_tx_state_name(),
+			"beam": beam,
+			"search_center_deg": beam["search_center_true_deg"],
+			"search_half_deg": beam["search_half_angle_deg"],
+			"fov_half_deg": beam["passive_half_angle_deg"],
 			"track_bearing_deg": -1.0,
 			"track_sigma_deg": 0.0,
 		}
@@ -114,7 +121,8 @@ func _refresh() -> void:
 			var sel: SeekerTrack = tp._seeker.selected_track()
 			if sel != null:
 				entry["track_bearing_deg"] = sel.bearing_estimate_deg
-				entry["track_sigma_deg"] = 3.0
+				entry["track_sigma_deg"] = sqrt(maxf(sel.bearing_var_deg2, 0.0))
 		chart_data.append(entry)
 	chart.torpedoes = chart_data
+	chart.now_time = now_time
 	chart.queue_redraw()

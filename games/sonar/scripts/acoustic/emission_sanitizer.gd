@@ -14,6 +14,22 @@ extends RefCounted
 ## 战果反馈层级（§10.4）：DETONATION_HEARD → PROBABLE_HIT → PROBABLE_KILL
 ## 由 classify_detonation() 纯函数给出（基于证据 + 玩家航迹方位，均为合法
 ## 数据）；CONFIRMED_KILL 只能由 Debrief（调试通道）或任务脚本给出。
+##
+## P0-07：证据携带地图威胁图层所需字段——接收时刻本艇位置快照
+## (observer_e_m/observer_n_m)、available_time、evidence_kind（
+## LAUNCH_TRANSIENT / RUNNING_NOISE / ACTIVE_PING / DETONATION / DECOY）与
+## sensor_id。地图 LOB 起点用接收时刻快照，本艇机动后不漂移（AT-09）；
+## 绝不包含 Truth 位置 / range / target_id。
+
+# P0-07：事件种类 → 威胁证据种类（地图图层颜色/线型语义）。
+const _EVIDENCE_KINDS := {
+	AcousticEmissionEvent.TORPEDO_TUBE_TRANSIENT: "LAUNCH_TRANSIENT",
+	AcousticEmissionEvent.TORPEDO_MOTOR_START: "LAUNCH_TRANSIENT",
+	AcousticEmissionEvent.TORPEDO_RUNNING_NOISE: "RUNNING_NOISE",
+	AcousticEmissionEvent.TORPEDO_ACTIVE_PING: "ACTIVE_PING",
+	AcousticEmissionEvent.EXPLOSION: "DETONATION",
+	AcousticEmissionEvent.DECOY_ACTIVATION: "DECOY",
+}
 
 var env: RefCounted = null
 var depth_model: RefCounted = null
@@ -109,9 +125,14 @@ func consume_events(
 				{
 					"evidence_id": _next_evidence_id,
 					"timestamp": now,
+					"available_time": now,
 					"side_hint": "INTERCEPT",
 					"alert": _alert_for(kind),
 					"emission_kind": kind,
+					"evidence_kind": _evidence_kind_for(kind),
+					"sensor_id": "own_passive",
+					"observer_e_m": float(own.position_east_m),
+					"observer_n_m": float(own.position_north_m),
 					"bearing_deg": NavUtils.wrap360(true_brg + rng.randfn(0.0, sigma)),
 					"bearing_sigma_deg": sigma,
 					"se_db": se,
@@ -162,6 +183,10 @@ func _alert_for(kind: String) -> String:
 		AcousticEmissionEvent.EXPLOSION:
 			return "DETONATION_HEARD"
 	return "ACOUSTIC_EVENT"
+
+
+func _evidence_kind_for(kind: String) -> String:
+	return str(_EVIDENCE_KINDS.get(kind, "ACOUSTIC_EVENT"))
 
 
 ## 本艇事实转录（无探测判定、无 Truth）。bearing_deg/se_db 为本艇声学

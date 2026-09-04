@@ -61,6 +61,9 @@ var decoys: Array = []  # 活动诱饵（Truth 实体，随 tick 推进/寿命�
 
 var emission_sanitizer: EmissionSanitizer = null
 var player_evidence: Array = []  # 净化证据（告警/爆炸/本艇武器事实，可进 UI）
+# 评审 P1-11：威胁航迹关联（LAUNCH_TRANSIENT→RUNNING_NOISE→ACTIVE_PING
+# 同一威胁卡升级，抑制每秒一条告警的洪泛）。load_scenario 重置。
+var threat_tracks := ThreatTrackManager.new()
 
 var enemy_ai: EnemyDoctrineController = null
 var enemy_weapons: WeaponSystem = null
@@ -165,6 +168,7 @@ func load_scenario(scenario: Dictionary) -> void:
 		_derived_rng(int(scenario.get("seed", 12345)) + 5000)
 	)
 	player_evidence.clear()
+	threat_tracks.reset()
 	_detonations.clear()
 	_fuze_min_pass.clear()
 	_fuze_alive.clear()
@@ -1118,6 +1122,9 @@ func _advance_player_evidence() -> void:
 	)
 	for e in evs:
 		player_evidence.append(e)
+		# P1-11：INTERCEPT 威胁证据关联到 ThreatTrack（写回 threat_track_id）。
+		if str(e.get("side_hint", "")) == "INTERCEPT":
+			threat_tracks.ingest(e, sim_time)
 	while player_evidence.size() > 256:
 		player_evidence.pop_front()
 

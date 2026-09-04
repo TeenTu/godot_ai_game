@@ -267,6 +267,36 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   - 回归 `tools/patch_c_test.gd`（PC-01 统一声场含敌雷+UI 出峰/PC-02 显示
     下限/PC-03 谱线净化不复制 Truth/PC-04 回波历元/PC-05 己方可见但安全）。
 
+- **Patch D（评审威胁证据与地图，2026-09-04）**：
+  - P0-07 ThreatBearingEvidence：EmissionSanitizer 的 INTERCEPT 证据新增
+    `evidence_kind`（LAUNCH_TRANSIENT/RUNNING_NOISE/ACTIVE_PING/DETONATION/
+    DECOY）、`available_time`、`sensor_id`、接收时刻本艇位置快照
+    `observer_e_m/observer_n_m`——地图 LOB 起点用接收时快照，本艇机动后不漂移
+    （AT-09）。绝不携带 Truth 位置/range/target_id（AT-10 子集）。
+  - P1-11 ThreatTrackManager：按时间（≤45s）、方位率外推创新门（≥3σ 且
+    ≥12°）与证据种类升级链（TRANSIENT→NOISE→PING 只升不降）把威胁证据关联
+    到同一 ThreatTrack（track_id 写回 `threat_track_id`），抑制每秒一条
+    POSSIBLE_TORPEDO 告警的洪泛；World.load_scenario 重置。
+  - P0-10 SeekerBeamState 单一真源：`SeekerBeamState.new_from(tp)` 从武器
+    权威状态生成扇区（被动/发射/接收半角 = 0.5×horizontal_beamwidth_deg，
+    中心 = 实际艏向 course_deg 绝不随命令瞬移，search_center/half、tx_state、
+    receiver_state、authority、steering_source、display_range_mode=SYMBOLIC）。
+    适配器被动门/主动发射门/主动接收门与 ChartView 绘制读取同一参数（AT-19）。
+  - P1-02 地图鱼雷指示：ChartView 鱼雷标签用真实 torpedo_id（不用数组序号）；
+    ±σ 楔形用航迹真实方差 sqrt(bearing_var)；主动扇区脉冲/颜色由 tx_state
+    驱动（PINGING 亮红脉冲/WAITING_TRIGGER 橙虚线/COOLDOWN 暗红点线/OFF 不画
+    "正在照射"），被动接收扇区冷色青虚线；auto_frame 纳入鱼雷轨迹与威胁 LOB；
+    命中测试 `torpedo_click_points/_on_click`（点击选中/空白取消，
+    torpedo_selected 信号）；`threat_click_points` 点击威胁 LOB 发
+    threat_selected，AlertPanel 同 evidence_id 行高亮（交叉联动单向，
+    反向属 Patch E）。
+  - 地图威胁图层：`ChartView.set_threat_evidence(player_evidence, now)`，
+    有限长度 LOB（6km）+ ±2σ 不确定扇形，颜色/线型按证据种类，透明度随龄期
+    半衰（300s）衰减；每 ThreatTrack 只保留最新一条防闪烁；layers.threat 开关。
+  - 回归 `tools/patch_d_test.gd`（PD-01 观察点快照 AT-09/PD-02 ThreatTrack
+    关联升级链与洪泛抑制/PD-03 扇区单一真源+边界内外与正后目标门 AT-19/
+    PD-04 海图输入数据与命中测试/PD-05 证据与 track 无 Truth 泄漏）。
+
 ---
 
 ## 1. 单位与坐标约定（全局唯一，禁止改）
