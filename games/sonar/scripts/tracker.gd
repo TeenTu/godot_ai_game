@@ -199,6 +199,98 @@ func feed(m: Measurement, max_angle_deg: float = 6.0) -> Track:
 	return track
 
 
+# ------------------------------------------------------------------
+#  S1-03C-P0-01：ambiguity-aware 证据组关联
+# ------------------------------------------------------------------
+# 拖曳阵一次物理到达 = 一个 A/B 镜像组（共享 evidence_id）。修复前把组内两条
+# 当普通测量逐条 feed：Track.latest_measurement() 常是 sibling，玩家下次点同一
+# 可见支时方位差超门限 → 静默新建 M02/M03……。本 API 把整组当作一个证据原子：
+#   - 关联判定用「候选集合最小角差」：组内任一支（A 或 B）与 Track 最近测量的
+#     角差 <= 门限即视为同一连续接触（latest 是 sibling 也不分裂）；
+#   - 同一组原子追加：全部成员进同一个 Track，绝不拆开；
+#   - preferred_track_id（选中接触）非空时只对该 Track 门控：通过则追加，
+#     不通过返回 null（调用方提示，绝不静默新建 Contact）。
+
+
+func _find_track(track_id: String) -> Track:
+	for tr in _tracks:
+		if tr.track_id == track_id:
+			return tr
+	return null
+
+
+## 组与某 Track 的关联评分：组内每个候选与 Track 最近测量的角差取最小，
+## 归一化 d²（纯方位风格，与 associate 被动分支一致）；最小角差超门限返回 -1。
+func _group_track_d2(cands: Array, track: Track, max_angle_deg: float) -> float:
+	var prev: Measurement = track.latest_measurement()
+	if prev == null:
+		return -1.0
+	var best_dang: float = 1.0e18
+	var best_sigma: float = 0.1
+	for m in cands:
+		var dang: float = absf(
+			NavUtils.angle_diff(m.measured_bearing_deg, prev.measured_bearing_deg)
+		)
+		if dang < best_dang:
+			best_dang = dang
+			var s_theta: float = sqrt(
+				(
+					m.bearing_sigma_deg * m.bearing_sigma_deg
+					+ prev.bearing_sigma_deg * prev.bearing_sigma_deg
+				)
+			)
+			best_sigma = maxf(s_theta, 0.1)
+	if best_dang > max_angle_deg:
+		return -1.0
+	return (best_dang / best_sigma) * (best_dang / best_sigma)
+
+
+func _append_group(track: Track, group: Array) -> void:
+	for m in group:
+		if m is Measurement:
+			track.add_measurement(m)
+
+
+## 证据组关联（见上）。group 为同一物理证据的 Measurement 列表（单条亦可）。
+## 返回关联/新建到的 Track；无法关联到 preferred Track 时返回 null。
+func feed_evidence_group(
+	group: Array, preferred_track_id: String = "", max_angle_deg: float = 8.0
+) -> Track:
+	var cands: Array = []
+	for m in group:
+		if m is Measurement and m.detected:
+			cands.append(m)
+	if cands.is_empty():
+		return null
+	if preferred_track_id != "":
+		var pt: Track = _find_track(preferred_track_id)
+		if pt == null or pt.state != Track.TrackState.ACTIVE:
+			return null
+		var d2: float = _group_track_d2(cands, pt, max_angle_deg)
+		if d2 < 0.0:
+			return null
+		_append_group(pt, group)
+		pt.association_confidence = _bearing_confidence(d2)
+		pt.last_association_mode = "bearing_only"
+		pt.last_association_score = d2
+		return pt
+	var best: Track = null
+	var best_d2: float = 1.0e18
+	for track in _tracks:
+		if track.state != Track.TrackState.ACTIVE:
+			continue
+		var d2: float = _group_track_d2(cands, track, max_angle_deg)
+		if d2 >= 0.0 and d2 < best_d2:
+			best_d2 = d2
+			best = track
+	if best != null:
+		_append_group(best, group)
+		best.association_confidence = _bearing_confidence(best_d2)
+		best.last_association_mode = "bearing_only"
+		best.last_association_score = best_d2
+	return best
+
+
 ## 推进所有 Track 的陈旧度。
 func update_staleness(dt: float) -> void:
 	for track in _tracks:

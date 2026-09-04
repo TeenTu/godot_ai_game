@@ -280,6 +280,15 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 	if active_array_id == "TOWED" and _own_ref != null:
 		tow = _own_ref.get("towed")
 	var mirror_lr: bool = bool(def.get("mirror_lr", false))
+	# S1-03C-P0-02：本行传感器原点 —— BOW/FLANK/ACTIVE = 艇心；TOWED = 阵列
+	# 声学中心。方位/距离/TL/LOB 全部从该原点出发，杜绝"艇心算方位、阵心写
+	# observer"的 ~6° 系统误差（距离越近、缆越长越明显）。
+	var obs_e: float = float(own.position_east_m)
+	var obs_n: float = float(own.position_north_m)
+	if active_array_id == "TOWED" and tow != null:
+		var ctr: Vector2 = tow.array_center_position(obs_e, obs_n)
+		obs_e = ctr.x
+		obs_n = ctr.y
 
 	for tgt in targets:
 		var ac: RefCounted = acs.get(tgt.id, null)
@@ -287,9 +296,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			continue
 		if active_array_id == "TOWED" and tow == null:
 			continue  # 未安装拖曳硬件：严格无 TOWED 测量
-		var d: Vector2 = Vector2(
-			tgt.position_east_m - own.position_east_m, tgt.position_north_m - own.position_north_m
-		)
+		var d: Vector2 = Vector2(tgt.position_east_m - obs_e, tgt.position_north_m - obs_n)
 		var rng_m: float = d.length()
 		var true_brg: float = rad_to_deg(atan2(d.x, d.y))
 		# 阵列相对方位决定覆盖/方向增益（问题2/3）；BB 显示相对方位用于瀑布/mark。
@@ -413,6 +420,8 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				"array_heading": array_heading,
 				"own_e": float(own.position_east_m),
 				"own_n": float(own.position_north_m),
+				"observer_e": obs_e,
+				"observer_n": obs_n,
 				"tow_center_m": tow_center_m,
 				"tow_length_m": tow_len_m,
 			}
@@ -588,10 +597,15 @@ func create_mark(
 	m.detected = true
 	_evidence_counter += 1
 	m.evidence_id = "ev_%05d" % _evidence_counter
-	# TOWED：观察站位 = 测量时刻阵列声学中心（不是本艇中心，S1-03）
+	# S1-03C-P0-02：观察站位优先取行固化的传感器原点（update 已从阵列声学中心
+	# 算好并写入行）；历史行点击绝不事后用 tow_center_m 重建（杜绝艇心/阵心错配
+	# 与 ~6° 系统误差）。旧行（无 observer 字段）回退 S1-03 公式。
 	var tow_center_m: float = float(row.get("tow_center_m", 0.0))
 	var tow_len_m: float = float(row.get("tow_length_m", 0.0))
-	if src_array == "TOWED" and tow_center_m > 0.0:
+	if row.has("observer_e") and row.has("observer_n"):
+		m.observer_east_m = float(row["observer_e"])
+		m.observer_north_m = float(row["observer_n"])
+	elif src_array == "TOWED" and tow_center_m > 0.0:
 		var rad: float = arr_hdg * NavUtils.DEG_TO_RAD
 		m.observer_east_m = own_e - tow_center_m * sin(rad)
 		m.observer_north_m = own_n - tow_center_m * cos(rad)

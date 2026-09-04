@@ -896,8 +896,15 @@ func _on_fit_tma() -> void:
 	if sel == null:
 		_update_status("No contact selected — click a contact first")
 		return
-	if sel.measurement_history.size() < 4:
-		_update_status("Contact %s needs >= 4 measurements" % sel.track_id)
+	# S1-03C-P0-03：门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
+	# 不再用原始 Measurement 行数——否则拖曳 2 次点击(4 行)会被误放行。
+	if sel.evidence_count() < 4:
+		_update_status(
+			(
+				"Contact %s needs >= 4 physical evidences (has %d)"
+				% [sel.track_id, sel.evidence_count()]
+			)
+		)
 		return
 
 	var meas: Array = []
@@ -1002,27 +1009,30 @@ func _op_step() -> void:
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		# S1-03B：autocrew 可能返回 A/B 镜像组（共享 evidence）；同 evidence 的
-		# 镜像支并入同一 Track——一次物理到达 = 一个 Track，不双计、不建第二目标。
+		# S1-03B：autocrew 可能返回 A/B 镜像组（共享 evidence）；S1-03C：整组
+		# 作为一个证据原子走 feed_evidence_group（候选集合最小角差）——一次物理
+		# 到达 = 一个 Track，不因 latest 是 sibling 而跨时刻分裂、不双计、不建第二目标。
 		var auto_ms: Array = op.autocrew_step(world.sim_time)
 		var i2: int = 0
 		while i2 < auto_ms.size():
 			var pm: Measurement = auto_ms[i2]
-			world.measurements.append(pm)
-			_processed_meas += 1
-			var tt: Track = tracker.feed(pm)
-			if tt == null:
-				tt = tracker.mark(pm, "M")
+			var grp: Array = [pm]
 			i2 += 1
 			while (
 				i2 < auto_ms.size()
 				and auto_ms[i2].evidence_id == pm.evidence_id
 				and auto_ms[i2].has_ambiguity()
 			):
-				world.measurements.append(auto_ms[i2])
-				_processed_meas += 1
-				tt.add_measurement(auto_ms[i2])
+				grp.append(auto_ms[i2])
 				i2 += 1
+			var tt: Track = tracker.feed_evidence_group(grp, "", 8.0)
+			if tt == null:
+				tt = tracker.mark(pm, "M")
+				for j in range(1, grp.size()):
+					tt.add_measurement(grp[j] as Measurement)
+			for gm in grp:
+				world.measurements.append(gm)
+				_processed_meas += 1
 			_dirty = true
 			_update_status("Autocrew marked a new detection")
 	_op_panel.refresh(op)
@@ -1156,27 +1166,33 @@ func _on_ping_fit_requested(track_id: String) -> void:
 ## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。
 ## x_value 为当前显示基准方位：as_true=false 是艇艏相对方位(-180..180)，
 ## as_true=true 是真北方位(0..360)；create_mark 内部处理。
+## S1-03C：A/B 镜像组作为"一个物理证据"整体关联——选中接触时只对选中 Track
+## 门控，通过则原子追加整组、不通过则提示且绝不静默新建第二个接触。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
 	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
 	var group: Array = op.create_mark_group(brg, world.sim_time, "", as_true, row)
-	var m: Measurement = group[0] as Measurement
-	world.measurements.append(m)
-	_processed_meas += 1  # S1-03B：手动 Mark 已直接喂 Tracker，跳过 _feed 重喂
+	if group.is_empty():
+		return
+	var pm: Measurement = group[0] as Measurement
 	var t: Track = null
 	if selected_track_id != "":
-		for tr in tracker.all_tracks():
-			if tr.track_id == selected_track_id:
-				t = tracker.feed(m, 8.0)
-				break
-	if t == null:
-		t = tracker.mark(m, "M")
-	# 镜像候选进同一 Track（共享 pair_id/证据，不得当独立目标或双倍计数）
-	if group.size() > 1:
-		var sib: Measurement = group[1] as Measurement
-		world.measurements.append(sib)
-		_processed_meas += 1
-		t.add_measurement(sib)
+		# 选中接触：只对该 Track 门控（候选集合最小角差）
+		t = tracker.feed_evidence_group(group, selected_track_id, 8.0)
+		if t == null:
+			_update_status("Mark ignored: inconsistent with %s" % selected_track_id)
+			return
+	else:
+		# 无选中：全局最近邻关联；无匹配才由本次 Mark 新建 Contact
+		t = tracker.feed_evidence_group(group, "", 8.0)
+		if t == null:
+			t = tracker.mark(pm, "M")
+			for j in range(1, group.size()):
+				t.add_measurement(group[j] as Measurement)
+	# 关联/新建成功后才把整组写入世界测量流（失败不污染，_feed 不重喂）
+	for gm in group:
+		world.measurements.append(gm)
+		_processed_meas += 1  # S1-03B：手动 Mark 已直接喂 Tracker，跳过 _feed 重喂
 	selected_track_id = t.track_id
 	_dirty = true
 	_last_meas_count = world.measurements.size()
