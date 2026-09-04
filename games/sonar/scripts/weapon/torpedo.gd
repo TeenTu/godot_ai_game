@@ -54,6 +54,16 @@ const DEFAULT_LOWER_HOLD_DEPTH_M: float = 180.0
 # 主动发射机节拍由 TorpedoAcousticProfile.active_pulse_duration_s /
 # active_ping_interval_s 提供（Commit 5 起）；PingSession/回波 TOF 为 Commit 6 链。
 
+## 集中任务状态迁移（P0-02.8）：非法转换拒绝并发出结构化事件；合法转换
+## 统一在此发射迁移事件。DEAD 由 _die 处理（终态，不经本表）。
+const _MISSION_TRANSITIONS := {
+	MissionState.LAUNCHING: [MissionState.WIRE_RUN],
+	MissionState.WIRE_RUN: [MissionState.SEARCH, MissionState.ATTACK, MissionState.TERMINAL],
+	MissionState.SEARCH: [MissionState.ATTACK],
+	MissionState.ATTACK: [MissionState.TERMINAL, MissionState.SEARCH],
+	MissionState.TERMINAL: [MissionState.SEARCH],
+}
+
 var torpedo_id: String = ""
 var program: WeaponProgram = null
 
@@ -103,6 +113,12 @@ var _tx_cycle_s: float = 0.0
 var _tx_manual_armed: bool = false
 var _depth_model: RefCounted = null  # DepthLayerModel（Commit 2 由 ctx 注入）
 var _fallback_active: bool = false
+# P0-09：主动链 ping 序号与在途 ping 台账（ping_id -> {emit_t, heard}）。
+# 同一 ping_id 串联 TX_PING → ECHO（同 id）/ LISTEN_COMPLETE_NO_RETURN。
+var _ping_seq: int = 0
+## 上一步实际执行的转向率（自身运动学；喂给 seeker 做惯性视线率补偿）。
+var _last_turn_rate_deg_s: float = 0.0
+var _active_pings_outstanding: Dictionary = {}
 # Commit 5：ctx 注入的声学事件总线（null=无总线，如直接单测不发射）。
 var _emission_bus: AcousticEmissionBus = null
 var _noise_timer_s: float = 0.0
@@ -297,6 +313,21 @@ func authorize_autonomy() -> bool:
 	if not _wire_accepts_command():
 		return false
 	guidance_authority = GuidanceAuthority.AUTONOMOUS
+	# P0-02.4：无锁时进入 SEARCH 并从当前航向平滑进入程序扇区扫掠；
+	# 有有效航迹（ACQUIRING/TRACKING/REACQUIRE）时交由 seeker 相位机接管。
+	var has_lock: bool = (
+		_seeker != null
+		and (
+			_seeker.phase
+			in [
+				TorpedoSeeker.Phase.ACQUIRING,
+				TorpedoSeeker.Phase.TRACKING,
+				TorpedoSeeker.Phase.REACQUIRE,
+			]
+		)
+	)
+	if mission_state == MissionState.WIRE_RUN and not has_lock:
+		_try_mission(MissionState.SEARCH, "SEARCH", {"reason": "AUTONOMY_AUTHORIZED"})
 	_log_command("AUTHORIZE_AUTONOMY", {})
 	event_occurred.emit(torpedo_id, "AUTONOMY_AUTHORIZED", {"via": "wire"})
 	return true
@@ -321,6 +352,9 @@ func accept_seeker_track(track_id: int) -> bool:
 	if _seeker == null or _seeker.track_by_id(track_id) == null:
 		return false
 	_assist_track_id = track_id
+	# P0-02.5：接受航迹成功 = 显式进入 ASSISTED；绝不出现“按钮成功但
+	# authority 仍 WIRE_ONLY”的静默失效。
+	guidance_authority = GuidanceAuthority.ASSISTED
 	_log_command("ACCEPT_SEEKER_TRACK", {"track_id": track_id})
 	event_occurred.emit(torpedo_id, "TRACK_ACCEPTED", {"track_id": track_id})
 	return true
@@ -365,8 +399,8 @@ func _enter_fallback() -> void:
 	if _cmd_course_deg < 0.0:
 		_cmd_course_deg = NavUtils.wrap360(fb.search_center_deg)
 	_command_depth_band_internal(fb.search_depth_band)
-	if mission_state == MissionState.WIRE_RUN or mission_state == MissionState.SEARCH:
-		mission_state = MissionState.SEARCH
+	if mission_state == MissionState.WIRE_RUN:
+		_try_mission(MissionState.SEARCH, "SEARCH", {"reason": "FALLBACK"})
 	_log_command(
 		"FALLBACK",
 		{"search_center_deg": fb.search_center_deg, "search_depth_band": fb.search_depth_band},
@@ -443,8 +477,12 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 		return true
 
 	fired_event = fired_event or _advance_mission(dt, sim_time)
+	if _seeker != null:
+		_seeker.own_turn_rate_deg_s = _last_turn_rate_deg_s
 	_advance_running_noise(dt)
 	fired_event = fired_event or _advance_fallback_autonomy()
+	# P0-02.2/3：主程序生命周期的距离/时间自主触发（非 fallback 专属）。
+	fired_event = fired_event or _advance_program_autonomy()
 	fired_event = fired_event or _advance_fuze()
 	fired_event = fired_event or _advance_active_tx(dt)
 	_advance_vertical(dt)
@@ -483,8 +521,7 @@ func _advance_mission(dt: float, sim_time: float) -> bool:
 	match mission_state:
 		MissionState.LAUNCHING:
 			if sim_time - _launch_t >= LAUNCH_TRANSITION_S:
-				mission_state = MissionState.WIRE_RUN
-				event_occurred.emit(torpedo_id, "WIRE_RUN", {"course_deg": course_deg})
+				_try_mission(MissionState.WIRE_RUN, "WIRE_RUN", {"course_deg": course_deg})
 				# §9.2：动力启动瞬态（一次）。出管瞬态由 WeaponSystem.fire 记录。
 				_emit_motor_start()
 				return true
@@ -500,14 +537,76 @@ func _advance_mission(dt: float, sim_time: float) -> bool:
 			if desired >= 0.0:
 				var err: float = NavUtils.wrap180(desired - course_deg)
 				var rate: float = maxf(max_turn_rate_deg_s, 0.1)
-				course_deg = NavUtils.wrap360(course_deg + clampf(err, -rate * dt, rate * dt))
+				var applied: float = clampf(err, -rate * dt, rate * dt)
+				_last_turn_rate_deg_s = applied / maxf(dt, 0.001)
+				course_deg = NavUtils.wrap360(course_deg + applied)
 				if (
 					absf(NavUtils.wrap180(desired - course_deg)) < 0.05
 					and desired == _cmd_course_deg
 				):
 					course_deg = NavUtils.wrap360(desired)
 					_cmd_course_deg = -1.0
+		_:
+			_last_turn_rate_deg_s = 0.0
 	return false
+
+
+func _try_mission(to: int, ev: String, detail: Dictionary) -> bool:
+	if mission_state == to:
+		return true
+	var allowed: Array = _MISSION_TRANSITIONS.get(mission_state, [])
+	if not allowed.has(to):
+		(
+			event_occurred
+			. emit(
+				torpedo_id,
+				"TRANSITION_REJECTED",
+				{"from": mission_state_name(), "to": str(to), "via": ev},
+			)
+		)
+		return false
+	mission_state = to
+	event_occurred.emit(torpedo_id, ev, detail)
+	return true
+
+
+## 主程序自主触发（P0-02.2/3）：wire_guidance_enabled=false 的无导线发射
+## 也必须能推进 autonomy_enable_mode——旧实现只有 fallback 路径能推进自主
+## （_advance_fallback_autonomy），无导线鱼雷会永久直航。fallback 仅负责
+## 断线后的替代程序。
+func _advance_program_autonomy() -> bool:
+	if _fallback_active or program == null:
+		return false
+	if program.autonomy_enable_mode == WeaponProgram.AutonomyEnableMode.MANUAL:
+		return false
+	if guidance_authority == GuidanceAuthority.AUTONOMOUS:
+		return false
+	var met: bool = false
+	match program.autonomy_enable_mode:
+		WeaponProgram.AutonomyEnableMode.DISTANCE:
+			met = traveled_m >= program.autonomy_enable_distance_m
+		WeaponProgram.AutonomyEnableMode.TIME:
+			met = _launch_t >= 0.0 and (_sim_time - _launch_t) >= program.autonomy_enable_time_s
+	if not met:
+		return false
+	guidance_authority = GuidanceAuthority.AUTONOMOUS
+	if mission_state == MissionState.WIRE_RUN:
+		var has_lock: bool = (
+			_seeker != null
+			and (
+				_seeker.phase
+				in [
+					TorpedoSeeker.Phase.ACQUIRING,
+					TorpedoSeeker.Phase.TRACKING,
+					TorpedoSeeker.Phase.REACQUIRE,
+				]
+			)
+		)
+		if not has_lock:
+			_try_mission(MissionState.SEARCH, "SEARCH", {"reason": "AUTONOMY_ENABLED"})
+	_log_command("PROGRAM_AUTONOMY", {"via": "program"})
+	event_occurred.emit(torpedo_id, "AUTONOMY_AUTHORIZED", {"via": "program"})
+	return true
 
 
 ## 引信解保与任务/自主/主动解耦：只按 traveled 距离解保（REQ-DECISION-02）。
@@ -533,7 +632,6 @@ func _advance_active_tx(dt: float) -> bool:
 		if _tx_trigger_met():
 			active_tx_state = ActiveTxState.PINGING
 			_tx_cycle_s = acoustic_profile.active_pulse_duration_s
-			event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {})
 			_emit_active_ping()
 			fired_event = true
 	elif active_tx_state == ActiveTxState.PINGING:
@@ -546,7 +644,6 @@ func _advance_active_tx(dt: float) -> bool:
 		if _tx_cycle_s <= 0.0:
 			active_tx_state = ActiveTxState.PINGING
 			_tx_cycle_s = acoustic_profile.active_pulse_duration_s
-			event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {})
 			_emit_active_ping()
 			fired_event = true
 	return fired_event
@@ -603,8 +700,13 @@ func _emit_motor_start() -> void:
 
 
 ## 主动 Ping（每次进入 PINGING 记录；TOF/回波由 adapter 按 tau=2R/c 延迟结算，
-## §6.4——绝不瞬时返回）。
+## §6.4——绝不瞬时返回）。P0-09：每次 Ping 生成唯一 ping_id，同 id 串联
+## TX_PING 事件 / 回波 return / 监听完成事件。
 func _emit_active_ping() -> void:
+	_ping_seq += 1
+	var pid: String = "%s-P%03d" % [torpedo_id, _ping_seq]
+	_active_pings_outstanding[pid] = {"emit_t": _sim_time, "heard": false}
+	event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {"ping_id": pid})
 	if _emission_bus != null:
 		(
 			_emission_bus
@@ -617,13 +719,23 @@ func _emit_active_ping() -> void:
 				acoustic_profile.active_bandwidth_hz,
 				acoustic_profile.active_source_level_db,
 				acoustic_profile.active_pulse_duration_s,
+				{"ping_id": pid},
 			)
 		)
 	# Commit 6：登记各接触回波（Ping 时刻几何为测距基准；到点后净化为
 	# ACTIVE SeekerReturn）。仅当 adapter 存在（ctx 注入）时登记。
 	if _sensor_adapter != null:
-		_sensor_adapter.schedule_active_echoes(
-			torpedo_id, pos_east_m, pos_north_m, acoustic_profile, _sim_time
+		(
+			_sensor_adapter
+			. schedule_active_echoes(
+				torpedo_id,
+				pos_east_m,
+				pos_north_m,
+				course_deg,
+				acoustic_profile,
+				_sim_time,
+				pid,
+			)
 		)
 
 
@@ -737,6 +849,23 @@ func _collect_active_returns(sim_time: float) -> void:
 		)
 	)
 	_record_seeker_returns(returns)
+	# P0-09：同 ping_id 回波到达标记 heard；监听窗超时仍无回波 → 显式
+	# LISTEN_COMPLETE_NO_RETURN（UI/测试可观测“本周期无回波”，绝无“永远等待”）。
+	for r in returns:
+		var pid := str(r.ping_id)
+		if pid != "" and _active_pings_outstanding.has(pid):
+			_active_pings_outstanding[pid]["heard"] = true
+			event_occurred.emit(torpedo_id, "ECHO_RECEIVED", {"ping_id": pid})
+	var listen_window: float = _sensor_adapter.active_listen_window_s
+	var done: Array = []
+	for pid2 in _active_pings_outstanding:
+		var rec: Dictionary = _active_pings_outstanding[pid2]
+		if sim_time - float(rec["emit_t"]) > listen_window:
+			done.append(pid2)
+			if not bool(rec["heard"]):
+				event_occurred.emit(torpedo_id, "LISTEN_COMPLETE_NO_RETURN", {"ping_id": pid2})
+	for pid3 in done:
+		_active_pings_outstanding.erase(pid3)
 
 
 func _record_seeker_returns(returns: Array) -> void:
@@ -804,16 +933,21 @@ func _on_seeker_phase_changed() -> void:
 	if mapped != seeker_state:
 		seeker_state = mapped
 		event_occurred.emit(torpedo_id, "SEEKER_PHASE", {"state": seeker_state_name()})
-	# 任务联动：TRACKING → ATTACK；ATTACK 中 LOST → SEARCH（重搜，§7.6）。
+	# 任务联动（P0-02.7）：TRACKING + 实际操舵权 → ATTACK；ATTACK 中 LOST →
+	# SEARCH（重搜，§7.6）。WIRE_ONLY 下即使 seeker TRACKING 也不接管操舵，
+	# 不进 ATTACK（旧实现仅看 seeker 相位）。
+	var can_steer: bool = (
+		guidance_authority == GuidanceAuthority.AUTONOMOUS
+		or (guidance_authority == GuidanceAuthority.ASSISTED and _assist_track_id >= 0)
+	)
 	if (
 		_seeker.phase == TorpedoSeeker.Phase.TRACKING
+		and can_steer
 		and (mission_state == MissionState.WIRE_RUN or mission_state == MissionState.SEARCH)
 	):
-		mission_state = MissionState.ATTACK
-		event_occurred.emit(torpedo_id, "ATTACK", {"track_id": _seeker.selected_track_id})
+		_try_mission(MissionState.ATTACK, "ATTACK", {"track_id": _seeker.selected_track_id})
 	elif _seeker.phase == TorpedoSeeker.Phase.LOST and mission_state == MissionState.ATTACK:
-		mission_state = MissionState.SEARCH
-		event_occurred.emit(torpedo_id, "SEARCH", {"reason": "SEEKER_LOST"})
+		_try_mission(MissionState.SEARCH, "SEARCH", {"reason": "SEEKER_LOST"})
 
 
 ## 制导期望航向（§7.7）：WIRE_ONLY 恒不接管；AUTONOMOUS 跟随 seeker 选中的
@@ -850,8 +984,11 @@ func _advance_guidance(sim_time: float) -> void:
 			and track.range_estimate_m >= 0.0
 			and track.range_estimate_m <= float(cfg.get("terminal_range_m", 250.0))
 		):
-			mission_state = MissionState.TERMINAL
-			event_occurred.emit(torpedo_id, "TERMINAL", {"range_est_m": track.range_estimate_m})
+			_try_mission(
+				MissionState.TERMINAL,
+				"TERMINAL",
+				{"range_est_m": track.range_estimate_m},
+			)
 		return
 	# LOST/REACQUIRE（§7.6）：围绕最后预测方位扩大扇区扫掠重搜。
 	if _seeker.phase in [TorpedoSeeker.Phase.LOST, TorpedoSeeker.Phase.REACQUIRE]:

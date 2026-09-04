@@ -214,6 +214,38 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   EnemyDoctrineController 增只读 `active_torpedo_count()`。回归
   `tools/patch_a_test.gd`（PA-01 深度≠方位刻意组合、PA-02 双系统 ID 唯一、
   PA-03 结算释放；AT-01/AT-02 对应）。
+- **评审修复 Patch B（Seeker 与制导状态机）**：①P0-03 `SeekerTrack` 改标准
+  alpha-beta 滤波（theta_pred = b + ω·dt；b' = theta_pred + α·r；ω' = ω +
+  (β/dt)·r，wrap180/wrap360 保证跨界无跳变，|ω|≤25°/s 钳位）——旧实现漏预测
+  项且把 residual/dt 当完整速度，恒速序列方位率被系统性拉向 0。新增惯性视线
+  率 `los_rate_deg_s` = 相对方位率 + 载体自转率（torpedo 每步喂
+  `_last_turn_rate_deg_s`）：kine 一致性与制导提前量都消费惯性率——相对率混
+  入自转会把高机动目标/诱饵竞争与提前量全部带偏。`score` 的
+  `score_se_ref_db` 校准 20→60（SE 40~75dB 常见段在 20 下全部饱和，声源强弱
+  对竞争不可见）。②P0-04 `TorpedoSeeker.process_returns` 改扫描级
+  Return×Track 代价矩阵 + 一对一分配（贪心代价升序、各用一次；代价 =
+  w_θ·(Δθ/σ)² + w_r·(Δr/σ_r)² + 深度层罚，纯被动不产生距离项；绝对门限
+  bearing_gate 保留）——旧实现逐条贪心允许同扫描双 return 重复更新同一航迹。
+  ③P0-02 任务/权限/主动三维正交：`accept_seeker_track` 成功显式置 ASSISTED；
+  `authorize_autonomy`（手动）无锁 → SEARCH 扇区扫掠；新增
+  `_advance_program_autonomy`——主程序距离/时间自主触发属于主生命周期
+  （wire_guidance_enabled=false 的无导线发射不再依赖 fallback 才能自主，
+  AT-03 链路可达）；ATTACK 只在 seeker 实际拥有操舵权（AUTONOMOUS 或
+  ASSISTED 已接受）时进入；集中迁移表 `_MISSION_TRANSITIONS` +
+  `_try_mission()`（非法转换发 TRANSITION_REJECTED 结构化事件）。④P0-09
+  主动链 ping_id 串联：每次 Ping 唯一 ping_id（"%s-P%03d"），TX_PING 事件/
+  总线事件/pending echo/ACTIVE return/完成事件全带 id；回波调度加发射 FOV
+  门（`schedule_active_echoes` 与被动同源 horizontal_beamwidth，扇区外不排
+  程）；监听窗超时无回波 → LISTEN_COMPLETE_NO_RETURN（绝无"永远等待"），
+  回波到达 → ECHO_RECEIVED。⑤P1-05 核心（Patch B 可测性前置）：鱼雷接收机
+  自噪与辐射噪声/潜艇级 own_noise 分离——`TorpedoAcousticProfile.
+  receiver_self_noise_db(speed)`（base 55 + 0.9/kn）、
+  `EnvironmentModel.effective_noise_db_with_self`、AcousticService passive/
+  active SE 增可选 self_noise_db 覆盖（-1 = 旧行为，同一方程仅换噪声项）。
+  回归 `tools/patch_b_test.gd`（PB-01 alpha-beta 恒速+跨界/PB-02 一对一关联/
+  PB-03 accept→ASSISTED/PB-04 authorize→SEARCH 扫掠/PB-05 无导线程序自主/
+  PB-06 WIRE_ONLY 不 ATTACK/PB-07 主动链 ping_id+FOV+NO_RETURN；AT-03..07/
+  AT-18 子集）。
 
 ---
 

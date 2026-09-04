@@ -37,6 +37,8 @@ var spectral_features: Dictionary = {}
 var depth_relation: String = "SAME_LAYER"
 var source_kind_hypotheses: Array = []
 var debug_truth_ref: String = ""
+# P0-09：主动链传播——ACTIVE return 携带产生它的 ping_id（同 id 串联）。
+var ping_id: String = ""
 
 
 ## 序列化结果（UI/日志/净水管线消费）。只含 §6.5 玩法字段，

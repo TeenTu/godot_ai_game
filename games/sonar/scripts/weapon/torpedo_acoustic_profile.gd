@@ -42,6 +42,10 @@ var receiver_array_gain_db: float = 12.0
 var detection_threshold_db: float = 0.0
 var detection_k_d: float = AcousticService.DEFAULT_K_D
 var horizontal_beamwidth_deg: float = 120.0
+## P1-05：鱼雷接收机自噪模型（与辐射噪声 SL 分离；也不同于潜艇级
+## EnvironmentModel.own_noise_db——那会把 40/50kn 放大成 ~100+dB 自噪）。
+var receiver_self_noise_base_db: float = 55.0
+var receiver_self_noise_speed_coeff_db_per_kn: float = 0.9
 
 ## ---- 发射声两阶段（§9.2）
 var tube_launch_transient: Dictionary = {
@@ -55,6 +59,14 @@ var motor_start_transient: Dictionary = {
 var bearing_sigma_min_deg: float = 0.5
 var bearing_sigma_max_deg: float = 5.0
 var range_sigma_model: Dictionary = {}
+
+
+## 接收端自噪（dB）：base + coeff*speed（空化/流噪细化留 P1-05 后续标定）。
+func receiver_self_noise_db(speed_kn: float) -> float:
+	return (
+		receiver_self_noise_base_db
+		+ receiver_self_noise_speed_coeff_db_per_kn * maxf(speed_kn, 0.0)
+	)
 
 
 static func make_default() -> TorpedoAcousticProfile:

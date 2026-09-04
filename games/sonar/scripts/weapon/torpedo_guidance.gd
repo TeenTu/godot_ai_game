@@ -26,7 +26,8 @@ static func pursuit_course_deg(track: SeekerTrack, cfg: Dictionary) -> float:
 	var lead_time: float = float(cfg.get("lead_time_s", DEFAULT_LEAD_TIME_S))
 	var max_lead: float = float(cfg.get("max_lead_deg", DEFAULT_MAX_LEAD_DEG))
 	# 提前量 = 方位率 × 提前时间（主动测距时方位率估计更稳，公式同源）。
-	var lead: float = clampf(track.bearing_rate_deg_s * lead_time, -max_lead, max_lead)
+	# P0-03.3：提前量用惯性视线率（相对率含自转，直用会失真）。
+	var lead: float = clampf(track.los_rate_deg_s * lead_time, -max_lead, max_lead)
 	return NavUtils.wrap360(track.bearing_estimate_deg + lead)
 
 
