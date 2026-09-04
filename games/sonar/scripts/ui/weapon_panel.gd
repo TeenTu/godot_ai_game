@@ -61,10 +61,10 @@ func set_fire_context(text: String) -> void:
 
 func _on_weapon_event(tid: String, kind: String, detail: Dictionary) -> void:
 	var txt: String = "%s %s" % [tid, kind]
-	if kind == "HIT":
-		txt = "💥 %s HIT %s" % [tid, str(detail.get("target_id", ""))]
-		if _chart_dirty.is_valid():
-			_chart_dirty.call()
+	# UI-07/08（S1-07 §10.4）：事件细节只含己方武器状态，绝不显示 target_id，
+	# 绝不把引擎内部命中显示成即时 CONFIRMED KILL（爆炸证据走 AlertPanel）。
+	if kind == "DETONATION":
+		txt = "💥 %s DETONATION (min pass %.0fm)" % [tid, float(detail.get("min_distance_m", -1.0))]
 	elif kind == "ACQUIRE":
 		txt = "%s ACQUIRE @%.0fm" % [tid, float(detail.get("range_m", 0.0))]
 	elif kind == "ENABLE":
@@ -96,7 +96,25 @@ func _refresh() -> void:
 		return
 	var chart_data: Array = []
 	for tp in weapons.torpedoes:
-		# S1-07：任务状态（MissionState）命名；SEARCH/ATTACK 由后续 Seeker 链驱动。
-		chart_data.append({"trail": tp.trail, "state": tp.mission_state_name()})
+		# S1-07 §11.3（Commit 11）：海图叠加——轨迹/任务状态 + 线导连线 +
+		# 搜索扇区/Seeker FOV + 选中航迹方位（全部来自己方武器状态与净化摘要）。
+		var prog: WeaponProgram = tp.program
+		var entry := {
+			"trail": tp.trail,
+			"state": tp.mission_state_name(),
+			"course_deg": tp.course_deg,
+			"wire_state": tp.wire_state_name(),
+			"search_center_deg": prog.search_center_deg if prog != null else 0.0,
+			"search_half_deg": prog.search_half_angle_deg if prog != null else 0.0,
+			"fov_half_deg": tp.acoustic_profile.horizontal_beamwidth_deg * 0.5,
+			"track_bearing_deg": -1.0,
+			"track_sigma_deg": 0.0,
+		}
+		if tp._seeker != null:
+			var sel: SeekerTrack = tp._seeker.selected_track()
+			if sel != null:
+				entry["track_bearing_deg"] = sel.bearing_estimate_deg
+				entry["track_sigma_deg"] = 3.0
+		chart_data.append(entry)
 	chart.torpedoes = chart_data
 	chart.queue_redraw()

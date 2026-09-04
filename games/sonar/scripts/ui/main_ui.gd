@@ -51,6 +51,10 @@ var _spin_range: SpinBox = null
 var _spin_course: SpinBox = null
 var _spin_speed: SpinBox = null
 var _own_panel: OwnManeuverPanel = null  # 本艇机动/深度控制簇（拆出控行数）
+var _in_water_panel: InWaterWeaponPanel = null  # §11.2 在水武器控制台
+var _cm_panel: CountermeasurePanel = null  # §8.5 诱饵面板
+var _alert_panel: AlertPanel = null  # §11.5 告警/战果证据
+var _depth_bar: DepthBandDisplay = null  # §11.4 侧边深度条
 var _contact_rows: Dictionary = {}  # track_id -> Button
 var _chk_layers: Dictionary = {}  # layer key -> CheckButton
 
@@ -119,6 +123,14 @@ func _ready() -> void:
 
 	if _own_panel != null:
 		_own_panel.bind_world(world)
+	if _in_water_panel != null:
+		_in_water_panel.bind(world)
+	if _cm_panel != null:
+		_cm_panel.bind(world)
+	if _alert_panel != null:
+		_alert_panel.bind(world, Callable(self, "_alert_track_bearings"))
+	if _depth_bar != null:
+		_depth_bar.bind(world)
 
 	_update_status("ready: click a contact, then Auto Fit TMA")
 
@@ -151,6 +163,9 @@ func _build_ui() -> void:
 	_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_chart.tick_selected.connect(_on_tick_selected)
 	main_row.add_child(_chart)
+	# §11.4 侧边深度条（Surface/层带/Bot + OWN/TK/DCY 标记）。
+	_depth_bar = DepthBandDisplay.new()
+	main_row.add_child(_depth_bar)
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(PANEL_W, 0)
@@ -260,6 +275,10 @@ func _build_panel() -> void:
 	_panel.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
 
+	# §11.2 在水武器控制台（每枚鱼雷状态 + 线控按钮）。
+	_in_water_panel = InWaterWeaponPanel.new()
+	_panel.add_child(_in_water_panel)
+
 	_panel.add_child(HSeparator.new())
 	_build_contact_list()
 	_panel.add_child(HSeparator.new())
@@ -270,6 +289,14 @@ func _build_panel() -> void:
 	# 本艇机动/深度控制（航向/航速/深度 + 层带按钮，独立面板控行数）
 	_own_panel = OwnManeuverPanel.new()
 	_panel.add_child(_own_panel)
+
+	_panel.add_child(HSeparator.new())
+	# §8.5 诱饵发射面板 + §11.5 告警面板（净化证据）。
+	_cm_panel = CountermeasurePanel.new()
+	_cm_panel.status.connect(func(m: String): _update_status(m))
+	_panel.add_child(_cm_panel)
+	_alert_panel = AlertPanel.new()
+	_panel.add_child(_alert_panel)
 
 	_panel.add_child(HSeparator.new())
 	# 相机控制
@@ -453,6 +480,14 @@ func _process(delta: float) -> void:
 		_rebuild_display_data()
 	if _weapon_panel != null:
 		_weapon_panel.refresh()
+	if _in_water_panel != null:
+		_in_water_panel.sync()
+	if _cm_panel != null:
+		_cm_panel.sync()
+	if _alert_panel != null:
+		_alert_panel.sync()
+	if _depth_bar != null:
+		_depth_bar.sync()
 	_update_displays_light()
 	_update_panel()
 
@@ -1145,3 +1180,15 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 	_last_meas_count = world.measurements.size()
 	var amb_txt: String = " (LR mirror pair)" if group.size() > 1 else ""
 	_update_status("Marked %.1f deg -> %s%s" % [brg, t.track_id, amb_txt])
+
+
+## AlertPanel 用：当前在跟航迹的最新方位集合（玩家合法数据，供战果评估）。
+func _alert_track_bearings() -> Array:
+	var out: Array = []
+	if tracker == null:
+		return out
+	for t in tracker.all_tracks():
+		var m: Measurement = (t as Track).latest_measurement()
+		if m != null:
+			out.append(m.measured_bearing_deg)
+	return out

@@ -713,10 +713,42 @@ func _draw_torpedoes() -> void:
 			prev = s
 		if not pts.is_empty():
 			var head := world_to_screen(Vector2(float(pts[-1]["e"]), float(pts[-1]["n"])))
+			# S1-07 §11.3（Commit 11）：线导连线（CONNECTED 虚线，只表示通信链）。
+			if str(tp.get("wire_state", "")) == "CONNECTED":
+				draw_dashed_line(own_pos_screen(), head, Color(0.5, 0.7, 1.0, 0.5), 1.0, 6.0)
+			# 搜索扇区两条边界（细黄，§11.3）。
+			var half: float = deg_to_rad(float(tp.get("search_half_deg", 0.0)))
+			if half > 0.01:
+				var crs: float = deg_to_rad(float(tp.get("search_center_deg", 0.0)))
+				for a in [crs - half, crs + half]:
+					var dir := Vector2(sin(a), cos(a))
+					draw_line(head, head + dir * 46.0, Color(1.0, 1.0, 0.4, 0.5), 1.0)
+			# Seeker FOV（相对实际艏向；被动虚线/主动亮红脉冲，§11.3）。
+			var fh: float = deg_to_rad(float(tp.get("fov_half_deg", 0.0)))
+			var fc: float = deg_to_rad(float(tp.get("course_deg", 0.0)))
+			var fov_col := (
+				Color(1.0, 0.35, 0.2, 0.75)
+				if st == "ATTACK" or st == "TERMINAL"
+				else Color(1.0, 0.35, 0.2, 0.3)
+			)
+			for a in [fc - fh, fc + fh]:
+				var fdir := Vector2(sin(a), cos(a))
+				draw_dashed_line(head, head + fdir * 30.0, fov_col, 1.0, 4.0)
+			# 选中 SeekerTrack 方位（不确定方位线 ±sigma，绝不画 Truth 目标）。
+			var tb: float = float(tp.get("track_bearing_deg", -1.0))
+			if tb >= 0.0:
+				var ta: float = deg_to_rad(tb)
+				var tdir := Vector2(sin(ta), cos(ta))
+				draw_line(head, head + tdir * 60.0, Color(1.0, 0.4, 1.0, 0.8), 1.5)
 			draw_circle(head, 3.5, col)
 			_draw_label(
 				head + Vector2(6.0, -6.0), "TK%d %s" % [i + 1, str(tp.get("state", ""))], col, 12
 			)
+
+
+## 本艇屏幕坐标（§11.3 线导连线起点）。
+func own_pos_screen() -> Vector2:
+	return world_to_screen(own_pos)
 
 
 func _draw_label(pos: Vector2, text: String, col: Color, font_px: int = 14) -> void:

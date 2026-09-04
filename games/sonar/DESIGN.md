@@ -38,7 +38,7 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-10 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-11 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
@@ -175,8 +175,21 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   通道）；player_evidence（净化证据队列）供告警 UI（Commit 11）。普通 UI 无
   即时 CONFIRMED KILL、无 target_id（UI-07/08）。`fuze_evidence_test`
   FUZE-01..07。
-- **遗留项**（后续 Commit 11-12）：完整深度条/告警/在水控制 UI（Commit 11）、
-  集成任务与 CI 门禁（Commit 12）。
+- **Commit 11（§11，武器 UI/海图/告警）**：新增 `ui/in_water_weapon_panel.gd`
+  （§11.2 在水控制台：每枚鱼雷 mission/seeker/activeTX/authority/wire+剩余线长/
+  ACT→CMD 深度/速度/燃料/锁定摘要；按钮 Course◀▶/Upper/Lower/Speed/Active ON-OFF/
+  Autonomy/Wire-Only/Accept Trk/Cut Wire，不可用 disabled+原因）、
+  `ui/countermeasure_panel.gd`（§8.5/§11.5 诱饵：类型支持/装填/库存/冷却/己方
+  活动数 + MOBILE/JAMMER 发射，拒绝原因来自 CountermeasureSystem）、
+  `ui/alert_panel.gd`（§11.5 告警：渲染 world.player_evidence 净化证据——时间/
+  方位/置信度；己方武器爆炸经 classify_detonation 标注 PROBABLE_HIT/KILL；
+  绝不显示 CONFIRMED KILL、绝无 target_id）、`ui/depth_band_display.gd`
+  （§11.4 侧边深度条：Surface/层带/Bottom + OWN/TK/DCY 实际(实心)/命令(空心)
+  标记，形状+文字双编码，绝不读敌方 Truth）。chart_view 叠加（§11.3）：线导
+  虚线（只表示通信链）、搜索扇区边界、Seeker FOV（被动淡/攻击亮）、选中航迹
+  不确定方位线（绝不画 Truth 目标）。weapon_panel 事件日志删除 target_id 显示
+  路径（UI-07）。`weapon_ui_test` UIW-01..06。
+- **遗留项**（Commit 12）：集成任务与 CI 门禁。
 
 ---
 
