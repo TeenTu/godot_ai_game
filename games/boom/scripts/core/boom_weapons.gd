@@ -18,9 +18,9 @@ static func _ensure_built() -> void:
 static func _bubble_def() -> BoomWeaponDef:
 	var def := BoomWeaponDef.new()
 	def.id = "bubble"
-	def.display_name = "泡泡枪"
+	def.display_name = "BUBBLE BLASTER"
 	def.icon_path = "res://assets/images/icons/weapon_bubble.png"
-	def.blurb = "自动连射 新手友好"
+	def.blurb = "Auto fire, easy to learn"
 	def.kind = BoomWeaponDef.AttackKind.RANGED
 	def.fire_cd = 0.22
 	def.proj_speed = 15.0
@@ -37,9 +37,9 @@ static func _bubble_def() -> BoomWeaponDef:
 static func _greatsword_def() -> BoomWeaponDef:
 	var def := BoomWeaponDef.new()
 	def.id = "greatsword"
-	def.display_name = "大剑"
+	def.display_name = "GREATSWORD"
 	def.icon_path = "res://assets/images/icons/weapon_sword.png"
-	def.blurb = "势大力沉"
+	def.blurb = "Heavy swings hit hard"
 	def.kind = BoomWeaponDef.AttackKind.MELEE
 	def.swing_windup = 0.24
 	def.swing_active = 0.12

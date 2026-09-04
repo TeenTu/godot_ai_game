@@ -19,9 +19,9 @@ const CHAIN_COLOR: Color = Color(0.3, 0.85, 1.0)
 const NUKE_COLOR: Color = Color(1.0, 0.3, 0.3)
 
 # §4.2 技能飘字规格：fan=黄"嘭!"小字 / chain=紫"链!"大字 / nuke=金"轰!"巨型。
-const TEXT_FAN: String = "嘭!"
-const TEXT_CHAIN: String = "链!"
-const TEXT_NUKE: String = "轰!"
+const TEXT_FAN: String = "POP!"
+const TEXT_CHAIN: String = "ZAP!"
+const TEXT_NUKE: String = "BOOM!"
 const TEXT_COLOR_FAN: Color = Color(1.0, 0.9, 0.3)
 const TEXT_COLOR_CHAIN: Color = Color(0.7, 0.4, 1.0)
 const TEXT_COLOR_NUKE: Color = Color(1.0, 0.78, 0.25)
@@ -39,9 +39,9 @@ var nuke_skill: BoomSkill
 
 
 func _init() -> void:
-	fan_skill = BoomSkill.new("fan", "爆裂弹幕", FAN_COOLDOWN, FAN_COLOR)
-	chain_skill = BoomSkill.new("chain", "闪电链", CHAIN_COOLDOWN, CHAIN_COLOR)
-	nuke_skill = BoomSkill.new("nuke", "核能爆轰", NUKE_COOLDOWN, NUKE_COLOR)
+	fan_skill = BoomSkill.new("fan", "BULLET STORM", FAN_COOLDOWN, FAN_COLOR)
+	chain_skill = BoomSkill.new("chain", "CHAIN LIGHTNING", CHAIN_COOLDOWN, CHAIN_COLOR)
+	nuke_skill = BoomSkill.new("nuke", "MEGA NUKE", NUKE_COOLDOWN, NUKE_COLOR)
 
 
 ## 每帧驱动三个技能的冷却，并在技能从 CD 中归零时广播 skill_ready。

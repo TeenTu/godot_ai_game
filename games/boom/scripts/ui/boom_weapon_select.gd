@@ -46,12 +46,12 @@ func _build_panel() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	var title := _make_label("选择武器", 52, COL_CREAM)
+	var title := _make_label("CHOOSE WEAPON", 52, COL_CREAM)
 	title.position = Vector2(0.0, 56.0)
 	title.size = Vector2(720.0, 72.0)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
-	var subtitle := _make_label("换一把武器 换一种打法", 22, Color(1.0, 0.94, 0.85, 0.72))
+	var subtitle := _make_label("New weapon, new playstyle", 22, Color(1.0, 0.94, 0.85, 0.72))
 	subtitle.position = Vector2(0.0, 128.0)
 	subtitle.size = Vector2(720.0, 34.0)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -64,7 +64,9 @@ func _build_panel() -> void:
 			_build_new_badge(card)
 
 	_fight_btn = _build_fight_button()
-	var note := _make_label("换武器只影响普攻与体质 · 技能保持不变", 17, Color(1.0, 1.0, 1.0, 0.55))
+	var note := _make_label(
+		"Swaps your attack & stats only - skills stay the same", 17, Color(1.0, 1.0, 1.0, 0.55)
+	)
 	note.position = Vector2(0.0, 1064.0)
 	note.size = Vector2(720.0, 30.0)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -125,8 +127,9 @@ func _build_card(def: BoomWeaponDef, pos: Vector2) -> Button:
 	btn.add_child(thumb)
 
 	var name_l := Label.new()
+	var fs := 42 if def.display_name.length() <= 10 else 34
 	name_l.text = def.display_name
-	name_l.add_theme_font_size_override("font_size", 42)
+	name_l.add_theme_font_size_override("font_size", fs)
 	name_l.add_theme_color_override("font_color", COL_CREAM)
 	name_l.position = Vector2(258.0, 46.0)
 	name_l.size = Vector2(340.0, 58.0)
@@ -172,16 +175,14 @@ func _build_new_badge(card: Button) -> void:
 func _stat_text(def: BoomWeaponDef) -> String:
 	var parts: Array = []
 	if def.kind == BoomWeaponDef.AttackKind.RANGED:
-		parts.append("攻速 %d发/秒" % int(round(1.0 / maxf(def.fire_cd, 0.001))))
-		parts.append("伤害 %d" % def.proj_dmg)
-		parts.append("远程连射")
+		parts.append("RATE %d/s" % int(round(1.0 / maxf(def.fire_cd, 0.001))))
+		parts.append("DMG %d" % def.proj_dmg)
 	else:
-		parts.append("伤害 %d" % def.swing_dmg)
-		parts.append("扇形 %d°" % int(def.swing_arc_deg))
-		parts.append("近战弧斩")
-	parts.append("移速 %d%%" % int(round(def.move_mult * 100.0)))
-	parts.append("生命 +%d" % def.max_hp_bonus)
-	return " · ".join(parts)
+		parts.append("DMG %d" % def.swing_dmg)
+		parts.append("ARC %d" % int(def.swing_arc_deg))
+	parts.append("SPD %d%%" % int(round(def.move_mult * 100.0)))
+	parts.append("HP +%d" % def.max_hp_bonus)
+	return " ".join(parts)
 
 
 func _build_fight_button() -> Button:
@@ -189,7 +190,7 @@ func _build_fight_button() -> Button:
 	btn.position = BTN_POS
 	btn.size = BTN_SIZE
 	btn.pivot_offset = btn.size * 0.5
-	btn.text = "开  战"
+	btn.text = "FIGHT!"
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.add_theme_font_size_override("font_size", 42)
 	btn.add_theme_color_override("font_color", Color(0.42, 0.18, 0.02, 1.0))

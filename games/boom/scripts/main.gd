@@ -935,7 +935,7 @@ func _hud_refresh() -> void:
 	if _wave_cd_label != null:
 		if sim._between_waves and sim._next_wave_cd > 0.0:
 			_wave_cd_label.visible = true
-			_wave_cd_label.text = "下一波 %d" % int(ceilf(sim._next_wave_cd))
+			_wave_cd_label.text = "NEXT IN %d" % int(ceilf(sim._next_wave_cd))
 			var urgent := sim._next_wave_cd <= 1.0
 			_wave_cd_label.add_theme_color_override(
 				"font_color", COL_DANGER if urgent else COL_CREAM
