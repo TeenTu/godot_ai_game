@@ -40,6 +40,7 @@ func _build() -> void:
 	_lbl_weapons = Label.new()
 	_lbl_weapons.text = "Tubes: -"
 	_lbl_weapons.add_theme_font_size_override("font_size", 14)
+	_lbl_weapons.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2
 	add_child(_lbl_weapons)
 
 
@@ -61,15 +62,32 @@ func set_fire_context(text: String) -> void:
 
 
 func _on_weapon_event(tid: String, kind: String, detail: Dictionary) -> void:
-	var txt: String = "%s %s" % [tid, kind]
-	# UI-07/08（S1-07 §10.4）：事件细节只含己方武器状态，绝不显示 target_id，
-	# 绝不把引擎内部命中显示成即时 CONFIRMED KILL（爆炸证据走 AlertPanel）。
-	if kind == "DETONATION":
-		txt = "💥 %s DETONATION (min pass %.0fm)" % [tid, float(detail.get("min_distance_m", -1.0))]
-	elif kind == "ACQUIRE":
-		txt = "%s ACQUIRE @%.0fm" % [tid, float(detail.get("range_m", 0.0))]
-	elif kind == "ENABLE":
-		txt = "%s seeker ENABLED" % tid
+	# P1-03.6：文案映射与真实事件名一致（SEEKER_PHASE / TRACK_ACCEPTED /
+	# WIRE_CUT / ACTIVE_TX_ON/OFF / DETONATION / FUZE_ARMED / ECHO_RECEIVED /
+	# LISTEN_COMPLETE_NO_RETURN / AUTONOMY_AUTHORIZED ...），删除已失效的
+	# ACQUIRE/ENABLE 特判。UI-07/08：绝不显示 target_id，绝不即时
+	# CONFIRMED KILL（爆炸证据走 AlertPanel）。
+	var txt: String = ""
+	match kind:
+		"DETONATION":
+			txt = (
+				"💥 %s DETONATION (min pass %.0fm)"
+				% [tid, float(detail.get("min_distance_m", -1.0))]
+			)
+		"SEEKER_PHASE":
+			txt = "%s seeker %s" % [tid, str(detail.get("state", ""))]
+		"TRACK_ACCEPTED":
+			txt = "%s track #%s accepted (ASSISTED)" % [tid, str(detail.get("track_id", "?"))]
+		"ACTIVE_TX_PING":
+			txt = "%s ping %s sent" % [tid, str(detail.get("ping_id", ""))]
+		"ECHO_RECEIVED":
+			txt = "%s echo received" % tid
+		"LISTEN_COMPLETE_NO_RETURN":
+			txt = "%s listen complete — no return" % tid
+		"FUZE_ARMED":
+			txt = "%s fuze ARMED (%.0fm run)" % [tid, float(detail.get("traveled_m", 0.0))]
+		_:
+			txt = "%s %s" % [tid, kind]
 	_weapon_log.push_front(txt)
 	if _weapon_log.size() > MAX_LOG:
 		_weapon_log.pop_back()
@@ -92,7 +110,8 @@ func _refresh() -> void:
 		# Commit 3：随时可发射 = 有装填管（无解也允许 MANUAL/BEARING_ONLY）。
 		_btn_fire.disabled = weapons.loaded_count() == 0
 	if not _weapon_log.is_empty():
-		_lbl_weapons.text += "\n" + " | ".join(_weapon_log)
+		# P1-03.2：一行一事件（不用长 " | " 拼接），配合 autowrap 不撑宽侧栏。
+		_lbl_weapons.text += "\n" + "\n".join(_weapon_log)
 	if chart == null:
 		return
 	var chart_data: Array = []

@@ -1,0 +1,172 @@
+{
+  "name": "s1_combat",
+  "seed": 20260904,
+  "dt": 0.5,
+  "duration": 600.0,
+  "environment": {
+    "environment_type": "shallow",
+    "sea_state": 2,
+    "ambient_noise_by_frequency": { "500": 58.0, "1000": 52.0 },
+    "own_noise_base_db": 38.0,
+    "own_noise_speed_coeff": 1.6,
+    "tl_spreading_k": 20.0,
+    "tl_absorption_alpha": 0.5,
+    "tl_environment_loss": 2.0
+  },
+  "depth_layers": {
+    "enabled": true,
+    "surface_depth_m": 0,
+    "bottom_depth_m": 400,
+    "thermocline_depth_m": 120,
+    "thermocline_thickness_m": 20,
+    "upper_hold_depth_m": 70,
+    "lower_hold_depth_m": 180,
+    "cross_layer_loss_db_by_frequency": { "500": 6, "3000": 10 }
+  },
+  "own_ship": {
+    "id": "own",
+    "class_id": "attack_sub",
+    "side": "blue",
+    "platform_type": "submarine",
+    "position_east_m": 0.0,
+    "position_north_m": 0.0,
+    "depth_m": 50.0,
+    "course_deg": 0.0,
+    "speed_kn": 4.0,
+    "turn_rate_deg_s": 0.0,
+    "acceleration_kn_s": 0.0,
+    "tow": {
+      "tow_length_m": 400.0,
+      "deploy_time_s": 90.0,
+      "retract_time_s": 60.0,
+      "full_length_heading_tau_s": 45.0,
+      "short_length_heading_tau_s": 8.0,
+      "settle_deg": 3.0
+    },
+    "active_sonar": {
+      "ping_sl_db": 210.0,
+      "cooldown_s": 15.0,
+      "freq_min_hz": 2000.0,
+      "freq_max_hz": 4000.0,
+      "array_gain_db": 24.0,
+      "sound_speed_m_s": 1500.0,
+      "listen_window_s": 15.0
+    }
+  },
+  "own_acoustic": {
+    "broadband_base_level_db": 45.0,
+    "speed_noise_a": 15.0,
+    "speed_noise_n": 2.0,
+    "speed_noise_vref_kn": 5.0,
+    "cavitation_speed_kn_at_surface": 12.0,
+    "cavitation_depth_slope": 1.2,
+    "cavitation_extra_db": 12.0
+  },
+  "targets": [
+    {
+      "id": "enemy_1",
+      "class_id": "frigate",
+      "side": "red",
+      "platform_type": "surface",
+      "position_east_m": 6000.0,
+      "position_north_m": 6000.0,
+      "depth_m": 0.0,
+      "course_deg": 225.0,
+      "speed_kn": 12.0,
+      "turn_rate_deg_s": 0.0,
+      "acceleration_kn_s": 0.0,
+      "acoustic": {
+        "broadband_base_level_db": 150.0,
+        "speed_noise_a": 18.0,
+        "speed_noise_n": 2.5,
+        "speed_noise_vref_kn": 8.0,
+        "cavitation_speed_kn_at_surface": 20.0,
+        "cavitation_depth_slope": 0.0,
+        "cavitation_extra_db": 10.0,
+        "active_target_strength_db": 14.0,
+        "tonal_lines": [
+          { "freq_hz": 120.0, "level_db": 128.0 },
+          { "freq_hz": 240.0, "level_db": 122.0 },
+          { "freq_hz": 480.0, "level_db": 115.0 }
+        ],
+        "turns_per_knot": 1,
+        "blade_count": 5,
+        "shaft_count": 2
+      }
+    }
+  ],
+  "enemy_spawn": {
+    "bearing_min_deg": 20.0,
+    "bearing_max_deg": 70.0,
+    "range_min_m": 6000.0,
+    "range_mode_m": 8000.0,
+    "range_max_m": 10000.0,
+    "speed_min_kn": 5.0,
+    "speed_max_kn": 10.0,
+    "depth_band_weights": { "UPPER": 0.6, "LOWER": 0.4 },
+    "min_separation_m": 2000.0,
+    "max_generation_attempts": 50,
+    "fallback_spawn": {
+      "position_east_m": 5500.0,
+      "position_north_m": 4200.0,
+      "course_deg": 225.0,
+      "speed_kn": 6.0,
+      "depth_m": 70.0
+    },
+    "acoustic": {
+      "broadband_base_level_db": 140.0,
+      "speed_noise_a": 16.0,
+      "speed_noise_n": 2.2,
+      "speed_noise_vref_kn": 8.0,
+      "cavitation_speed_kn_at_surface": 18.0,
+      "cavitation_depth_slope": 1.0,
+      "cavitation_extra_db": 12.0,
+      "active_target_strength_db": 12.0,
+      "tonal_lines": [
+        { "freq_hz": 140.0, "level_db": 124.0 },
+        { "freq_hz": 280.0, "level_db": 118.0 }
+      ],
+      "turns_per_knot": 1,
+      "blade_count": 5,
+      "shaft_count": 1
+    },
+    "countermeasures": { "ready_rounds": 2, "inventory": 2, "launch_cooldown_s": 10.0 },
+    "doctrine": {
+      "sensor_false_alarm_rate": 0.005,
+      "fire_quality_threshold": 0.7,
+      "tracking_quality_threshold": 0.55,
+      "suspicious_quality_threshold": 0.25,
+      "reaction_delay_min_s": 3.0,
+      "reaction_delay_max_s": 15.0,
+      "counterfire_probability": 1.0,
+      "counterfire_cooldown_s": 120.0,
+      "max_simultaneous_weapons": 2,
+      "sample_interval_s": 2.0,
+      "torpedo_active_enable_time_s": 60.0,
+      "torpedo_autonomy_distance_m": 800.0
+    }
+  },
+  "sensors": [
+    {
+      "sensor_id": "hull_broadband",
+      "array_type": "passive_broadband",
+      "owner_id": "own",
+      "freq_min_hz": 100.0,
+      "freq_max_hz": 1000.0,
+      "array_gain_db": 20.0,
+      "detection_threshold_db": 3.0,
+      "detection_k_d": 4.0,
+      "bearing_sigma_min_deg": 0.8,
+      "bearing_sigma_max_deg": 6.0,
+      "bearing_se0_db": 8.0,
+      "bearing_k_sigma_db": 5.0,
+      "coverage_start_deg": 0.0,
+      "coverage_end_deg": 360.0,
+      "baffle_start_deg": 0.0,
+      "baffle_end_deg": 0.0,
+      "update_interval_s": 2.0,
+      "tracker_capacity": 64,
+      "deployed": true
+    }
+  ]
+}

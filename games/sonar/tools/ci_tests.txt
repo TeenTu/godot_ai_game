@@ -60,3 +60,5 @@ patch_b_test
 patch_c_test
 #   patch_d_test            评审 Patch D：威胁证据/ThreatTrack/扇区单一真源/地图鱼雷指示（PD-01..05）
 patch_d_test
+#   patch_e_test            评审 Patch E：五正交状态/拒绝原因/侧栏契约/搜索连续初始化/combat 场景（PE-01..06）
+patch_e_test

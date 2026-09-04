@@ -1,9 +1,8 @@
 class_name SonarUI
 extends Control
-## main_ui.gd — 主 UI 装配与仿真驱动。selected_track_id 只拟合选中接触；
-## 脏标记驱动重建；BT↔海图↔残差联动；Truth 仅 Show Truth 打开才进海图。
+## main_ui.gd — 主 UI 装配与仿真驱动。只拟合选中接触；脏标记驱动重建；
+## BT↔海图↔残差联动；Truth 仅 Show Truth 打开才进海图；侧栏契约见 UiContract。
 
-const SCENARIO_NAME: String = "stage1_basic_passive"
 const PANEL_W: float = 280.0
 const BT_H: float = 240.0
 const RES_H: float = 150.0
@@ -32,8 +31,8 @@ var _res_plot: ResidualPlot = null
 var _diag_box: VBoxContainer = null  # 包裹两个诊断图的底部容器
 var _diag_mode: int = DIAG_BT  # 默认只显示 BT（需求§一.1）
 var _panel: VBoxContainer = null
+var _sidebar_scroll: ScrollContainer = null  # P1-03.1 侧栏宽度契约目标
 
-# 控制面板控件
 var _btn_pause: Button = null
 var _lbl_status: Label = null
 var _btn_show_truth: Button = null
@@ -66,6 +65,7 @@ var _dirty: bool = true
 var _last_meas_count: int = -1
 var _fit_version: int = 0
 var _own_track_pts: Array = []
+var _scenario_name: String = ""  # P0-08 实际加载的场景名
 
 
 func _ready() -> void:
@@ -75,7 +75,9 @@ func _ready() -> void:
 	_build_ui()
 
 	world = World.new()
-	var scenario: Dictionary = ConfigLoader.load_scenario(SCENARIO_NAME)
+	# P0-08：场景解析（默认旧被动教程；SONAR_SCENARIO 可选 s1_combat）。
+	_scenario_name = UiContract.resolve_scenario_name()
+	var scenario: Dictionary = ConfigLoader.load_scenario(_scenario_name)
 	world.load_scenario(scenario)
 	world.set_time_scale(_time_scale)
 
@@ -86,7 +88,6 @@ func _ready() -> void:
 	tracker.set_capacity(8)
 	tracker.set_auto_interval(5.0)
 
-	# 主动 Ping 控制器（S1-04）：接线 World.issue_ping → Tracker → 面板/状态摘要
 	_ping_ctrl = ActivePingController.new()
 	_ping_ctrl.world = world
 	_ping_ctrl.tracker = tracker
@@ -95,7 +96,6 @@ func _ready() -> void:
 	# 回波命中已喂 Tracker；是否 REFIT 由 REQ-02 fit_mode 裁决（不自动拟合）。
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
 	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
-	# S1-04C：撤销一次自动关联后刷新视图（REFIT REQUIRED 语义）。
 	_ping_ctrl.on_assoc_undone = func(_tid: String):
 		_dirty = true
 		_update_status("Active echo association undone — REFIT REQUIRED")
@@ -165,14 +165,17 @@ func _build_ui() -> void:
 	main_row.add_child(_depth_bar)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(PANEL_W, 0)
+	# P1-03.1：侧栏宽度契约（min 300 / preferred 340 / max 420）。
+	scroll.custom_minimum_size = Vector2(UiContract.SIDEBAR_PREF_W, 0)
+	scroll.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_sidebar_scroll = scroll
 	main_row.add_child(scroll)
 
 	_panel = VBoxContainer.new()
-	_panel.custom_minimum_size = Vector2(PANEL_W, 0)
-	_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_panel.custom_minimum_size = Vector2(UiContract.SIDEBAR_MIN_W, 0)
+	_panel.size_flags_horizontal = Control.SIZE_FILL  # 不 EXPAND：内容不撑宽侧栏
 	_panel.add_theme_constant_override("separation", 5)
 	scroll.add_child(_panel)
 
@@ -296,7 +299,6 @@ func _build_panel() -> void:
 	_panel.add_child(_alert_panel)
 
 	_panel.add_child(HSeparator.new())
-	# 相机控制
 	var cam_title := Label.new()
 	cam_title.text = "Camera / View"
 	cam_title.add_theme_font_size_override("font_size", 15)
@@ -318,7 +320,6 @@ func _build_panel() -> void:
 	_panel.add_child(chk_all_lob)
 
 	_panel.add_child(HSeparator.new())
-	# Trial 参数微调
 	var tma_title := Label.new()
 	tma_title.text = "Trial Params (manual)"
 	tma_title.add_theme_font_size_override("font_size", 15)
@@ -400,7 +401,6 @@ func _build_bottom(root: VBoxContainer) -> void:
 	_res_plot.mouse_exited.connect(_res_plot.mouse_exited_notify)
 	_diag_box.add_child(_res_plot)
 
-	# 应用默认显示模式（BT）：BT 显示、残差隐藏
 	_apply_diag_mode()
 
 
@@ -487,18 +487,19 @@ func _process(delta: float) -> void:
 		_depth_bar.sync()
 	_update_displays_light()
 	_update_panel()
+	if _sidebar_scroll != null:  # P1-03.1 侧栏宽度契约鈐制
+		_sidebar_scroll.size.x = UiContract.sidebar_clamp_x(_sidebar_scroll.size.x)
 
 
 func _feed_new_measurements() -> void:
 	var ms: Array = world.measurements
 	while _processed_meas < ms.size():
 		var m: Measurement = ms[_processed_meas]
-		# S1-00（GAP-DATA-01）第三层过滤：miss 样本绝不吃进 Tracker/TMA。
+		# 第三层过滤：miss 样本绝不吃进 Tracker/TMA。
 		if not m.detected:
 			_processed_meas += 1
 			continue
 		if world.auto_measurements:
-			# 旧模式：自动关联/建 Track
 			if _processed_meas == 0:
 				tracker.mark(m, "S")
 			else:
@@ -527,7 +528,7 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		# S1-03B/03C-P1-02：未消歧 A/B 候选组同权弱化，不因 branch 泄露侧别。
+		# 未消歧 A/B 候选组同权弱化，不因 branch 泄露侧别。
 		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
@@ -546,7 +547,7 @@ func _rebuild_display_data() -> void:
 		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
 	)
 	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
-	# S1-04C-REQ-03/06：选中 Track 最近有效测距 → 海图 range ring/带宽（同色）
+	# 选中 Track 最近有效测距 → 海图 range ring（同色）
 	if sel != null:
 		_chart.range_ring = TmaUiData.range_ring_data(sel, now, _color_for_track(sel.track_id))
 	else:
@@ -675,7 +676,6 @@ func _update_displays_light() -> void:
 
 
 func _own_track_cache() -> Array:
-	# 本艇轨迹点只随新测量增长，复用缓存
 	if _own_track_pts.is_empty() or _last_meas_count > _own_track_pts.size() - 1:
 		_own_track_pts = TmaUiData.sample_own_track(world)
 	return _own_track_pts
@@ -728,7 +728,6 @@ func _update_panel() -> void:
 			_spin_course.set_value_no_signal(trial.course_deg)
 		if not _spin_speed.has_focus():
 			_spin_speed.set_value_no_signal(trial.speed_kn)
-	# 本艇 ACT/CMD + 深度/层带/ETA 由 OwnManeuverPanel 每帧同步
 	if _own_panel != null:
 		_own_panel.sync()
 
@@ -742,7 +741,6 @@ func _update_contact_rows() -> void:
 	var ids: Array = []
 	for t in active:
 		ids.append(t.track_id)
-	# 清掉失效行
 	for tid in _contact_rows.keys():
 		if not (tid as String) in ids:
 			(_contact_rows[tid] as Button).queue_free()
@@ -846,7 +844,7 @@ func _on_fit_tma() -> void:
 	if sel == null:
 		_update_status("No contact selected — click a contact first")
 		return
-	# S1-03C-P0-03：门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
+	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
 	# 不再用原始 Measurement 行数——否则拖曳 2 次点击(4 行)会被误放行。
 	if sel.evidence_count() < 4:
 		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
@@ -999,7 +997,7 @@ func _op_step() -> void:
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		# S1-03B/C：autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个
+		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个
 		# 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
 		var auto_ms: Array = op.autocrew_step(world.sim_time)
 		var i2: int = 0

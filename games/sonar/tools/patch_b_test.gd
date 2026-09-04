@@ -134,14 +134,20 @@ func _pb_04_authorize_enters_search(fails: Array) -> void:
 		true
 	)
 	# 无目标：SEARCH 扇区扫掠实际改变航向（旧实现无现成路径进扫掠）。
+	# P2-01（Patch E）后扫掠自当前航向连续初始化：单步期望变化 = 扫掠率
+	# （默认 SNAKE 1.5°/s → 0.75°/步），不再有跳相位造成的 >1°/步 伪影；
+	# 断言改为单步持续推进 + 20s 累计净漂移 >5°（语义不变：确实在扫掠）。
 	var prev: float = tp.course_deg
 	var max_delta: float = 0.0
+	var first: float = tp.course_deg
 	for i in range(40):
 		tp.step(DT, sim_t, ctx)
 		sim_t += DT
 		max_delta = maxf(max_delta, absf(NavUtils.wrap180(tp.course_deg - prev)))
 		prev = tp.course_deg
-	_assert_bool(fails, "PB-04d sweep steering (%.2f)" % max_delta, max_delta > 1.0, true)
+	var net: float = absf(NavUtils.wrap180(prev - first))
+	_assert_bool(fails, "PB-04d sweep steering (%.2f)" % max_delta, max_delta > 0.5, true)
+	_assert_bool(fails, "PB-04e sweep net drift (%.1f)" % net, net > 5.0, true)
 
 
 ## ---- PB-05：无导线程序主程序自主触发（敌方程序形状）----
