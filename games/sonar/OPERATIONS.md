@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-8 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-9 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -273,6 +273,7 @@ godot --headless --path games/sonar --script res://tools/torpedo_acoustic_test.g
 godot --headless --path games/sonar --script res://tools/torpedo_seeker_test.gd      # WPN-SEEK-01/02/04/05
 godot --headless --path games/sonar --script res://tools/torpedo_track_test.gd       # WPN-SEEK-06..13
 godot --headless --path games/sonar --script res://tools/decoy_test.gd               # CM-01..05 + 谱线分类
+godot --headless --path games/sonar --script res://tools/enemy_ai_test.gd            # AI-01..09
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -301,6 +302,23 @@ Commit 6 Seeker 采样（§6.3/§6.4/§6.5）：`TorpedoSensorAdapter`（World �
 结算、R_meas=c·tau/2+noise（绝不同 tick 瞬时返回）；误报独立生成不绑 target。
 鱼雷出管后被动默认 ON、按 1s 周期采样，SeekerReturn 记入 `seeker_returns`（只
 记不转——捕获/转向属 Commit 7 SeekerTrack/制导）。
+
+Commit 7/8（SeekerTrack/制导 + 诱饵）：见 DESIGN.md §0.6 同名小节；鱼雷恢复
+真实打靶（捕获→ATTACK→TERMINAL→命中），诱饵经同一声学链竞争。
+
+Commit 9 敌方 AI（§9）：场景 `enemy_spawn` 块启用（旧场景零行为变化）——
+`EnemySpawnGenerator` 按方位带/三角距离/航向分布/深度带权重抽样出生（独立派生
+RNG，确定性；min_separation 校验 + fallback_spawn），出生入 `world.targets`。
+`EnemySensorAdapter`（内核边界）消费 Truth 声源 + 声学事件总线，输出净化证据
+（noisy bearing/时间/频带/分类假设/置信度，**无 range/位置/target_id**）；
+`EnemyTrackManager` 方位航迹质量（命中 α 涨 / 无证据衰减 = 不确定区扩大）；
+`EnemyDoctrineController` 状态机 PATROL_PASSIVE→SUSPICIOUS→TRACKING→ATTACKING
+→EVADING→REACQUIRE：反应延迟 3..15s（绝不同 tick 反应）、机动/换层/放诱饵按
+doctrine 概率、全部走 TruthEntity 命令值接口（限速率）；反击只有可信方位 →
+BEARING_ONLY 宽扇区（程序无隐藏距离，绝不指向玩家真实位置）；AI 鱼雷经独立
+WeaponSystem+TorpedoContext（seeker 声源 = 本艇+蓝方诱饵），其主动 Ping/航行
+噪声同样落事件总线、可被玩家被动链截获（玩家声呐可听到来袭鱼雷）。未探测到
+事件时 AI 行为绝不变。
 
 ---
 
@@ -331,7 +349,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 20 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 21 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -352,7 +370,10 @@ tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）、`torpedo_track_tes
 多目标 score 竞争/净化 API/有限转向率制导 + WIRE_ONLY 不擅自转向 + SEARCH
 扇区扫掠，WPN-SEEK-06..13）、`decoy_test`（S1-07 Commit8 诱饵：发射器库存/
 冷却/激活延时/寿命、同一声学链竞争拉锁且 Seeker 不读 is_decoy、固定 seed
-复现，CM-01..05；含鱼雷谱线随模式 + 谱一致性分类稀释 JAMMER 假峰）。
+复现，CM-01..05；含鱼雷谱线随模式 + 谱一致性分类稀释 JAMMER 假峰）、
+`enemy_ai_test`（S1-07 Commit9 敌方：出生确定性/合法性、无证据不感知、Ping 与
+发射瞬态截获只产 noisy bearing、反应延迟 ∈[3,15]s、BEARING_ONLY 宽扇区反击、
+AI 主动 Ping 同样暴露、规避命令值限速率、World 集成，AI-01..09）。
 
 ### S1-00 信息链热修状态（2026-09）
 

@@ -58,6 +58,11 @@ var active_emissions: Array = []
 # 玩家发射器（敌方发射器属 Commit 9 Doctrine，用同一 CountermeasureSystem 类）。
 var countermeasures: CountermeasureSystem = null
 var decoys: Array = []  # 活动诱饵（Truth 实体，随 tick 推进/寿命到期移除）
+
+var enemy_ai: EnemyDoctrineController = null
+var enemy_weapons: WeaponSystem = null
+var enemy_torpedo_ctx: TorpedoContext = null
+var enemy_countermeasures: CountermeasureSystem = null
 # 武器侧采样声源 = targets + 活动诱饵（同一 AcousticContact 接口；独立数组，
 # 不污染玩家测量循环用的 world["targets"]）。
 var _weapon_contacts: Array = []
@@ -75,6 +80,23 @@ var _ping_session: Dictionary = {}
 # 远目标回波 τ 可能远超冷却期，会话提前清空也不得丢已结算结果。
 var _ping_results: Array = []
 var _next_ping_id: int = 1
+
+# ---- S1-07 §9（Commit 9）：敌方出生 / 感知 / Doctrine ----
+# 敌方使用与玩家同一物理声学服务（EnemySensorAdapter 内核边界 → 净化证据 →
+# EnemyTrackManager → EnemyDoctrineController）。AI 只拿方位证据，绝不拿
+# 玩家 TruthEntity；反应带延迟；AI 鱼雷经独立 WeaponSystem + TorpedoContext。
+# 内核影子（Torpedo 无 TruthEntity 接口，声学采样需要统一接触面）：
+#   _player_torpedo_shadows — 玩家在水鱼雷（敌方感知"来袭鱼雷"证据源）；
+#   _enemy_torpedo_shadows  — 敌方在水鱼雷（玩家声呐可听到来袭鱼雷，告警
+#                             UI 属 Commit 11）。无敌方 AI 时两表恒空，
+#                             旧场景零行为变化。
+var _player_torpedo_shadows: Array = []
+var _player_shadow_acs: Dictionary = {}
+var _enemy_torpedo_shadows: Array = []
+var _enemy_shadow_acs: Dictionary = {}
+# 敌方感知/敌方鱼雷 seeker 的采样声源（每 tick 重建内容，数组实例稳定）。
+var _enemy_perception_contacts: Array = []
+var _enemy_perception_acs: Dictionary = {}
 
 
 ## 从场景 JSON 构建并初始化世界。
@@ -112,6 +134,9 @@ func load_scenario(scenario: Dictionary) -> void:
 	var cm_cfg: Dictionary = scenario.get("own_ship", {}).get("countermeasures", {})
 	countermeasures.configure(cm_cfg)
 	decoys.clear()
+	# S1-07 §9（Commit 9）：敌方随机出生 + 感知 + Doctrine（有 enemy_spawn
+	# 块才启用；旧场景零行为变化）。
+	_setup_enemy_ai(scenario)
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -170,15 +195,15 @@ func tick() -> void:
 			_emit_for_sensor(sensor)
 			_sensor_timers[sensor.sensor_id] = sim_time + sensor.update_interval_s
 
-## 仅推进实体运动（Operator 模式：无自动测量）。
-	# 3) 推进在水鱼雷（S1-07：ctx 只含服务接口；自导/命中为后续 Commit 的
-	#    Seeker 链，本批鱼雷为线导直航 + 默认被动监听）
+	# 3) 推进在水鱼雷（S1-07：ctx 只含服务接口；自导由 Commit 6+ Seeker 链驱动）
 	if weapons != null and not weapons.torpedoes.is_empty():
 		weapons.step(dt, sim_time, torpedo_ctx)
 	# 3b) 推进活动诱饵（Commit 8 §8：激活/寿命/JAMMER 抖动；到期移出采样集）
 	_advance_decoys(dt)
 	# 4) 推进 PingSession（结算到点回波 + 状态转移，与自动测量无关）
 	_advance_ping_session()
+	# 5) 敌方感知/Doctrine（Commit 9）：证据 → 航迹 → 状态机 → 动作。
+	_advance_enemy_ai(dt)
 
 
 func _advance_only() -> void:
@@ -191,6 +216,7 @@ func _advance_only() -> void:
 		weapons.step(dt, sim_time, torpedo_ctx)
 	_advance_decoys(dt)
 	_advance_ping_session()
+	_advance_enemy_ai(dt)
 
 
 ## 推进活动诱饵：激活瞬间记 DECOY_ACTIVATION 事件（§9.1）并进入武器采样集
@@ -254,6 +280,238 @@ func _hold_depth_for(band: String) -> float:
 	return 70.0
 
 
+# ------------------------------------------------------------------
+#  S1-07 §9（Commit 9）：敌方随机出生 / 感知 / Doctrine
+#  - 出生：EnemySpawnGenerator（独立派生 RNG，确定性；约束校验 + fallback）。
+#  - 感知：EnemySensorAdapter（内核边界）→ 净化证据（无 range/位置/target_id）。
+#  - 航迹：EnemyTrackManager（方位航迹质量，衰减=不确定区扩大）。
+#  - Doctrine：EnemyDoctrineController 状态机（反应延迟 + 概率；命令值接口）。
+#  - AI 鱼雷：独立 WeaponSystem + TorpedoContext（seeker 声源 = 本艇 + 蓝方
+#    诱饵）；AI 无主动声呐，反击走 BEARING_ONLY 宽扇区（无隐藏距离）。
+#  - AI 行为绝不读玩家 TruthEntity；未探测事件绝不改变 AI 行为（§9.8）。
+# ------------------------------------------------------------------
+
+
+## 场景含 enemy_spawn 块时启用敌方 AI（旧场景零行为变化）。
+func _setup_enemy_ai(scenario: Dictionary) -> void:
+	enemy_ai = null
+	enemy_weapons = null
+	enemy_torpedo_ctx = null
+	enemy_countermeasures = null
+	_enemy_torpedo_shadows = []
+	_enemy_shadow_acs = {}
+	_enemy_perception_contacts = []
+	_enemy_perception_acs = {}
+	var cfg: Dictionary = scenario.get("enemy_spawn", {})
+	if cfg.is_empty() or world.get("own") == null:
+		return
+	var base_seed: int = int(scenario.get("seed", 12345))
+	var gen := EnemySpawnGenerator.new()
+	gen.configure(cfg, base_seed + 1000)
+	var spawned: TruthEntity = gen.spawn(
+		world["own"], world["targets"], Callable(self, "_hold_depth_for")
+	)
+	if spawned == null:
+		return
+	world["targets"].append(spawned)
+	_weapon_contacts.append(spawned)
+	var ac := AcousticProfile.new()
+	ac.from_dict(cfg.get("acoustic", {}))
+	world["target_acs"][spawned.id] = ac
+	# 敌方鱼雷武器链（独立 ctx；seeker 声源 = 本艇 + 蓝方诱饵，_rebuild 时刷新）。
+	enemy_weapons = WeaponSystem.new()
+	enemy_weapons.emission_bus = emission_bus
+	enemy_torpedo_ctx = TorpedoContext.new()
+	enemy_torpedo_ctx.env = world.get("env", null)
+	enemy_torpedo_ctx.depth_model = world.get("depth_model", null)
+	enemy_torpedo_ctx.emission_bus = emission_bus
+	var e_adapter := TorpedoSensorAdapter.new()
+	e_adapter.env = world.get("env", null)
+	e_adapter.depth_model = world.get("depth_model", null)
+	e_adapter.rng = _derived_rng(base_seed + 2000)
+	e_adapter.contacts = _enemy_perception_contacts
+	e_adapter.contact_acs = _enemy_perception_acs
+	enemy_torpedo_ctx.sensor_adapter = e_adapter
+	# 敌方诱饵发射器（同一 CountermeasureSystem 类）。
+	enemy_countermeasures = CountermeasureSystem.new()
+	enemy_countermeasures.configure(cfg.get("countermeasures", {}))
+	# 感知 + 航迹 + Doctrine（各自独立派生 RNG，确定性）。
+	var s_adapter := EnemySensorAdapter.new()
+	s_adapter.bind(
+		world.get("env", null),
+		world.get("depth_model", null),
+		_enemy_perception_contacts,
+		_enemy_perception_acs
+	)
+	s_adapter.set_rng(_derived_rng(base_seed + 3000))
+	s_adapter.false_alarm_rate = float(
+		cfg.get("doctrine", {}).get("sensor_false_alarm_rate", 0.005)
+	)
+	var mgr := EnemyTrackManager.new()
+	var ai := EnemyDoctrineController.new()
+	ai.configure(spawned, s_adapter, mgr, cfg.get("doctrine", {}), _derived_rng(base_seed + 4000))
+	enemy_ai = ai
+
+
+func _derived_rng(seed_val: int) -> RandomNumberGenerator:
+	var r := RandomNumberGenerator.new()
+	r.seed = seed_val
+	return r
+
+
+## 每步推进敌方 AI：重建采样声源 → Doctrine update → 执行动作（发射鱼雷 /
+## 放诱饵）；敌方鱼雷经独立 ctx 推进；死亡后归还并发余量。
+func _advance_enemy_ai(dt: float) -> void:
+	if enemy_ai == null:
+		return
+	_rebuild_enemy_contacts()
+	var events: Array = emission_bus.events if emission_bus != null else []
+	var actions: Array = enemy_ai.update(sim_time, dt, events)
+	_apply_enemy_actions(actions)
+	if enemy_weapons != null and not enemy_weapons.torpedoes.is_empty():
+		enemy_weapons.step(dt, sim_time, enemy_torpedo_ctx)
+	_sync_torpedo_shadows()
+	if enemy_weapons != null:
+		var dead: Array = enemy_weapons.torpedoes.filter(func(t): return t.is_dead())
+		for _d in dead:
+			enemy_ai.notify_torpedo_resolved()
+
+
+## 同步双方在水鱼雷的内核影子：
+##   - 玩家鱼雷影子 → 敌方感知（§9.6 来袭鱼雷运行噪声证据源）；
+##   - 敌方鱼雷影子 → 玩家声呐被动链（听到来袭鱼雷；告警 UI 属 Commit 11）。
+## 影子只在对应鱼雷存在时产生采样，旧场景零行为变化。
+func _sync_torpedo_shadows() -> void:
+	_player_torpedo_shadows.clear()
+	_player_shadow_acs.clear()
+	if weapons != null:
+		for tp in weapons.torpedoes:
+			if tp.is_dead():
+				continue
+			var sh := _make_torpedo_shadow(tp, "blue")
+			_player_torpedo_shadows.append(sh)
+			_player_shadow_acs[str(tp.torpedo_id)] = _torpedo_shadow_ac(tp)
+	_enemy_torpedo_shadows.clear()
+	_enemy_shadow_acs.clear()
+	if enemy_weapons != null:
+		for tp in enemy_weapons.torpedoes:
+			if tp.is_dead():
+				continue
+			var sh := _make_torpedo_shadow(tp, "red")
+			_enemy_torpedo_shadows.append(sh)
+			_enemy_shadow_acs[str(tp.torpedo_id)] = _torpedo_shadow_ac(tp)
+
+
+func _make_torpedo_shadow(tp: RefCounted, side: String) -> TruthEntity:
+	var sh := TruthEntity.new()
+	sh.id = str(tp.torpedo_id)
+	sh.side = side
+	sh.platform_type = "torpedo"
+	sh.position_east_m = tp.pos_east_m
+	sh.position_north_m = tp.pos_north_m
+	sh.depth_m = tp.actual_depth_m
+	sh.speed_kn = tp.speed_kn
+	sh.course_deg = tp.course_deg
+	return sh
+
+
+## 鱼雷影子声学画像：运行噪声源级按速度模式直接刻画（不再叠速度斜率），
+## 窄带谱线随模式（Commit 8 谱线细节同源）。
+func _torpedo_shadow_ac(tp: RefCounted) -> AcousticProfile:
+	var ac := AcousticProfile.new()
+	var sm: String = WeaponProgram.speed_mode_name(tp.speed_mode)
+	ac.broadband_base_level_db = tp.acoustic_profile.own_noise_sl_db(sm)
+	ac.speed_noise_a = 0.0
+	ac.tonal_lines = tp.acoustic_profile.tonal_lines(sm)
+	return ac
+
+
+## 重建敌方感知/敌方鱼雷 seeker 的采样声源（内核边界内；数组实例稳定）：
+## 本艇 + 玩家在水鱼雷影子 + 蓝方活动诱饵。绝不把玩家 TruthEntity 交给
+## Doctrine 层（适配器是唯一边界）。
+func _rebuild_enemy_contacts() -> void:
+	_enemy_perception_contacts.clear()
+	_enemy_perception_acs.clear()
+	var enemy_side: String = (
+		str(enemy_ai.entity.side) if enemy_ai != null and enemy_ai.entity != null else "red"
+	)
+	var own: TruthEntity = world["own"]
+	_enemy_perception_contacts.append(own)
+	_enemy_perception_acs[str(own.id)] = world.get("own_ac", null)
+	for s in _player_torpedo_shadows:
+		_enemy_perception_contacts.append(s)
+		if _player_shadow_acs.has(str(s.id)):
+			_enemy_perception_acs[str(s.id)] = _player_shadow_acs[str(s.id)]
+	for d in decoys:
+		if str(d.side) == enemy_side:
+			continue
+		_enemy_perception_contacts.append(d)
+		if d.signature_ac != null:
+			_enemy_perception_acs[str(d.id)] = d.signature_ac
+
+
+## 执行 Doctrine 动作（World 是执行者；AI 本体只写命令值与返回动作）。
+func _apply_enemy_actions(actions: Array) -> void:
+	for a in actions:
+		match str(a.get("action", "")):
+			"FIRE_TORPEDO":
+				_enemy_fire(a)
+			"LAUNCH_DECOY":
+				_enemy_launch_decoy(float(a.get("bearing_deg", 0.0)))
+			_:
+				pass
+
+
+## 敌方反击（§9.7 ATTACKING）：BEARING_ONLY 宽扇区（无隐藏距离）；程序预设
+## 距离授权自主 + 时间开主动（fallback 同源），绝不指向玩家真实位置。
+func _enemy_fire(a: Dictionary) -> void:
+	if enemy_weapons == null or enemy_ai == null or enemy_ai.entity == null:
+		return
+	var e: TruthEntity = enemy_ai.entity
+	var prog := WeaponProgram.make_bearing_only(float(a.get("bearing_deg", 0.0)))
+	prog.guidance_authority = WeaponProgram.GuidanceAuthority.WIRE_ONLY
+	prog.wire_guidance_enabled = false
+	prog.active_enable_mode = WeaponProgram.ActiveEnableMode.TIME
+	prog.active_enable_time_s = float(enemy_ai.doctrine.get("torpedo_active_enable_time_s", 60.0))
+	prog.autonomy_enable_mode = WeaponProgram.AutonomyEnableMode.DISTANCE
+	prog.autonomy_enable_distance_m = float(
+		enemy_ai.doctrine.get("torpedo_autonomy_distance_m", 800.0)
+	)
+	prog.warhead_arm_distance_m = 300.0
+	prog.fallback_program = prog.make_default_fallback()
+	enemy_weapons.fire_program(prog, e.position_east_m, e.position_north_m, sim_time, e.depth_m)
+
+
+## 敌方诱饵（§8.5/§9.7 EVADING）：同一 CountermeasureSystem 流程；MOBILE
+## 假目标谱（模拟潜艇），背离告警方位出舱。
+func _enemy_launch_decoy(launch_bearing_deg: float) -> void:
+	if enemy_countermeasures == null or enemy_ai == null or enemy_ai.entity == null:
+		return
+	var e: TruthEntity = enemy_ai.entity
+	var prog := DecoyProgram.new()
+	prog.decoy_type = DecoyProgram.TYPE_MOBILE
+	prog.launch_bearing_deg = clampf(launch_bearing_deg, 0.0, 359.9)
+	prog.initial_depth_band = "UPPER" if e.depth_m < 120.0 else "LOWER"
+	prog.commanded_depth_band = prog.initial_depth_band
+	prog.course_deg = NavUtils.wrap360(launch_bearing_deg + 180.0)
+	prog.speed_kn = 8.0
+	prog.activation_delay_s = 2.0
+	prog.lifetime_s = 120.0
+	var sig := AcousticProfile.new()
+	sig.broadband_base_level_db = float(enemy_ai.doctrine.get("decoy_sl_db", 168.0))
+	sig.tonal_lines = [
+		{"freq_hz": 240.0, "level_db": 128.0},
+		{"freq_hz": 480.0, "level_db": 122.0},
+	]
+	prog.signature = sig
+	var initial_depth: float = _hold_depth_for(prog.initial_depth_band)
+	var d: Decoy = enemy_countermeasures.launch(
+		prog, e, sim_time, enemy_ai._rng, initial_depth, initial_depth
+	)
+	if d != null:
+		decoys.append(d)
+
+
 ## 为某个传感器生成一次测量（针对所有目标）。
 ## S1-00（GAP-DATA-01/02）：
 ##   - 主动阵（array_type=="active"）绝不在本函数自动产测量——唯一玩家路径是
@@ -270,6 +528,15 @@ func _emit_for_sensor(sensor: RefCounted) -> void:
 		var m: Measurement = gen.generate_passive(world["own"], t, ac, sensor, sim_time)
 		if m.detected:
 			measurements.append(m)
+	# 来袭鱼雷（Commit 9）：存在敌方在水鱼雷影子时才额外采样（玩家声呐
+	# 听到敌方鱼雷 → 告警，Commit 11 消费）；旧场景影子恒空，零行为变化。
+	for t in _enemy_torpedo_shadows:
+		var tac: RefCounted = _enemy_shadow_acs.get(str(t.id), null)
+		if tac == null:
+			continue
+		var tm: Measurement = gen.generate_passive(world["own"], t, tac, sensor, sim_time)
+		if tm.detected:
+			measurements.append(tm)
 
 
 ## 推进 n 个固定步长。
