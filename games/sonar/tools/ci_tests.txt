@@ -23,6 +23,7 @@
 #   torpedo_acoustic_test   S1-07 Commit5 声学画像模式表 + EmissionBus 瞬态/噪声/主动 Ping（WPN-ACOU-01..03）
 #   torpedo_seeker_test     S1-07 Commit6 TorpedoSensorAdapter + SeekerReturn（被动无 range/TOF/净化/误报，WPN-SEEK-01..05）
 #   torpedo_track_test      S1-07 Commit7 SeekerTrack 捕获/丢失/重搜/score 竞争/制导限速率（WPN-SEEK-06..13）
+#   decoy_test              S1-07 Commit8 诱饵发射/库存/寿命/声学竞争拉锁/谱线分类（CM-01..05 + SPEC）
 play_test
 stage1_test
 stage2_test
@@ -42,3 +43,4 @@ wire_guidance_test
 torpedo_acoustic_test
 torpedo_seeker_test
 torpedo_track_test
+decoy_test

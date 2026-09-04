@@ -17,6 +17,14 @@ var speed_kn_by_mode: Dictionary = {"QUIET": 28.0, "CRUISE": 40.0, "HIGH": 50.0}
 var endurance_s_by_mode: Dictionary = {"QUIET": 1800.0, "CRUISE": 1200.0, "HIGH": 800.0}
 ## 运行噪声宽带源级（SL@1m 游戏标定；越高越易被被动探测）。
 var own_noise_sl_db_by_mode: Dictionary = {"QUIET": 112.0, "CRUISE": 128.0, "HIGH": 146.0}
+## 运行噪声窄带谱线（§6.1 tonal_lines_by_speed_mode，Commit 8 补齐）：动力/
+## 螺旋桨特征谱，随模式变化——敌方/诱饵的分类与频谱相似度竞争消费
+## （谱线进 EmissionEvent extra，噪声事件仍以宽带源级为主）。
+var tonal_lines_by_mode: Dictionary = {
+	"QUIET": [{"freq_hz": 420.0, "level_db": 96.0}, {"freq_hz": 840.0, "level_db": 90.0}],
+	"CRUISE": [{"freq_hz": 540.0, "level_db": 110.0}, {"freq_hz": 1080.0, "level_db": 103.0}],
+	"HIGH": [{"freq_hz": 660.0, "level_db": 128.0}, {"freq_hz": 1320.0, "level_db": 121.0}],
+}
 
 ## ---- 被动接收（§6.1；Seeker 采样 Commit 6 消费，本批先承载参数）
 var passive_frequency_min_hz: float = 100.0
@@ -68,6 +76,11 @@ func own_noise_sl_db(mode_name: String) -> float:
 	)
 
 
+## 运行噪声窄带谱线（§6.1；模式不同谱线位置/强度不同——分类特征来源）。
+func tonal_lines(mode_name: String) -> Array:
+	return tonal_lines_by_mode.get(mode_name, tonal_lines_by_mode.get("CRUISE", []))
+
+
 ## 运行噪声频带 (min_hz, max_hz)：宽带辐射取被动接收频段，简单一致。
 func running_noise_band_hz() -> Vector2:
 	return Vector2(passive_frequency_min_hz, passive_frequency_max_hz)
@@ -78,6 +91,7 @@ func from_dict(d: Dictionary) -> void:
 	speed_kn_by_mode = d.get("speed_kn_by_mode", speed_kn_by_mode)
 	endurance_s_by_mode = d.get("endurance_s_by_mode", endurance_s_by_mode)
 	own_noise_sl_db_by_mode = d.get("own_noise_sl_db_by_mode", own_noise_sl_db_by_mode)
+	tonal_lines_by_mode = d.get("tonal_lines_by_mode", tonal_lines_by_mode)
 	passive_frequency_min_hz = float(d.get("passive_frequency_min_hz", passive_frequency_min_hz))
 	passive_frequency_max_hz = float(d.get("passive_frequency_max_hz", passive_frequency_max_hz))
 	active_center_frequency_hz = float(

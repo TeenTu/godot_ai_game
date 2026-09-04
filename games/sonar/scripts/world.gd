@@ -54,6 +54,14 @@ var ping_baffle_sector: Vector2 = Vector2(0, 0)
 var emission_bus: AcousticEmissionBus = null
 var active_emissions: Array = []
 
+# ---- S1-07 §8（Commit 8）：诱饵与反制 ----
+# 玩家发射器（敌方发射器属 Commit 9 Doctrine，用同一 CountermeasureSystem 类）。
+var countermeasures: CountermeasureSystem = null
+var decoys: Array = []  # 活动诱饵（Truth 实体，随 tick 推进/寿命到期移除）
+# 武器侧采样声源 = targets + 活动诱饵（同一 AcousticContact 接口；独立数组，
+# 不污染玩家测量循环用的 world["targets"]）。
+var _weapon_contacts: Array = []
+
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
 var _paused: bool = false
 var _time_scale: float = 1.0
@@ -92,9 +100,18 @@ func load_scenario(scenario: Dictionary) -> void:
 	adapter.env = world.get("env", null)
 	adapter.depth_model = world.get("depth_model", null)
 	adapter.rng = world.get("rng", null)
-	adapter.contacts = world.get("targets", [])
+	# Commit 8：武器侧采样声源 = targets + 活动诱饵（合成数组，独立实例）。
+	_weapon_contacts = []
+	for t in world.get("targets", []):
+		_weapon_contacts.append(t)
+	adapter.contacts = _weapon_contacts
 	adapter.contact_acs = world.get("target_acs", {})
 	torpedo_ctx.sensor_adapter = adapter
+	# Commit 8（§8.1）：玩家反制发射器（场景 own_ship.countermeasures 可覆盖）。
+	countermeasures = CountermeasureSystem.new()
+	var cm_cfg: Dictionary = scenario.get("own_ship", {}).get("countermeasures", {})
+	countermeasures.configure(cm_cfg)
+	decoys.clear()
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -158,6 +175,8 @@ func tick() -> void:
 	#    Seeker 链，本批鱼雷为线导直航 + 默认被动监听）
 	if weapons != null and not weapons.torpedoes.is_empty():
 		weapons.step(dt, sim_time, torpedo_ctx)
+	# 3b) 推进活动诱饵（Commit 8 §8：激活/寿命/JAMMER 抖动；到期移出采样集）
+	_advance_decoys(dt)
 	# 4) 推进 PingSession（结算到点回波 + 状态转移，与自动测量无关）
 	_advance_ping_session()
 
@@ -170,7 +189,69 @@ func _advance_only() -> void:
 		t.advance(dt)
 	if weapons != null and not weapons.torpedoes.is_empty():
 		weapons.step(dt, sim_time, torpedo_ctx)
+	_advance_decoys(dt)
 	_advance_ping_session()
+
+
+## 推进活动诱饵：激活瞬间记 DECOY_ACTIVATION 事件（§9.1）并进入武器采样集
+## （激活前静默）；寿命到期后移除（诱饵有限寿命，§8.6）。
+func _advance_decoys(dt: float) -> void:
+	var rng: RandomNumberGenerator = world.get("rng", null)
+	var expired: Array = []
+	for d in decoys:
+		var just_activated: bool = d.step(dt)
+		if just_activated:
+			_weapon_contacts.append(d)
+			if emission_bus != null:
+				var ac: RefCounted = d.signature_ac
+				var sl: float = 160.0
+				if ac != null and ac.has_method("broadband_sl_db"):
+					sl = float(ac.call("broadband_sl_db", d.speed_kn, d.depth_m))
+				(
+					emission_bus
+					. record(
+						AcousticEmissionEvent.DECOY_ACTIVATION,
+						d.id,
+						sim_time,
+						Vector3(d.position_east_m, d.position_north_m, d.depth_m),
+						1000.0,
+						3000.0,
+						sl,
+						1.0,
+					)
+				)
+		if d.expired:
+			expired.append(d)
+	for d in expired:
+		decoys.erase(d)
+		_weapon_contacts.erase(d)
+
+
+## 玩家发射诱饵（§8.5）：发射器库存/冷却/程序合法性校验；诱饵先进入活动
+## 列表随 tick 推进，激活瞬间才进入武器采样集（激活前静默）。
+## enemy 侧（Commit 9）用同一 CountermeasureSystem 流程。
+func _launch_decoy(prog: DecoyProgram) -> bool:
+	if countermeasures == null or prog == null or world.get("own") == null:
+		return false
+	var initial_depth: float = _hold_depth_for(prog.initial_depth_band)
+	var commanded_depth: float = _hold_depth_for(prog.commanded_depth_band)
+	var d: Decoy = countermeasures.launch(
+		prog, world["own"], sim_time, world.get("rng", null), initial_depth, commanded_depth
+	)
+	if d == null:
+		return false
+	decoys.append(d)
+	return true
+
+
+## 深度带 → hold 深度（DepthLayerModel 注入时用模型；否则默认 70/180）。
+func _hold_depth_for(band: String) -> float:
+	var dm: RefCounted = world.get("depth_model", null)
+	if dm != null and dm.has_method("hold_depth_for_band"):
+		return float(dm.call("hold_depth_for_band", band))
+	if band == WeaponProgram.DEPTH_BAND_LOWER:
+		return 180.0
+	return 70.0
 
 
 ## 为某个传感器生成一次测量（针对所有目标）。
