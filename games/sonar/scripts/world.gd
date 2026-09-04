@@ -39,6 +39,11 @@ var ping_sound_speed_m_s: float = AcousticService.SOUND_SPEED_M_S
 var ping_listen_window_s: float = 15.0  # 监听窗口：发射后等待回波的最长秒数
 var ping_pulse_duration_s: float = 0.25  # 脉冲时长（ActiveEmissionEvent/暴露刻画，REQ-05）
 var ping_hardware: bool = false  # 场景显式配置主动阵才为 true
+# S1-03C-P1-03/REQ-08：主动阵发射扇区（相对本艇艏向）。场景 own_ship.active_sonar
+# 可声明 coverage_start_deg/coverage_end_deg/baffle_start_deg/baffle_end_deg；
+# 未声明 = 全向 (0..360) 无盲区（旧行为）。issue_ping 只在发射时刻扇区内登记回波。
+var ping_coverage_sector: Vector2 = Vector2(0, 360)
+var ping_baffle_sector: Vector2 = Vector2(0, 0)
 # ---- S1-04C-REQ-05 主动暴露事件 ----
 # 每次显式发射记录一条 ActiveEmissionEvent（本艇发射事实，非目标 Truth）：
 #   {emitter_internal_ref, emit_time, source_position_internal:{e,n},
@@ -87,6 +92,14 @@ func load_scenario(scenario: Dictionary) -> void:
 	ping_sound_speed_m_s = float(as_cfg.get("sound_speed_m_s", ping_sound_speed_m_s))
 	ping_listen_window_s = maxf(float(as_cfg.get("listen_window_s", ping_listen_window_s)), 0.5)
 	ping_pulse_duration_s = maxf(float(as_cfg.get("pulse_duration_s", ping_pulse_duration_s)), 0.05)
+	ping_coverage_sector = Vector2(
+		float(as_cfg.get("coverage_start_deg", ping_coverage_sector.x)),
+		float(as_cfg.get("coverage_end_deg", ping_coverage_sector.y)),
+	)
+	ping_baffle_sector = Vector2(
+		float(as_cfg.get("baffle_start_deg", ping_baffle_sector.x)),
+		float(as_cfg.get("baffle_end_deg", ping_baffle_sector.y)),
+	)
 	_ping_session = {}
 	_ping_results.clear()
 	_next_ping_id = 1
@@ -265,6 +278,22 @@ func issue_ping() -> bool:
 	var sensor: SensorArray = _ping_sensor()
 	var echoes: Array = []
 	for t in world["targets"]:
+		# S1-03C-P1-03/REQ-08：发射扇区——发射时刻固化方位，仅登记扇区内目标回波。
+		# 与被动链同源（SensorArray.in_coverage，覆盖/挡板盲区相对本艇艏向）；
+		# 扇区外目标不登记回波（窗口到期 NO_RETURN，绝不在到达时刻补判）。
+		# 未声明覆盖 = 全向 (0..360)，行为与旧实现一致。
+		var tgt_b: float = (
+			NavUtils
+			. bearing_to_true(
+				own.position_east_m,
+				own.position_north_m,
+				t.position_east_m,
+				t.position_north_m,
+			)
+		)
+		var rel_b: float = NavUtils.wrap360(tgt_b - own.course_deg)
+		if not sensor.in_coverage(rel_b):
+			continue
 		var rng_m: float = NavUtils.distance(
 			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
 		)
@@ -497,6 +526,10 @@ func _ping_sensor() -> SensorArray:
 				"freq_min_hz": ping_freq_min_hz,
 				"freq_max_hz": ping_freq_max_hz,
 				"array_gain_db": ping_array_gain_db,
+				"coverage_start_deg": ping_coverage_sector.x,
+				"coverage_end_deg": ping_coverage_sector.y,
+				"baffle_start_deg": ping_baffle_sector.x,
+				"baffle_end_deg": ping_baffle_sector.y,
 				"detection_threshold_db": 0.0,
 			}
 		)
