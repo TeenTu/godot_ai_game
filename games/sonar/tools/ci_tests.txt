@@ -50,3 +50,5 @@ enemy_ai_test
 fuze_evidence_test
 #   weapon_ui_test          S1-07 Commit11 在水武器控制台/诱饵面板/告警/深度条/净化（UIW-01..06）
 weapon_ui_test
+#   s107_integrated_test    S1-07 Commit12 全流程集成：击杀链/敌方反击/seed 复现（INT-A/B/C）
+s107_integrated_test

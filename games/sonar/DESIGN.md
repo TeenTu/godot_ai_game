@@ -189,7 +189,18 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   虚线（只表示通信链）、搜索扇区边界、Seeker FOV（被动淡/攻击亮）、选中航迹
   不确定方位线（绝不画 Truth 目标）。weapon_panel 事件日志删除 target_id 显示
   路径（UI-07）。`weapon_ui_test` UIW-01..06。
-- **遗留项**（Commit 12）：集成任务与 CI 门禁。
+- **Commit 12（§13/§14.7，集成与 CI 门禁）**：新增 `tools/s107_integrated_test.gd`
+  全流程集成（固定 seed、纯无头、全 World 链路）：INT-A 完整击杀链——敌方随机
+  出生（约束 + fallback）→ BEARING_ONLY 发射（程序无 range）→ 线导 300m 授权
+  自主 → TIME 开主动 → Seeker 捕获/ATTACK/TERMINAL → 引信爆炸 → Truth 敌
+  sunk → Debrief 台账 → 净化证据 classify_detonation 判 PROBABLE_*（绝无
+  CONFIRMED/target_id）；INT-B 敌方反击链——Doctrine 自行 TRACKING→ATTACKING
+  → 发射 → 玩家截获 POSSIBLE_LAUNCH_TRANSIENT/POSSIBLE_TORPEDO 告警 + 声呐
+  听到来袭鱼雷（影子链测量增长）；INT-C 固定 seed 两次运行世界终态逐字段一致
+  （§2.3）。配套：`EmissionSanitizer._make_fact` 本艇事实补 `bearing_deg`/
+  `se_db`（己方武器状态合法信息的确定性声学接收计算，不消耗 RNG、无探测门限
+  判定）——使 OWN_FACT 爆炸证据可进战果层级判定。`ci_tests.txt` 登记 24 项
+  全量门禁。
 
 ---
 

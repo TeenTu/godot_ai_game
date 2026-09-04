@@ -276,6 +276,7 @@ godot --headless --path games/sonar --script res://tools/decoy_test.gd          
 godot --headless --path games/sonar --script res://tools/enemy_ai_test.gd            # AI-01..09
 godot --headless --path games/sonar --script res://tools/fuze_evidence_test.gd       # FUZE-01..07
 godot --headless --path games/sonar --script res://tools/weapon_ui_test.gd           # UIW-01..06
+godot --headless --path games/sonar --script res://tools/s107_integrated_test.gd     # INT-A/B/C
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -341,6 +342,13 @@ DETONATION_HEARD / PROBABLE_HIT / PROBABLE_KILL，含时间/方位/置信度）�
 线导虚线、搜索扇区边界、Seeker FOV、选中航迹不确定方位线——全部来自己方武器
 状态/净化摘要，绝不画 Truth 目标。武器日志不再显示任何 target_id。
 
+Commit 12 集成与 CI 门禁（§13/§14.7）：`s107_integrated_test` 三条全 World 链路
+——INT-A 完整击杀链（出生→BEARING_ONLY→授权自主→TIME 开主动→捕获/TERMINAL→
+引信爆炸→敌 sunk→Debrief→净化证据判 PROBABLE_*）、INT-B 敌方反击链（Doctrine
+自行开火→玩家截获发射瞬态告警→声呐听到来袭雷）、INT-C 固定 seed 复现（两次
+运行终态逐字段一致）。配套本艇事实（OWN_FACT）证据补 bearing/se（己方武器
+状态合法信息）。主门禁 `tools/ci_tests.txt` 共 24 项。
+
 ---
 
 ## 4. 常见问题
@@ -399,7 +407,9 @@ Commit10 引信：SAFE 双保险不起爆/直航命中爆炸/Truth 伤害/Debrie
 层级纯函数/敌方鱼雷命中本艇→净化 DETONATION_HEARD/净化扫描/未命中零台账，
 FUZE-01..07）、`weapon_ui_test`（S1-07 Commit11 UI：在水控制台状态正交呈现/
 断线禁用拒绝原因/诱饵库存禁用/告警 PROBABLE_KILL 标注且绝无 CONFIRMED 与
-target_id/深度条/日志净化，UIW-01..06）。
+target_id/深度条/日志净化，UIW-01..06）、`s107_integrated_test`（S1-07 Commit12
+集成：全链击杀 INT-A/敌方反击告警+来袭雷可听 INT-B/固定 seed 复现 INT-C，
+无 UI 直读 Truth、证据无 target_id）。
 
 ### S1-00 信息链热修状态（2026-09）
 
