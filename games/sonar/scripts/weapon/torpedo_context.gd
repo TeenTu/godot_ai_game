@@ -11,5 +11,6 @@ extends RefCounted
 
 var env: RefCounted = null  # EnvironmentModel（TL/N_eff 统一实现）
 var depth_model: RefCounted = null  # DepthLayerModel（Commit 2，可为 null=旧二维场景）
-var emission_bus: RefCounted = null  # 预留：AcousticEmissionBus（Commit 5）
+# Commit 5：AcousticEmissionBus（发射瞬态/航行噪声/主动 Ping 声源广播，§9.2）。
+var emission_bus: RefCounted = null
 var sensor_adapter: RefCounted = null  # 预留：TorpedoSensorAdapter（Commit 6）

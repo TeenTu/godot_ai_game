@@ -38,11 +38,12 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-4 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-5 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
-Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）**，均已合入 sonar-dev：
+Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5（声学
+画像 + EmissionBus）**，均已合入 sonar-dev：
 
 - **Commit 0**：旧武器缺陷行为刻画测试（Truth 直读 / 单一 ENABLE_RANGE /
   target_id 进 UI / DEAD 自动补装）——重构后已删除，由新契约测试接管。
@@ -82,10 +83,23 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）**，均已
   命令全部记 `command_log`（§5.1 CommandLog），绝不改写发射程序快照。
   `wire_guidance_test` WPN-WIRE-01..04（连接命令生效/速率逼近/断切拒绝/
   fallback 执行）。
-- **遗留项**（后续 Commit 5-12）：TorpedoAcousticProfile+EmissionBus、
-  TorpedoSensorAdapter+SeekerReturn、SeekerTrack 捕获/丢失/重搜/制导、
-  诱饵干扰、敌方感知/Doctrine、引信/伤害净化反馈、完整深度条/告警/在水
-  控制 UI（Commit 11）。
+- **Commit 5（TorpedoAcousticProfile + EmissionBus，§6.1/§6.2/§9.1/§9.2）**：
+  新增 `scripts/weapon/torpedo_acoustic_profile.gd`——速度模式同时映射对地
+  速度/续航/运行噪声源级（QUIET 28kn/1800s/112dB < CRUISE 40kn/1200s/128dB
+  < HIGH 50kn/800s/146dB，§6.2：切模式绝不单改地图速度）+ 主动收发参数 +
+  出管/动力启动瞬态（游戏性标定，全部可配置）；Torpedo 删常量改读 profile，
+  `command_speed_mode` 按新旧模式续航比等比折算剩余燃料。新增 `scripts/
+  acoustic/acoustic_emission_{event,bus}.gd`——统一声学事件 schema（字典，
+  emitter 只带内部引用、绝不携带 target_id/Truth）与总线（MAX_EVENTS 1024、
+  事件计数确定性）；`World.active_emissions`（S1-04C 契约）改为总线 events
+  同一数组引用（R22 读方零改动），本艇主动 Ping 与鱼雷出管瞬态 / 动力启动 /
+  运行噪声（按模式源级周期广播）/ 主动 Ping（按 profile 节拍）全部经
+  `emission_bus.record` 落事件，截获 SE/Pd 与玩家声呐同源（连续概率非硬门限）。
+  `torpedo_acoustic_test` WPN-ACOU-01..03（模式单调性 + 燃料折算 / 瞬态事件
+  + 截获概率单调 / 主动 Ping 可截获 + 噪声随 HIGH 更响）。
+- **遗留项**（后续 Commit 6-12）：TorpedoSensorAdapter+SeekerReturn、
+  SeekerTrack 捕获/丢失/重搜/制导、诱饵干扰、敌方感知/Doctrine、引信/伤害
+  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）。
 
 ---
 

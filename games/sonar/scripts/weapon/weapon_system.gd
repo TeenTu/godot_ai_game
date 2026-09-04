@@ -27,6 +27,8 @@ const MAX_FIRING_RANGE_M: float = 20000.0
 
 var tubes: Array = []  # [{state: TubeState, torpedo_id}]
 var torpedoes: Array = []  # 在水的 Torpedo
+# Commit 5：声学事件总线（由 World 注入；null=无总线跳过发射瞬态广播）。
+var emission_bus: AcousticEmissionBus = null
 var _next_id: int = 1
 
 
@@ -129,6 +131,22 @@ func fire_program(
 	_next_id += 1
 	var tp := Torpedo.new()
 	tp.launch(tid, program, own_e, own_n, own_depth_m, sim_time)
+	# Commit 5（§9.2）：出管瞬态声源（发射平台位置/深度，一次；不保证被发现）。
+	if emission_bus != null and tp.acoustic_profile != null:
+		var t: Dictionary = tp.acoustic_profile.tube_launch_transient
+		(
+			emission_bus
+			. record(
+				AcousticEmissionEvent.TORPEDO_TUBE_TRANSIENT,
+				tid,
+				sim_time,
+				Vector3(own_e, own_n, own_depth_m),
+				float(t.get("center_frequency_hz", 1500.0)),
+				float(t.get("bandwidth_hz", 8000.0)),
+				float(t.get("sl_db", 168.0)),
+				float(t.get("duration_s", 0.5)),
+			)
+		)
 	tp.event_occurred.connect(
 		func(tid2: String, kind: String, d: Dictionary): weapon_event.emit(tid2, kind, d)
 	)
