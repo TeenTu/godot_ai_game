@@ -110,6 +110,12 @@ var _noise_timer_s: float = 0.0
 # 输出净化 SeekerReturn）与被动采样计时。
 var _sensor_adapter: TorpedoSensorAdapter = null
 var _passive_sample_timer_s: float = 0.0
+# Commit 7（§7）：Seeker 航迹/相位 + 制导。只消费净化 SeekerReturn，绝不接触
+# Truth；_guidance_course_deg >= 0 时按 AUTONOMOUS / ASSISTED-accepted 制导转向，
+# WIRE_ONLY 恒 -1（Seeker 只侦听提示，§7.7）。
+var _seeker: TorpedoSeeker = null
+var _assist_track_id: int = -1  # ASSISTED：玩家 ACCEPT_SEEKER_TRACK 接受的航迹
+var _guidance_course_deg: float = -1.0
 
 
 ## 发射：装入 WeaponProgram 快照并进入 LAUNCHING。from_depth = 发射平台深度。
@@ -137,6 +143,11 @@ func launch(
 	seeker_returns.clear()
 	_passive_sample_timer_s = 0.0
 	_sensor_adapter = null
+	# Commit 7：Seeker 航迹机（阈值 §7.3；捕获前为 SEARCH 相位 → PASSIVE_LISTEN）。
+	_seeker = TorpedoSeeker.new()
+	_seeker.configure(_seeker_cfg())
+	_assist_track_id = -1
+	_guidance_course_deg = -1.0
 	if program != null:
 		wire_link.enabled = program.wire_guidance_enabled
 		guidance_authority = program.guidance_authority
@@ -281,8 +292,23 @@ func return_to_wire_only() -> bool:
 	if not _wire_accepts_command():
 		return false
 	guidance_authority = GuidanceAuthority.WIRE_ONLY
+	_assist_track_id = -1
 	_log_command("RETURN_TO_WIRE_ONLY", {})
 	event_occurred.emit(torpedo_id, "RETURN_WIRE_ONLY", {})
+	return true
+
+
+## 玩家接受 SeekerTrack 候选（§5.4 ACCEPT_SEEKER_TRACK / §7.7 ASSISTED）：
+## 导线连接时接受某条航迹作为制导输入；候选列表来自 seeker 的净化摘要
+## （track_summaries），绝不暴露 Truth。断线后命令被拒。
+func accept_seeker_track(track_id: int) -> bool:
+	if not _wire_accepts_command():
+		return false
+	if _seeker == null or _seeker.track_by_id(track_id) == null:
+		return false
+	_assist_track_id = track_id
+	_log_command("ACCEPT_SEEKER_TRACK", {"track_id": track_id})
+	event_occurred.emit(torpedo_id, "TRACK_ACCEPTED", {"track_id": track_id})
 	return true
 
 
@@ -321,6 +347,7 @@ func _enter_fallback() -> void:
 		return
 	var fb := program.fallback_program
 	_fallback_active = true
+	_assist_track_id = -1  # 断线后 ASSISTED 接受失效（按 fallback 预设授权）
 	if _cmd_course_deg < 0.0:
 		_cmd_course_deg = NavUtils.wrap360(fb.search_center_deg)
 	_command_depth_band_internal(fb.search_depth_band)
@@ -407,6 +434,11 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 	fired_event = fired_event or _advance_fuze()
 	fired_event = fired_event or _advance_active_tx(dt)
 	_advance_vertical(dt)
+	# Commit 7（§7）：采样/回波收集 → Seeker 相位推进 → 制导期望航向；
+	# 之后 _advance_mission 按优先级（制导 > 线控命令 > 搜索扫掠）有限速率转向。
+	_advance_seeker_passive(dt, sim_time)
+	_collect_active_returns(sim_time)
+	_advance_seeker_and_guidance(sim_time)
 
 	# 平移（水平）
 	var v_ms: float = NavUtils.kn_to_ms(speed_kn)
@@ -417,10 +449,6 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 	trail.append({"e": pos_east_m, "n": pos_north_m, "t": sim_time})
 	if trail.size() > 4000:
 		trail.pop_front()
-	# Commit 6（§6.3/§6.4）：被动周期采样 + 主动回波（TOF）到点收集。只把净化
-	# SeekerReturn 记入 seeker_returns；不触发转向/捕获（Commit 7）。
-	_advance_seeker_passive(dt, sim_time)
-	_collect_active_returns(sim_time)
 	return fired_event
 
 
@@ -447,15 +475,23 @@ func _advance_mission(dt: float, sim_time: float) -> bool:
 				_emit_motor_start()
 				return true
 		MissionState.WIRE_RUN, MissionState.SEARCH, MissionState.ATTACK, MissionState.TERMINAL:
-			# 航向按最大转向率逼近命令航向（WIRE_ONLY 下 Seeker 不得擅自转向；
-			# 无命令保持直航）。SEARCH/ATTACK 的具体驱动由 Commit 6/7 Seeker 链
-			# 接入，本批 WIRE_RUN 语义即"严格跟随线控命令/程序航向"。
-			if _cmd_course_deg >= 0.0:
-				var err: float = NavUtils.wrap180(_cmd_course_deg - course_deg)
+			# 期望航向优先级（Commit 7，§7.7）：制导（AUTONOMOUS/ASSISTED 已接受）
+			# > 线控命令 > 搜索扫掠（仅 SEARCH 且无锁定、无命令时）。全部经最大
+			# 转向率逼近——绝无瞬时指向（WPN-SEEK-13）。
+			var desired: float = _guidance_course_deg
+			if desired < 0.0:
+				desired = _cmd_course_deg
+			if desired < 0.0 and mission_state == MissionState.SEARCH:
+				desired = _search_sweep_course(sim_time)
+			if desired >= 0.0:
+				var err: float = NavUtils.wrap180(desired - course_deg)
 				var rate: float = maxf(max_turn_rate_deg_s, 0.1)
 				course_deg = NavUtils.wrap360(course_deg + clampf(err, -rate * dt, rate * dt))
-				if absf(NavUtils.wrap180(_cmd_course_deg - course_deg)) < 0.05:
-					course_deg = NavUtils.wrap360(_cmd_course_deg)
+				if (
+					absf(NavUtils.wrap180(desired - course_deg)) < 0.05
+					and desired == _cmd_course_deg
+				):
+					course_deg = NavUtils.wrap360(desired)
 					_cmd_course_deg = -1.0
 	return false
 
@@ -692,6 +728,148 @@ func _record_seeker_returns(returns: Array) -> void:
 		seeker_returns.append(r)
 	while seeker_returns.size() > 256:
 		seeker_returns.pop_front()
+	# Commit 7：净化 return 同步喂 Seeker 航迹机（关联/更新，§7.2）。
+	if _seeker != null and not returns.is_empty():
+		_seeker.process_returns(returns, _sim_time)
+
+
+## ---- Commit 7（§7）：Seeker 相位推进 + 制导 ----
+
+
+## Seeker/制导共用配置（§7.3 阈值 + §7.7 提前量 + §7.5 扫掠周期；可测试标定）。
+func _seeker_cfg() -> Dictionary:
+	return {
+		"acquire_threshold": 0.65,
+		"stable_track_threshold": 0.80,
+		"drop_threshold": 0.25,
+		"beta_miss": 0.10,
+		"bearing_gate_deg": 12.0,
+		"miss_after_s": 1.2,
+		"reacquire_timeout_s": 120.0,
+		"lead_time_s": 12.0,
+		"max_lead_deg": 25.0,
+		"snake_period_s": 120.0,
+		"circle_period_s": 240.0,
+		"terminal_range_m": 250.0,
+	}
+
+
+func _advance_seeker_and_guidance(sim_time: float) -> void:
+	if _seeker == null or not _in_water():
+		return
+	var res: Dictionary = _seeker.update(sim_time)
+	if bool(res.get("changed", false)):
+		_on_seeker_phase_changed()
+	_advance_guidance(sim_time)
+
+
+## 相位变化 → SeekerState 呈现 + 任务状态联动（§3.2/§3.3）。
+func _on_seeker_phase_changed() -> void:
+	var mapped: int = SeekerState.PASSIVE_LISTEN
+	match _seeker.phase:
+		TorpedoSeeker.Phase.SEARCH:
+			if (
+				active_tx_state == ActiveTxState.PINGING
+				or active_tx_state == ActiveTxState.COOLDOWN
+			):
+				mapped = SeekerState.COMBINED_SEARCH
+			elif _tx_manual_armed:
+				mapped = SeekerState.ACTIVE_SEARCH
+			else:
+				mapped = SeekerState.PASSIVE_LISTEN
+		TorpedoSeeker.Phase.ACQUIRING:
+			mapped = SeekerState.ACQUIRING
+		TorpedoSeeker.Phase.TRACKING:
+			mapped = SeekerState.TRACKING
+		TorpedoSeeker.Phase.LOST:
+			mapped = SeekerState.LOST
+		TorpedoSeeker.Phase.REACQUIRE:
+			mapped = SeekerState.REACQUIRE
+	if mapped != seeker_state:
+		seeker_state = mapped
+		event_occurred.emit(torpedo_id, "SEEKER_PHASE", {"state": seeker_state_name()})
+	# 任务联动：TRACKING → ATTACK；ATTACK 中 LOST → SEARCH（重搜，§7.6）。
+	if (
+		_seeker.phase == TorpedoSeeker.Phase.TRACKING
+		and (mission_state == MissionState.WIRE_RUN or mission_state == MissionState.SEARCH)
+	):
+		mission_state = MissionState.ATTACK
+		event_occurred.emit(torpedo_id, "ATTACK", {"track_id": _seeker.selected_track_id})
+	elif _seeker.phase == TorpedoSeeker.Phase.LOST and mission_state == MissionState.ATTACK:
+		mission_state = MissionState.SEARCH
+		event_occurred.emit(torpedo_id, "SEARCH", {"reason": "SEEKER_LOST"})
+
+
+## 制导期望航向（§7.7）：WIRE_ONLY 恒不接管；AUTONOMOUS 跟随 seeker 选中的
+## 航迹；ASSISTED 只在玩家 ACCEPT_SEEKER_TRACK 接受且航迹仍达捕获阈值时跟随。
+## 期望航向写 _guidance_course_deg，实际转向仍受 max_turn_rate 限制。
+func _advance_guidance(sim_time: float) -> void:
+	_guidance_course_deg = -1.0
+	var autonomy: bool = guidance_authority == GuidanceAuthority.AUTONOMOUS
+	var assisted: bool = guidance_authority == GuidanceAuthority.ASSISTED and _assist_track_id >= 0
+	if not (autonomy or assisted):
+		return
+	var cfg := _seeker_cfg()
+	var track: SeekerTrack = null
+	if autonomy:
+		if (
+			_seeker.phase
+			in [
+				TorpedoSeeker.Phase.ACQUIRING,
+				TorpedoSeeker.Phase.TRACKING,
+				TorpedoSeeker.Phase.REACQUIRE
+			]
+		):
+			track = _seeker.selected_track()
+	else:
+		track = _seeker.track_by_id(_assist_track_id)
+		if track != null and track.lock_quality < float(cfg.get("acquire_threshold", 0.65)):
+			track = null
+	if track != null:
+		_guidance_course_deg = TorpedoGuidance.pursuit_course_deg(track, cfg)
+		# TERMINAL：主动回波测距进入近程（距离来自回波测量，绝不读 Truth）。
+		if (
+			mission_state == MissionState.ATTACK
+			and _seeker.phase == TorpedoSeeker.Phase.TRACKING
+			and track.range_estimate_m >= 0.0
+			and track.range_estimate_m <= float(cfg.get("terminal_range_m", 250.0))
+		):
+			mission_state = MissionState.TERMINAL
+			event_occurred.emit(torpedo_id, "TERMINAL", {"range_est_m": track.range_estimate_m})
+		return
+	# LOST/REACQUIRE（§7.6）：围绕最后预测方位扩大扇区扫掠重搜。
+	if _seeker.phase in [TorpedoSeeker.Phase.LOST, TorpedoSeeker.Phase.REACQUIRE]:
+		var prog := _search_program()
+		var half: float = prog.search_half_angle_deg if prog != null else 60.0
+		var sec: Dictionary = _seeker.reacquire_sector(half)
+		_guidance_course_deg = TorpedoGuidance.search_course_deg(
+			"SNAKE",
+			float(sec.get("center_deg", 0.0)),
+			float(sec.get("half_angle_deg", 90.0)),
+			sim_time,
+			cfg
+		)
+
+
+## 搜索扫掠（§7.5）：SEARCH 且无制导目标、无玩家命令时按程序扇区扫掠
+## （SNAKE 三角波 / CIRCLE 旋转），转向速率仍受 max_turn_rate 约束。
+func _search_sweep_course(sim_time: float) -> float:
+	var prog := _search_program()
+	if prog == null:
+		return -1.0
+	var pattern: String = (
+		"SNAKE" if prog.search_pattern == WeaponProgram.SearchPattern.SNAKE else "CIRCLE"
+	)
+	return TorpedoGuidance.search_course_deg(
+		pattern, prog.search_center_deg, prog.search_half_angle_deg, sim_time, _seeker_cfg()
+	)
+
+
+## 搜索参数来源：fallback 激活后按 fallback（§5.5），否则按发射程序。
+func _search_program() -> WeaponProgram:
+	if _fallback_active and program != null and program.fallback_program != null:
+		return program.fallback_program
+	return program
 
 
 func _in_water() -> bool:

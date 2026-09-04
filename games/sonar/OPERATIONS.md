@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-6 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-7 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -271,6 +271,7 @@ godot --headless --path games/sonar --script res://tools/depth_layer_test.gd    
 godot --headless --path games/sonar --script res://tools/wire_guidance_test.gd      # WPN-WIRE-01..04
 godot --headless --path games/sonar --script res://tools/torpedo_acoustic_test.gd    # WPN-ACOU-01..03
 godot --headless --path games/sonar --script res://tools/torpedo_seeker_test.gd      # WPN-SEEK-01/02/04/05
+godot --headless --path games/sonar --script res://tools/torpedo_track_test.gd       # WPN-SEEK-06..13
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -329,7 +330,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 18 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 19 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -345,7 +346,10 @@ Commit5 声学画像模式表/燃料折算 + EmissionBus 出管/动力启动/运
 Ping 事件与截获概率，WPN-ACOU-01..03）、`torpedo_seeker_test`（S1-07 Commit6
 TorpedoSensorAdapter+SeekerReturn：被动默认 ON 收到 return / 被动无 range 且
 净化无 Truth / miss 无 return / 跨层 SE 降 / 高速自噪降被动 SE / 主动 TOF
-tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）。
+tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）、`torpedo_track_test`
+（S1-07 Commit7 SeekerTrack 航迹/捕获滞回/miss 丢失/重搜不跟 Truth/重捕获/
+多目标 score 竞争/净化 API/有限转向率制导 + WIRE_ONLY 不擅自转向 + SEARCH
+扇区扫掠，WPN-SEEK-06..13）。
 
 ### S1-00 信息链热修状态（2026-09）
 
