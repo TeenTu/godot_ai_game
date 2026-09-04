@@ -235,7 +235,7 @@ godot --path games/sonar --script res://tools/ui_regression.gd
 → 微调 Trial 参数 → Enter Solution（火控解）→ Show Truth 对照误差
 ```
 
-## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-10 + S1-07A UI 已合入，Seeker 重构中）
+## 3.5 阶段四：武器与攻击（S1-07 状态：Commit 0-11 + S1-07A UI 已合入，Seeker 重构中）
 
 🚀 Fire 只要有装填管即可点（S1-07 §5.2，无解不是发射许可）；main_ui 按
 上下文自动选模式：
@@ -275,6 +275,7 @@ godot --headless --path games/sonar --script res://tools/torpedo_track_test.gd  
 godot --headless --path games/sonar --script res://tools/decoy_test.gd               # CM-01..05 + 谱线分类
 godot --headless --path games/sonar --script res://tools/enemy_ai_test.gd            # AI-01..09
 godot --headless --path games/sonar --script res://tools/fuze_evidence_test.gd       # FUZE-01..07
+godot --headless --path games/sonar --script res://tools/weapon_ui_test.gd           # UIW-01..06
 ```
 
 UI 集成：`scripts/ui/weapon_panel.gd` 自管按钮 / Fire 模式提示 / Tubes 标签 /
@@ -331,6 +332,15 @@ TORPEDO_ACTIVE_PING/DECOY_DEPLOYED/DETONATION_HEARD；己方武器事件为本�
 damaged）+ 最近通过距离台账；普通 UI 只见 `world.player_evidence` 净化证据
 队列，命中确认（CONFIRMED_KILL）只经 `_debrief_summary()` 调试通道（Debrief）。
 
+Commit 11 武器 UI（§11）：右侧面板新增 **In-Water Weapons**（每枚鱼雷正交状态
++ 线控按钮组，断线后按钮禁用并给原因）、**Countermeasures**（MOBILE/JAMMER
+发射 + 库存/冷却/活动数）、**Weapon Alerts**（净化告警流：POSSIBLE_LAUNCH_
+TRANSIENT / POSSIBLE_TORPEDO / TORPEDO_ACTIVE_PING / DECOY_DEPLOYED /
+DETONATION_HEARD / PROBABLE_HIT / PROBABLE_KILL，含时间/方位/置信度）、海图
+左侧 **深度条**（OWN/TK/DCY 实心=实际 空心=命令，形状+文字双编码）。海图叠加：
+线导虚线、搜索扇区边界、Seeker FOV、选中航迹不确定方位线——全部来自己方武器
+状态/净化摘要，绝不画 Truth 目标。武器日志不再显示任何 target_id。
+
 ---
 
 ## 4. 常见问题
@@ -360,7 +370,7 @@ while read -r t; do
   godot --headless --path games/sonar --script "res://tools/${t}.gd" || exit 1
 done < games/sonar/tools/ci_tests.txt
 ```
-清单覆盖 22 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
+清单覆盖 23 项：`play_test`（TMA 验收 7 项：两腿精确恢复 / 单腿不可观测 /
 0-360 跨越 / 圆弧机动 / 目标机动检测 / STALE 时限 / Truth 隔离）、`stage1_test`、
 `stage2_test`、`operator_test`、`dynamics_test`、`towed_test`（A/B 分支消歧）、
 `ping_test`、`ping_tma_integration_test`、`weapon_test`、
@@ -387,7 +397,9 @@ tau=2R/c 与测距 / 误报独立，WPN-SEEK-01/02/04/05）、`torpedo_track_tes
 AI 主动 Ping 同样暴露、规避命令值限速率、World 集成，AI-01..09）、`fuze_evidence_test`（S1-07
 Commit10 引信：SAFE 双保险不起爆/直航命中爆炸/Truth 伤害/Debrief 台账/战果
 层级纯函数/敌方鱼雷命中本艇→净化 DETONATION_HEARD/净化扫描/未命中零台账，
-FUZE-01..07）。
+FUZE-01..07）、`weapon_ui_test`（S1-07 Commit11 UI：在水控制台状态正交呈现/
+断线禁用拒绝原因/诱饵库存禁用/告警 PROBABLE_KILL 标注且绝无 CONFIRMED 与
+target_id/深度条/日志净化，UIW-01..06）。
 
 ### S1-00 信息链热修状态（2026-09）
 
