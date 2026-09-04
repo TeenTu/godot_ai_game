@@ -39,7 +39,7 @@ static func make(
 	dur_s: float,
 	extra: Dictionary = {}
 ) -> Dictionary:
-	return {
+	var ev := {
 		"event_id": event_id,
 		# S1-04C 契约键名（R22 依赖）：emitter_internal_ref（§9.1 概念同名）。
 		"emitter_internal_ref": emitter_ref,
@@ -55,3 +55,8 @@ static func make(
 		"directivity": extra.get("directivity", Vector2.ZERO),
 		"debug_truth_only": bool(extra.get("debug_truth_only", false)),
 	}
+	# 其余 extra 键透传（如 tonal_lines，§6.1 分类特征来源）；固定键优先。
+	for k in extra:
+		if not ev.has(k):
+			ev[k] = extra[k]
+	return ev

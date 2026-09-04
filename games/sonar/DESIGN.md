@@ -38,7 +38,7 @@
 
 ---
 
-## 0.6 S1-07 武器 Seeker 重做（Commit 0-7 + S1-07A UI 已合入，2026-09）
+## 0.6 S1-07 武器 Seeker 重做（Commit 0-8 + S1-07A UI 已合入，2026-09）
 
 需求文档：腾讯文档 DZk1OR1JqV0d1RWhN《S1-07 武器 Seeker 重做需求（AI Coding 版）》。
 首批任务包（§17）= **Commit 0～2**；本批追加 **S1-07A UI（本艇深度控制）+
@@ -131,8 +131,23 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   ASSISTED 经 ACCEPT_SEEKER_TRACK 接受候选。`torpedo_track_test` WPN-SEEK-
   06..13（单次不锁/连续捕获/miss 丢失/重搜不跟 Truth/重捕获/score 竞争与
   翻转/净化 API/限转向率）+ WIRE_ONLY 不转 + SEARCH 扇区扫掠。
-- **遗留项**（后续 Commit 8-12）：诱饵干扰、敌方感知/Doctrine、引信/伤害
-  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）。
+- **Commit 8（§8，诱饵与干扰 + §6.1 谱线细节）**：新增
+  `scripts/countermeasure/`（decoy_program/decoy/countermeasure_system）。
+  Decoy 继承 TruthEntity 同一 AcousticContact 接口进 TorpedoSensorAdapter
+  同一条声学采样链——Seeker 绝不读 is_decoy/类型（CM-04），效果全部来自
+  SE/谱相似度/运动一致性/层关系/continuity 的 score 竞争（§8.4）；
+  MOBILE_DECOY 稳定谱+真实机动模拟目标，JAMMER_CONFUSER 宽带高噪+运行时
+  抖动假峰（谱一致性被稀释）；发射器有限库存/冷却/类型支持（§8.1/§8.5），
+  激活延时前静默、激活记 DECOY_ACTIVATION 事件（§9.1）、有限寿命到期移出
+  采样集；World 维护 targets+活动诱饵合成采样集（不污染玩家测量循环）。
+  谱线细节：TorpedoAcousticProfile 补 tonal_lines_by_mode（QUIET/CRUISE/
+  HIGH 各异谱线，运行噪声事件透传）；SeekerTrack 补 classification_match
+  （return 谱线与锚点谱相似度 EMA）并以 w_c 进 score——稳定谱高、抖动假峰
+  被稀释。`decoy_test` CM-01..05（发射/库存冷却寿命/同链采样/无类型泄露/
+  固定 seed 拉锁复现）+ World 集成 + SPEC 谱线/分类。
+- **遗留项**（后续 Commit 9-12）：敌方感知/Doctrine、引信/伤害
+  净化反馈、完整深度条/告警/在水控制 UI（Commit 11）、集成任务与 CI 门禁
+  （Commit 12）。
 
 ---
 

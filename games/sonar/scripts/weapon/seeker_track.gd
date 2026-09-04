@@ -30,7 +30,10 @@ var mean_signal_excess_db: float = -999.0
 var track_quality: float = 0.0
 var lock_quality: float = 0.0
 var depth_relation: String = ""
+var classification_match: float = 0.0  # 谱一致性 EMA（1=与首次捕获谱稳定一致）
 var source_history: Array = []  # SeekerReturn.return_id 时间线（封顶）
+
+var _spectral_ref: Array = []  # 首次捕获的谱线频率基准（分类锚点）
 
 
 static func create() -> SeekerTrack:
@@ -74,6 +77,21 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 		else lerp(mean_signal_excess_db, r.signal_excess_db, 0.35)
 	)
 	depth_relation = str(r.depth_relation)
+
+	# 分类一致性（Commit 8，§7.4 w_c / §8.4）：return 谱线与锚点谱的相似度
+	# EMA。稳定谱（真实目标/移动诱饵模拟谱）→ 高；抖动假峰（JAMMER）→ 低。
+	var tonals: Array = []
+	if r.spectral_features != null and r.spectral_features.has("tonal_hz"):
+		tonals = r.spectral_features["tonal_hz"]
+	var freqs: Array = []
+	for tl in tonals:
+		freqs.append(float(tl.get("freq_hz", 0.0)))
+	if _spectral_ref.is_empty() and not freqs.is_empty():
+		_spectral_ref = freqs
+		classification_match = 1.0
+	elif not freqs.is_empty() and not _spectral_ref.is_empty():
+		var sim: float = tonal_similarity(_spectral_ref, freqs, 25.0)
+		classification_match = lerp(classification_match, sim, 0.4)
 
 	consecutive_hits += 1
 	consecutive_misses = 0
@@ -127,12 +145,34 @@ func normalized_range_innovation(r: SeekerReturn) -> float:
 	return clampf(absf(r.range_m - range_estimate_m) / sigma, 0.0, 1.0)
 
 
+## 两个谱线频率集合的相似度（0..1）：双向命中率均值，tol_hz 内视为同一条。
+static func tonal_similarity(ref_freqs: Array, got_freqs: Array, tol_hz: float) -> float:
+	if ref_freqs.is_empty() or got_freqs.is_empty():
+		return 0.0
+	var matched_ref: int = 0
+	for f in ref_freqs:
+		for g in got_freqs:
+			if absf(float(f) - float(g)) <= tol_hz:
+				matched_ref += 1
+				break
+	var matched_got: int = 0
+	for g in got_freqs:
+		for f in ref_freqs:
+			if absf(float(g) - float(f)) <= tol_hz:
+				matched_got += 1
+				break
+	var pr: float = float(matched_ref) / float(ref_freqs.size())
+	var rc: float = float(matched_got) / float(got_freqs.size())
+	return 0.5 * (pr + rc)
+
+
 ## 候选评分（§7.4）：score = w_q*q + w_se*SE + w_c*分类 + w_k*运动一致 - w_i*创新
-## + 连续性 bonus。分类（w_c）本批恒 0（分类概率 Commit 8+ 随诱饵一起完善）。
-## 真实目标/诱饵/误报同公式竞争——不选最近、不选最响、不读类型。
+## + 连续性 bonus。真实目标、诱饵、误报同公式竞争——不选最近、不选最响、
+## 不读类型；分类项只看谱一致性（稳定谱高、抖动假峰被稀释，§8.4）。
 func score(cfg: Dictionary, selected: bool) -> float:
 	var w_q: float = float(cfg.get("w_quality", 1.0))
 	var w_se: float = float(cfg.get("w_se", 0.5))
+	var w_c: float = float(cfg.get("w_classification", 0.5))
 	var w_k: float = float(cfg.get("w_kinematic", 0.25))
 	var w_i: float = float(cfg.get("w_innovation", 0.5))
 	var bonus: float = float(cfg.get("continuity_bonus", 0.15))
@@ -150,7 +190,14 @@ func score(cfg: Dictionary, selected: bool) -> float:
 	# 创新惩罚：方位方差大 → 关联不稳。
 	var innov: float = clampf(bearing_var_deg2 / maxf(innov_ref_var, 1.0), 0.0, 1.0)
 	var continuity: float = bonus if (selected and lock_quality >= 0.5) else 0.0
-	return w_q * track_quality + w_se * se_term + w_k * kine - w_i * innov + continuity
+	return (
+		w_q * track_quality
+		+ w_se * se_term
+		+ w_c * classification_match
+		+ w_k * kine
+		- w_i * innov
+		+ continuity
+	)
 
 
 ## 净化摘要（供 WIRE_TELEMETRY 回传母艇，§5.4；绝不含 Truth）。
@@ -163,6 +210,7 @@ func to_summary() -> Dictionary:
 		"lock_quality": snappedf(lock_quality, 0.01),
 		"track_quality": snappedf(track_quality, 0.01),
 		"mean_se_db": snappedf(mean_signal_excess_db, 0.1),
+		"classification_match": snappedf(classification_match, 0.01),
 		"depth_relation": depth_relation,
 		"hits": total_hits,
 		"misses": total_misses,

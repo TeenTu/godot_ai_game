@@ -644,6 +644,8 @@ func _advance_running_noise(dt: float) -> void:
 			bw,
 			acoustic_profile.own_noise_sl_db(sm),
 			RUNNING_NOISE_CADENCE_S,
+			# Commit 8（§6.1）：窄带谱线随模式（分类/频谱相似度竞争的特征来源）。
+			{"tonal_lines": acoustic_profile.tonal_lines(sm)},
 		)
 	)
 
