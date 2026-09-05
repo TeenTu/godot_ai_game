@@ -76,6 +76,9 @@ func _ready() -> void:
 	# P0-08：场景解析（默认旧被动教程；SONAR_SCENARIO 可选 s1_combat）。
 	_scenario_name = UiContract.resolve_scenario_name()
 	var scenario: Dictionary = ConfigLoader.load_scenario(_scenario_name)
+	var seed_ov: int = UiContract.resolve_seed_override()
+	if seed_ov >= 0:
+		scenario["seed"] = seed_ov  # REQ-AI-01：StartMenu 指定 seed 优先于 JSON
 	world.load_scenario(scenario)
 	world.set_time_scale(_time_scale)
 
@@ -131,9 +134,6 @@ func _ready() -> void:
 
 func _on_self_resized() -> void:
 	pass
-
-
-# ---- UI 构建 ----
 
 
 func _build_ui() -> void:
@@ -235,6 +235,10 @@ func _build_panel() -> void:
 	_op_panel.active_apply_requested.connect(func(): _ping_ctrl.apply_pending())
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
+	# S1-05：三态自动化最小控制（面板持有 AutomationController，自驱动 _process）。
+	var auto_panel := AutomationPanelUI.new()
+	auto_panel.bind(tracker, _auto_refit_track)
+	_section_body(_make_section("Automation")).add_child(auto_panel)
 
 	# 关键信息区（验收：1280x720 无需滚动可见）
 	_lbl_status = Label.new()
@@ -451,9 +455,6 @@ func _add_spin(title: String, min_v: float, max_v: float, step: float, val: floa
 	return sp
 
 
-# ---- 仿真推进 ----
-
-
 func _process(delta: float) -> void:
 	if world == null:
 		return
@@ -506,9 +507,6 @@ func _feed_new_measurements() -> void:
 					tracker.mark(m, "S")
 		# Operator 模式：测量已在 Mark/Autocrew 时喂 Tracker，这里只推游标。
 		_processed_meas += 1
-
-
-# ---- 数据重建（脏标记触发） ----
 
 
 ## 重建 LOB / meas_index / BT 点列 / 残差数组。
@@ -627,9 +625,6 @@ func _selected_track() -> Track:
 	return null
 
 
-# ---- 轻量每帧更新（不重建数组） ----
-
-
 func _update_displays_light() -> void:
 	var own: TruthEntity = world.world["own"]
 	_chart.now_time = world.sim_time
@@ -692,9 +687,6 @@ func _color_for_track(id: String) -> Color:
 	var c: Color = palette[_track_colors.size() % palette.size()]
 	_track_colors[id] = c
 	return c
-
-
-# ---- 面板 ----
 
 
 func _update_panel() -> void:
@@ -791,9 +783,6 @@ func _on_contact_selected(track_id: String) -> void:
 	_update_status("Selected " + track_id + " — Auto Fit will use this contact")
 
 
-# ---- 交互回调 ----
-
-
 func _on_layer_toggle(on: bool, key: String) -> void:
 	_chart.layers[key] = on
 	if key == "truth":
@@ -850,8 +839,7 @@ func _on_fit_tma() -> void:
 	if sel == null:
 		_update_status("No contact selected — click a contact first")
 		return
-	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
-	# 不再用原始 Measurement 行数——否则拖曳 2 次点击(4 行)会被误放行。
+	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），不再用原始 Measurement 行数。
 	if sel.evidence_count() < 4:
 		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
 		return
@@ -907,6 +895,12 @@ func _on_fit_tma() -> void:
 			]
 		)
 	)
+
+
+## S1-05：FULL_AUTO REFIT 动作执行（选中航迹并走既有 Auto Fit 链）。
+func _auto_refit_track(tid: String) -> void:
+	selected_track_id = tid
+	_on_fit_tma()
 
 
 func _on_enter_solution() -> void:
@@ -993,17 +987,16 @@ func _update_status(msg: String) -> void:
 func _op_step() -> void:
 	if op == null or _op_panel == null:
 		return
-	# P0-06：UI 路径同一声场——targets + 统一声场注册表（双方鱼雷影子/诱饵），
-	# 经同一 OperatorSonar 概率采样出峰/测量候选/告警派生。
+	# P0-06：UI 路径同一声场——targets + 统一声场注册表（双方鱼雷影子/诱饵）， 经同一 OperatorSonar 概率采样出峰/测量候选/告警派生。
 	var scene: Array = world._acoustic_scene_emitters()
 	var scene_acs: Dictionary = world.world["target_acs"].duplicate()
 	scene_acs.merge(world._acoustic_scene_acs())
-	op.update(world.sim_time, world.world["targets"] + scene, scene_acs)
+	# REQ-AC-01：按仿真节拍追帧（倍速不跳行）；UI 切换不改变物理 RNG 消耗。
+	op.catch_up_rows(world.sim_time, world.world["targets"] + scene, scene_acs)
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个
-		# 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
+		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
 		var auto_ms: Array = op.autocrew_step(world.sim_time)
 		var i2: int = 0
 		while i2 < auto_ms.size():
@@ -1028,9 +1021,6 @@ func _op_step() -> void:
 			_dirty = true
 			_update_status("Autocrew marked a new detection")
 	_op_panel.refresh(op)
-
-
-# ---- TOWED 拖曳阵：部署/回收 + 状态显示 ----
 
 
 func _towed_ref() -> TowedArray:
@@ -1095,9 +1085,6 @@ func _refresh_towed_status() -> void:
 	_op_panel.update_towed_controls(t)
 
 
-# ---- 主动声呐 Ping：薄接线，逻辑在 ActivePingController ----
-
-
 func _on_ping_requested() -> void:
 	if _ping_ctrl == null:
 		return
@@ -1152,8 +1139,7 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
-## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）；
-## Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
+## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）； Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
 	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
@@ -1170,8 +1156,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 			_update_status("Mark ignored: inconsistent with %s" % selected_track_id)
 			return
 	else:
-		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中；
-		# 无匹配才由本次 Mark 新建 Contact 并选中。
+		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中； 无匹配才由本次 Mark 新建 Contact 并选中。
 		t = tracker.feed_evidence_group(group, "", 8.0)
 		if t == null:
 			t = tracker.mark(pm, "M")

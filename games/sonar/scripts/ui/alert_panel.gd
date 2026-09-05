@@ -52,6 +52,10 @@ func sync() -> void:
 	var track_brgs: Array = []
 	if _get_track_bearings.is_valid():
 		track_brgs = _get_track_bearings.call()
+	# REQ-UI-04 告警分组 + REQ-UI-03 战果分级汇总：
+	#   THREAT（来袭）/ CM（反制）/ BDA（战果）/ INFO，行首缀组标签；
+	#   BDA 有分级时顶部先给一行汇总（PROBABLE_HIT/KILL 计数）。
+	var bda_counts: Dictionary = {}
 	var lines: Array = []
 	var start: int = maxi(evs.size() - MAX_ROWS, 0)
 	for i in range(evs.size() - 1, start - 1, -1):
@@ -65,7 +69,10 @@ func sync() -> void:
 			var level: String = EmissionSanitizer.classify_detonation(e, track_brgs, true)
 			if level != "":
 				tag = level
-		var line: String = "T+%ds %s" % [int(float(e.get("timestamp", 0.0))), tag]
+		var group: String = _group_for(tag)
+		if group == "BDA":
+			bda_counts[tag] = int(bda_counts.get(tag, 0)) + 1
+		var line: String = "%s T+%ds %s" % [group, int(float(e.get("timestamp", 0.0))), tag]
 		if e.has("bearing_deg"):
 			line += " brg %03.0f°" % float(e["bearing_deg"])
 		line += " conf %d%%" % int(100.0 * float(e.get("confidence", 0.0)))
@@ -73,4 +80,22 @@ func sync() -> void:
 		if int(e.get("evidence_id", -1)) == highlight_evidence_id:
 			line = "> " + line + " <"
 		lines.append(line)
+	if not bda_counts.is_empty():
+		var parts: Array = []
+		for k in bda_counts:
+			parts.append("%d×%s" % [int(bda_counts[k]), k])
+		lines.push_front("BDA summary: " + " ".join(parts))
 	_lbl.text = "\n".join(lines)
+
+
+## 告警分组（REQ-UI-04）：威胁 / 反制 / 战果 / 其他。
+func _group_for(tag: String) -> String:
+	if tag.begins_with("PROBABLE_"):
+		return "BDA"
+	if tag.contains("TORPEDO") or tag.begins_with("POSSIBLE"):
+		return "THREAT"
+	if tag.contains("DECOY"):
+		return "CM"
+	if tag.contains("DETONATION"):
+		return "BDA"
+	return "INFO"

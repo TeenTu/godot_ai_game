@@ -11,6 +11,11 @@ extends TruthEntity
 ##   JAMMER_CONFUSER：宽带高噪抬噪声底 + 运行时抖动的假峰谱线（稀释/混淆，
 ##     不稳定谱 → 航迹 classification_match 低 → score 竞争中被稀释）。
 
+## REQ-CM-01：全局唯一序号，存于主循环 meta（跨 World 实例单调递增）。不用
+## static var——Godot 4.5 Windows 退出阶段 static 清理会随机段错误（曾是
+## decoy_test 关机 crash 的根因）；主循环 meta 随 SceneTree 释放，无此问题。
+const _SERIAL_META := "_decoy_serial_next"
+
 var decoy_type: String = DecoyProgram.TYPE_MOBILE
 var activation_delay_s: float = 2.0
 var lifetime_s: float = 120.0
@@ -25,11 +30,29 @@ var _jitter_rng: RandomNumberGenerator = null
 var _base_tonals: Array = []  # 出厂谱线（JAMMER 抖动的基准）
 
 
-## 部署：从发射平台位置/深度出发，按程序设定航向/速度/深度带。
+## 全局自增序号（REQ-CM-01）。经 Engine.get_main_loop() meta 持久化；无主循环
+## （纯脚本静态上下文）时退化为 0，调用方仍可显式指定 id_str。
+func _next_serial() -> int:
+	var ml := Engine.get_main_loop()
+	if ml == null:
+		return 0
+	var n: int = int(ml.get_meta(_SERIAL_META, 0)) + 1
+	ml.set_meta(_SERIAL_META, n)
+	return n
+
+
+## 部署：从发射平台当前实际位置/深度出发（REQ-CM-02：不瞬移到层带 hold），
+## 按程序设定航向/速度/命令深度（限速率爬降由 TruthEntity.advance 执行）。
 func deploy(
-	prog: DecoyProgram, from: TruthEntity, initial_depth_m: float, commanded_depth_m: float
+	prog: DecoyProgram,
+	from: TruthEntity,
+	initial_depth_m: float,
+	z_cmd_m: float,
+	id_str: String = ""
 ) -> void:
-	id = "DCY-%s" % from.id
+	# REQ-CM-01：唯一 ID——外部未指定时用全局序号；旧 "DCY-%s" % from.id 会
+	# 让同平台第二枚覆盖第一枚的画像（_acoustic_scene_acs 按 ID 建表）。
+	id = id_str if id_str != "" else "DCY-%d" % _next_serial()
 	launched_from_id = from.id
 	decoy_type = prog.decoy_type
 	activation_delay_s = prog.activation_delay_s
@@ -39,7 +62,7 @@ func deploy(
 	position_east_m = from.position_east_m
 	position_north_m = from.position_north_m
 	depth_m = initial_depth_m
-	commanded_depth_m = commanded_depth_m
+	commanded_depth_m = z_cmd_m  # REQ-CM-02：修复参数遮蔽（原句等于自赋值）
 	max_vertical_speed_m_s = 2.0
 	course_deg = prog.launch_bearing_deg
 	commanded_course_deg = (
@@ -80,7 +103,8 @@ func step(dt: float) -> bool:
 	return false
 
 
-## JAMMER：每次采样间隔对假峰频率做小幅随机游走 → 航迹谱一致性被稀释（§8.2）。
+## JAMMER：每次声学采样推进对假峰频率做小幅随机游走 → 航迹谱一致性被稀释
+## （§8.2）。抖动由固定 dt 的仿真 tick 驱动（不随显示帧率变化，§2.3）。
 func _jitter_tonals() -> void:
 	var ac: RefCounted = signature_ac
 	if ac == null or _base_tonals.is_empty():

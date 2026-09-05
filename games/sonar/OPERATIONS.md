@@ -370,6 +370,20 @@ Commit 12 集成与 CI 门禁（§13/§14.7）：`s107_integrated_test` 三条�
 
 ---
 
+## 5.5 阶段一收尾新增测试（2026-09-06）
+
+- `cm2_test`（P0-A 诱饵生命周期/画像/寻的资格，CM-1..4）
+- `ac2_test`（P0-B 统一声学与频谱，AC-1..6）
+- `dep_test`（P0-C 深度信息与水面攻击，DEP-1..2）
+- `ai2_test`（P0-D 场景入口与敌方反击：seed 复现/入口覆写/来源过滤/诱饵
+  中和/延迟反击/拒发归还/击沉取消/双向换层/教学 vs 战斗，AI-1..4）
+- `au_test`（S1-05 三态自动化：MANUAL 无动作/ASSISTED 提案去重/FULL_AUTO
+  +ROE/槽位计龄释放/Take Control 一 tick 生效+审计，AU-1..5）
+- `ui2_test`（S1-01/S1-08：FIT_MODES 索引修复/JAMMER 频带提示/告警分组+
+  BDA 汇总/StartMenu 教程，UI-1）
+
+全部登记于 `tools/ci_tests.txt`（当前 39 项，主门禁口径）。
+
 ## 5. 自动化验证
 
 仓库自带无头测试。**主门禁清单**见 `tools/ci_tests.txt`（S1-00-REQ-06），

@@ -4,6 +4,9 @@ extends RefCounted
 ## 提供传播损失 TL 与有效噪声 N_eff（多源线性合成）的计算。
 ## 一切系数均可从 JSON 配置，不写死在业务代码。
 
+## 波束外/旁瓣衰减（dB）：波束内 0，波束外按旁瓣衰减参与（不无差别全向）。
+const BEAM_SIDELOBE_LOSS_DB := 18.0
+
 var environment_type: String = "shallow"
 var sea_state: int = 2
 
@@ -22,6 +25,15 @@ var tl_environment_loss: float = 0.0  # L_environment：跃变层/海底/阴影�
 # S1-07A（Commit 2）：双层伪三维深度层模型。null/disabled = 旧二维场景，
 # cross_layer_extra_db 恒 0（零行为变化）。
 var depth_model: RefCounted = null  # DepthLayerModel
+
+# REQ-AC-03：活动宽带干扰源（JAMMER）。由 World 每 tick 从激活且未过期的
+# JAMMER 诱饵同步。元素口径：
+#   {e, n, z, sl_band_db, band_min_hz, band_max_hz}
+#   sl_band_db = 频带内总声级（固定总功率）；接收端单频贡献 =
+#   sl_band_db - 10log10(bandwidth) + 10log10(B_eff)（固定总功率加宽容积不变）。
+var interferers: Array = []
+## 接收端分析带宽 B_eff（Hz）：PSD→带级换算口径（可配置）。
+var analysis_bandwidth_hz: float = 100.0
 
 
 ## 传播损失 TL = K*log10(max(r,1)) + alpha(f)*r_km + L_environment
@@ -109,6 +121,101 @@ func effective_noise_db_with_self(freq_hz: float, self_noise_db: float) -> float
 	return 10.0 * log(sum_linear) / log(10.0)
 
 
+## REQ-AC-03：单干扰源在接收端的带内贡献（dB）。按传播（TL+跨层）与
+## 波束响应（波束内 0 / 波束外旁瓣衰减）计算；频带外不贡献。
+static func interferer_noise_db(
+	itf: Dictionary,
+	freq_hz: float,
+	env: RefCounted,
+	rx_e: float,
+	rx_n: float,
+	rx_z: float,
+	rx_course_deg: float = -1.0,
+	beam_half_deg: float = 180.0,
+) -> float:
+	var f_min: float = float(itf.get("band_min_hz", 0.0))
+	var f_max: float = float(itf.get("band_max_hz", 0.0))
+	if f_max > f_min and (freq_hz < f_min or freq_hz > f_max):
+		return -INF  # 频带外（按响应不贡献；非宽带全部表示）
+	var e: float = float(itf.get("e", 0.0))
+	var n: float = float(itf.get("n", 0.0))
+	var z: float = float(itf.get("z", 0.0))
+	var r: float = sqrt((e - rx_e) * (e - rx_e) + (n - rx_n) * (n - rx_n))
+	var j: float = float(itf.get("sl_band_db", 0.0))
+	var bw: float = f_max - f_min
+	if bw > 1.0:
+		# 固定总功率→PSD→接收 B_eff 带级：带宽信息不丢，总能量不凭空增加。
+		j -= 10.0 * log(bw) / log(10.0)
+		j += 10.0 * log(maxf(env.analysis_bandwidth_hz, 1.0)) / log(10.0)
+	j -= env.propagation_loss_layer(r, freq_hz, z, rx_z)
+	# 波束响应：已知接收航向时，波束外按旁瓣衰减（不能把近旁 JAMMER
+	# 无差别加到所有方位）。
+	if rx_course_deg >= 0.0 and beam_half_deg < 180.0:
+		var brg: float = rad_to_deg(atan2(e - rx_e, n - rx_n))
+		var rel: float = absf(NavUtils.wrap180(brg - rx_course_deg))
+		if rel > beam_half_deg:
+			j -= BEAM_SIDELOBE_LOSS_DB
+	return j
+
+
+## 两个 dB 级线性功率合成（多源相加，绝不用 max() 冒充）。
+static func combine_db(a_db: float, b_db: float) -> float:
+	if a_db <= -INF:
+		return b_db
+	if b_db <= -INF:
+		return a_db
+	return 10.0 * log(pow(10.0, a_db / 10.0) + pow(10.0, b_db / 10.0)) / log(10.0)
+
+
+## REQ-AC-03：全部干扰源的合成贡献（dB，线性功率合成；无干扰源返回 -INF）。
+## 接收端按位置 + 波束响应（rx_course<0 = 全向）独立计算。
+func interference_noise_db(
+	freq_hz: float,
+	rx_e: float,
+	rx_n: float,
+	rx_z: float,
+	rx_course_deg: float = -1.0,
+	beam_half_deg: float = 180.0,
+) -> float:
+	if interferers.is_empty():
+		return -INF
+	var sum_linear: float = 0.0
+	for itf in interferers:
+		var j: float = interferer_noise_db(
+			itf, freq_hz, self, rx_e, rx_n, rx_z, rx_course_deg, beam_half_deg
+		)
+		if j > -INF:
+			sum_linear += pow(10.0, j / 10.0)
+	if sum_linear <= 0.0:
+		return -INF
+	return 10.0 * log(sum_linear) / log(10.0)
+
+
+## REQ-AC-03：统一 N_eff（环境 + 自噪/本艇自噪 + 全部干扰源线性功率合成）。
+## 无干扰源时与 effective_noise_db_with_self 完全同值（旧场景零行为变化）。
+## 混合声场一律线性功率合成（绝不用 max() 冒充多源相加）。
+func effective_noise_db_at(
+	freq_hz: float,
+	self_noise_db: float,
+	own_speed_kn: float,
+	rx_e: float,
+	rx_n: float,
+	rx_z: float,
+	rx_course_deg: float = -1.0,
+	beam_half_deg: float = 180.0,
+) -> float:
+	var base: float = (
+		effective_noise_db_with_self(freq_hz, self_noise_db)
+		if self_noise_db >= 0.0
+		else effective_noise_db(freq_hz, own_speed_kn)
+	)
+	var jam: float = interference_noise_db(freq_hz, rx_e, rx_n, rx_z, rx_course_deg, beam_half_deg)
+	if jam <= -INF:
+		return base
+	var sum_linear: float = pow(10.0, base / 10.0) + pow(10.0, jam / 10.0)
+	return 10.0 * log(sum_linear) / log(10.0)
+
+
 func from_dict(d: Dictionary) -> void:
 	environment_type = str(d.get("environment_type", environment_type))
 	sea_state = int(d.get("sea_state", sea_state))
@@ -118,3 +225,4 @@ func from_dict(d: Dictionary) -> void:
 	tl_spreading_k = float(d.get("tl_spreading_k", tl_spreading_k))
 	tl_absorption_alpha = float(d.get("tl_absorption_alpha", tl_absorption_alpha))
 	tl_environment_loss = float(d.get("tl_environment_loss", tl_environment_loss))
+	analysis_bandwidth_hz = float(d.get("analysis_bandwidth_hz", analysis_bandwidth_hz))

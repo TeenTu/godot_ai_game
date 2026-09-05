@@ -478,6 +478,41 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
   `_guidance_mode`；Truth min pass 移出实时面板（DBG 终局摘要）；miss 根因
   区分 FUEL_OUT。
 
+## 0.7 阶段一收尾批次（P0-A..P0-D + S1-05 + S1-01/S1-08，2026-09-06）
+
+需求文档：腾讯文档 DZnBaY1NCd05hTkVt《阶段一收尾需求 v2.0》（基线
+main=0d8809f / sonar-dev=47e6c18）。全部批次以 TDD 落地，全量回归 39/39 绿。
+
+- **P0-A 诱饵生命周期/画像/寻的资格（REQ-CM-01..04）**：Decoy 唯一 ID
+  （主循环 meta 计数，弃 static var——Windows 退出段错误根因）；画像注册/
+  注销；接收方资格过滤；实际深度出舱；面板诊断。
+- **P0-B 统一声学与频谱（REQ-AC-01..06）**：JAMMER 宽带干扰源（固定调度
+  总功率 185 dB / 800–1200 Hz + 900 Hz 假峰）、固定调度节拍、空化平滑、
+  AR(1) 噪声、DEMON、AGC。
+- **P0-C 深度信息与水面攻击（REQ-DEP-01..02）**：深度观测模型（seeker
+  depth_observed_m = Truth + N(0,σ=8m)，层关系/带提示由有噪观测推导，
+  Track.depth_assessment 默认 UNKNOWN）；SURFACE 搜索预设（浅水 12m）；层带
+  命令 UPPER↔LOWER 双向可执行 + 自动换带搜索（BAND_SEARCH_SWITCH）。深度
+  控制拆出 `torpedo_depth_control.gd`（1200 行硬限）。
+- **P0-D 场景入口与敌方反击（REQ-AI-01..02）**：出生校验/失败显式报告
+  （last_error + fallback 校验）；首腿保持出生航向；s1_combat 方位区间放开
+  0..360、evade_trigger_probability=0.85；敌方事件来源过滤
+  （`filter_interceptable`：敌方自身/己方在水鱼雷/己方诱饵不进截获）；
+  DECOY_ACTIVATION 事件中和为 UNKNOWN_TRANSIENT（敌方无法识别玩家诱饵
+  身份）；击沉取消全部 pending；FIRE 请求→回执（拒发归还名额）；doctrine
+  概率口径 p=1-exp(-λ·Δt)。网页内 `StartMenu`（教学/战斗入口 + 随机 seed/
+  重玩同 seed，meta 覆写优先于 SONAR_SCENARIO 环境变量）。
+- **S1-05 三态自动化（REQ-AU-01..04）**：`AutomationController`
+  MANUAL/ASSISTED/FULL_AUTO + ROE={auto_refit,auto_fire,auto_decoy}；tracker
+  槽位簿记（evidence_id 去重 + slot_timeout_s 计龄释放）；状态机
+  NEW→TRACKING→FIT_READY→FITTED→STALE + Fit 质量门（证据数/新鲜度/
+  拟合 status+rms，**删除两腿一刀切**）；take_control PLAYER OVERRIDE 一
+  tick 生效；command_log 全量审计。最小控制 UI：`automation_panel`。
+- **S1-01 面板补全 + S1-08（REQ-UI-01..04）**：修复 ActiveSonarCard
+  FIT_MODES 索引 bug（maxi(fi,1) 把 AUTO 误显示为 ASSISTED）；Countermeasure
+  Panel JAMMER 频带提示；AlertPanel 告警分组（THREAT/CM/BDA/INFO）+ 战果
+  分级汇总（BDA summary）；StartMenu 简报扩为操作流程教程。
+
 ---
 
 ## 1. 单位与坐标约定（全局唯一，禁止改）

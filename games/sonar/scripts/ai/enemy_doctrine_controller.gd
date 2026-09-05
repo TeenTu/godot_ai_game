@@ -26,6 +26,10 @@ var doctrine: Dictionary = {}
 
 var state: int = State.PATROL_PASSIVE
 
+## REQ-AI-02：换层方向由 DepthLayerModel hold 解析（UPPER↔LOWER 都可执行），
+## 由 World 注入；缺省退回 doctrine evade_other_band_hold_depth_m（旧行为）。
+var hold_depth_for_band: Callable = Callable()
+
 var _rng: RandomNumberGenerator = null
 var _sample_timer_s: float = 0.0
 var _pending: Array = []  # [{at, action}] 待反应（反应延迟，§9.8）
@@ -34,6 +38,8 @@ var _last_fire_t: float = -1e9
 var _torpedo_count: int = 0
 var _last_torpedo_alert_t: float = -1e9
 var _evade_course_deg: float = -1.0
+## REQ-AI-01：出生航向（首个巡逻腿保持，不在首 tick 用随机航向替换）。
+var _spawn_course_deg: float = -1.0
 
 
 func configure(
@@ -41,16 +47,19 @@ func configure(
 	sen: EnemySensorAdapter,
 	mgr: EnemyTrackManager,
 	doctrine_cfg: Dictionary,
-	rng: RandomNumberGenerator
+	rng: RandomNumberGenerator,
+	hold_depth_cb: Callable = Callable()
 ) -> void:
 	entity = ent
 	sensor = sen
 	tracks = mgr
 	doctrine = doctrine_cfg.duplicate(true)
 	_rng = rng
+	hold_depth_for_band = hold_depth_cb
+	_spawn_course_deg = float(ent.course_deg) if ent != null else -1.0
 	_sample_timer_s = 0.0
 	_pending.clear()
-	_leg_until = 0.0
+	_leg_until = -1.0  # <0 = 首腿进行中（保持出生航向，见 _patrol）
 	_last_fire_t = -1e9
 	_torpedo_count = 0
 	_last_torpedo_alert_t = -1e9
@@ -70,6 +79,11 @@ func state_name() -> String:
 func update(now: float, dt: float, events: Array) -> Array:
 	var actions: Array = []
 	if entity == null or sensor == null or tracks == null:
+		return actions
+	# REQ-AI-02：死亡收尾——取消待执行发射/机动，停止一切新动作；玩家 Track
+	# 按证据消失自然计龄（绝不由 Truth 即时确认击杀）。
+	if str(entity.damage_state) == "sunk":
+		_pending.clear()
 		return actions
 
 	# 1) 感知（固定采样间隔，§15.1）：被动接触 + 新事件截获。
@@ -179,9 +193,16 @@ func _plan_evasion(now: float) -> void:
 	if _rng.randf() < float(_d("evade_speed_change_probability", 0.8)):
 		entity.command_speed(float(_d("evade_speed_kn", 14.0)))
 	if _rng.randf() < float(_d("layer_change_probability", 0.4)):
-		var dm_band: String = "LOWER" if _depth_band() == "UPPER" else "UPPER"
-		entity.command_depth(float(_d("evade_other_band_hold_depth_m", 180.0)))
-		doctrine["_evade_band"] = dm_band
+		# REQ-AI-02 修复换层方向：用 DepthLayerModel 查另一层 hold 深度执行，
+		# UPPER→LOWER 与 LOWER→UPPER 双向可执行；不再固定命令默认 180 m。
+		var other: String = "LOWER" if _depth_band() == "UPPER" else "UPPER"
+		var z: float = (
+			float(hold_depth_for_band.call(other))
+			if hold_depth_for_band.is_valid()
+			else float(_d("evade_other_band_hold_depth_m", 180.0))
+		)
+		entity.command_depth(z)
+		doctrine["_evade_band"] = other
 	if _rng.randf() < float(_d("decoy_launch_probability", 0.7)):
 		_schedule({"action": "LAUNCH_DECOY", "bearing_deg": _rng.randf() * 360.0}, now)
 
@@ -212,6 +233,13 @@ func _advance_evading(now: float, dt: float, actions: Array) -> void:
 
 func _patrol(now: float, _dt: float) -> void:
 	# 随机巡逻腿：绝不朝玩家 Truth 追踪（只按自己的轴/随机角）。
+	# REQ-AI-01：首个巡逻腿尊重出生航向（_leg_until<0 时只起腿计时，不用
+	# 随机航向替换出生航向）。
+	if _leg_until < 0.0:
+		var lo0: float = float(_d("patrol_leg_time_min_s", 60.0))
+		var hi0: float = maxf(float(_d("patrol_leg_time_max_s", 180.0)), lo0)
+		_leg_until = now + _rng.randf_range(lo0, hi0)
+		return
 	if now >= _leg_until:
 		var lo: float = float(_d("patrol_leg_time_min_s", 60.0))
 		var hi: float = maxf(float(_d("patrol_leg_time_max_s", 180.0)), lo)
@@ -255,7 +283,9 @@ func _try_counterfire(now: float, best: Dictionary) -> void:
 		return
 	if now - _last_fire_t < float(_d("counterfire_cooldown_s", 120.0)):
 		return
-	if _rng.randf() > float(_d("counterfire_probability", 0.5)):
+	# REQ-AI-02：doctrine 值 = 每秒率 λ，按决策机会换算 p=1-exp(-λ·Δt)
+	# （固定每 tick 抽签会随 dt 改变频度）；λ≥1 时趋近必然反击。
+	if _rng.randf() > _p_opportunity(float(_d("counterfire_probability", 0.5))):
 		return
 	# 只有较可信方位 → BEARING_ONLY 宽扇区（无隐藏距离，AI-07；SOLUTION 需
 	# 敌方自建 range 证据，本版敌方无主动声呐，接口留给后续）。
@@ -276,6 +306,31 @@ func _try_counterfire(now: float, best: Dictionary) -> void:
 ## World 回调：敌方鱼雷死亡/耗尽后归还并发余量。
 func notify_torpedo_resolved() -> void:
 	_torpedo_count = maxi(_torpedo_count - 1, 0)
+
+
+## World 回调（REQ-AI-02 FIRE 请求→回执）：发射被拒（无管/程序非法）时归还
+## 余量——拒发绝不占死在水武器名额。
+func notify_fire_rejected() -> void:
+	_torpedo_count = maxi(_torpedo_count - 1, 0)
+
+
+## REQ-AI-02：每秒率 λ → 单次决策机会概率 p = 1 - exp(-λ·Δt)。
+func _p_opportunity(rate_per_s: float) -> float:
+	var dt_opp: float = maxf(float(_d("sample_interval_s", 2.0)), 0.1)
+	return 1.0 - exp(-maxf(rate_per_s, 0.0) * dt_opp)
+
+
+## REQ-AI-02 事件来源过滤：emitter_internal_ref ∈ own_refs 的事件不进截获——
+## 敌方自身平台/己方在水鱼雷/己方诱饵的发射不构成敌情，也绝不据此识别
+## 玩家诱饵身份。own_refs 由 World 组装（id -> true）。
+func filter_interceptable(events: Array, own_refs: Dictionary) -> Array:
+	if own_refs.is_empty():
+		return events
+	var out: Array = []
+	for ev in events:
+		if not own_refs.has(str(ev.get("emitter_internal_ref", ""))):
+			out.append(ev)
+	return out
 
 
 ## P1-09：在水武器计数只读视图（World 结算释放后应递减；测试/诊断用）。

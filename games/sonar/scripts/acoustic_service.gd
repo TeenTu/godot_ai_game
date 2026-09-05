@@ -99,14 +99,26 @@ static func passive_se_layer(
 	ag_db: float = 0.0,
 	dt_db: float = 0.0,
 	self_noise_db: float = -1.0,
+	rx_e: float = -1.0e9,
+	rx_n: float = -1.0e9,
+	rx_course_deg: float = -1.0,
+	beam_half_deg: float = 180.0,
 ) -> float:
 	var tl: float = env.propagation_loss_layer(range_m, freq_hz, z_s, z_r)
 	# P1-05：self_noise_db >= 0 时用平台专用接收机自噪替代潜艇级 own_noise
 	# （同一 SE 方程，仅噪声项替换；-1 = 旧行为）。
+	# REQ-AC-03：提供接收端位置时用统一 N_eff（含宽带干扰源，波束内/外
+	# 按响应）；否则旧行为（旧场景零变化）。
 	var n_eff: float = (
-		env.effective_noise_db_with_self(freq_hz, self_noise_db)
-		if self_noise_db >= 0.0
-		else env.effective_noise_db(freq_hz, own_speed_kn)
+		env.effective_noise_db_at(
+			freq_hz, self_noise_db, own_speed_kn, rx_e, rx_n, z_r, rx_course_deg, beam_half_deg
+		)
+		if (self_noise_db >= 0.0 and rx_e > -1.0e8 and not env.interferers.is_empty())
+		else (
+			env.effective_noise_db_with_self(freq_hz, self_noise_db)
+			if self_noise_db >= 0.0
+			else env.effective_noise_db(freq_hz, own_speed_kn)
+		)
 	)
 	return sl_db - tl - n_eff + ag_db - dt_db
 
@@ -124,13 +136,23 @@ static func active_se_layer(
 	ag_db: float = 0.0,
 	dt_db: float = 0.0,
 	self_noise_db: float = -1.0,
+	rx_e: float = -1.0e9,
+	rx_n: float = -1.0e9,
+	rx_course_deg: float = -1.0,
+	beam_half_deg: float = 180.0,
 ) -> float:
 	var tl_out: float = env.propagation_loss_layer(range_m, freq_hz, z_tx, z_tgt)
 	var tl_ret: float = env.propagation_loss_layer(range_m, freq_hz, z_rx, z_tgt)
 	var n_eff: float = (
-		env.effective_noise_db_with_self(freq_hz, self_noise_db)
-		if self_noise_db >= 0.0
-		else env.effective_noise_db(freq_hz, own_speed_kn)
+		env.effective_noise_db_at(
+			freq_hz, self_noise_db, own_speed_kn, rx_e, rx_n, z_rx, rx_course_deg, beam_half_deg
+		)
+		if (self_noise_db >= 0.0 and rx_e > -1.0e8 and not env.interferers.is_empty())
+		else (
+			env.effective_noise_db_with_self(freq_hz, self_noise_db)
+			if self_noise_db >= 0.0
+			else env.effective_noise_db(freq_hz, own_speed_kn)
+		)
 	)
 	return ping_sl_db - tl_out - tl_ret + target_ts_db - n_eff + ag_db - dt_db
 

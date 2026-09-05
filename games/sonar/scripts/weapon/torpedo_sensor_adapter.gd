@@ -20,6 +20,11 @@ extends RefCounted
 ## 本类不实现目标选择 / 捕获 / 跟踪（Commit 7 起 SeekerTrack）；只用注入 RNG，
 ## 固定 seed + 相同输入命令产出完全相同的结果（§2.3）。
 
+## REQ-DEP-01：深度观测噪声σ（米）。seeker 无精确测深传感器——对接触深度的
+## 观测恒带此量级高斯噪声；层带提示/层关系由此有噪观测推导。σ 取 8 m：
+## 足以覆盖测深粗化，又不会让层带提示在带界附近频繁翻转（垂直机动抖动）。
+const DEPTH_OBS_SIGMA_M: float = 8.0
+
 var env: RefCounted = null  # EnvironmentModel（TL / N_eff 统一实现）
 var depth_model: RefCounted = null  # DepthLayerModel（可为 null=旧二维）
 var rng: RandomNumberGenerator = null  # 注入 RNG（无 rng 时采样视为全 miss）
@@ -112,6 +117,10 @@ func sample_passive(
 				ag,
 				dt_db,
 				profile.receiver_self_noise_db(tp_speed_kn),
+				tp_e,
+				tp_n,
+				tp_course_deg,
+				beam_half,
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, k_d)
@@ -137,6 +146,10 @@ func sample_passive(
 						"range_m": -1.0,
 						"range_sigma_m": -1.0,
 						"source_token": str(contact_tokens.get(cid, "")),
+						"rx_e": tp_e,
+						"rx_n": tp_n,
+						"rx_course_deg": tp_course_deg,
+						"beam_half_deg": beam_half,
 					},
 				)
 			)
@@ -274,6 +287,10 @@ func collect_due_active_returns(
 					ag,
 					dt_db,
 					profile.receiver_self_noise_db(tp_speed_kn),
+					tp_e,
+					tp_n,
+					float(e.get("tp_course_deg", 0.0)),
+					profile.active_fov_half_deg,
 				)
 			)
 			var pd: float = AcousticService.detection_probability(se, k_d)
@@ -355,10 +372,17 @@ func _build_return(
 	sr.detection_probability = pd
 	sr.source_token = str(extra.get("source_token", ""))
 	sr.spectral_features = _spectral_features(extra.get("ac", null), profile, extra)
-	sr.depth_relation = _depth_relation(
-		float(extra.get("contact_depth", 0.0)), float(extra.get("receiver_depth", 0.0))
-	)
-	sr.depth_band_hint = _band_hint_for(float(extra.get("contact_depth", 0.0)))
+	# REQ-DEP-01：深度观测模型——seeker 无精确测深手段，深度观测 = 内核接触
+	# 深度 + 高斯噪声（σ 默认 DEPTH_OBS_SIGMA_M，可经 extra 覆盖）。层关系与
+	# 层带提示均从有噪观测推导，制导决策只见标签，绝不见 Truth 精确深度。
+	var depth_sigma: float = float(extra.get("depth_sigma_m", DEPTH_OBS_SIGMA_M))
+	var depth_obs: float = float(extra.get("contact_depth", 0.0))
+	if rng != null:
+		depth_obs += rng.randfn(0.0, depth_sigma)
+	sr.depth_observed_m = depth_obs
+	sr.depth_sigma_m = depth_sigma
+	sr.depth_relation = _depth_relation(depth_obs, float(extra.get("receiver_depth", 0.0)))
+	sr.depth_band_hint = _band_hint_for(depth_obs)
 	sr.ping_id = str(extra.get("ping_id", ""))
 	return sr
 
@@ -401,8 +425,26 @@ func _spectral_features(
 					continue
 				var tl_db: float = AcousticService.propagation_loss(range_m, f, env)
 				tl_db += env.cross_layer_extra_db(f, z_s, z_r)
-				var n_eff: float = env.effective_noise_db_with_self(
-					f, profile.receiver_self_noise_db(recv_kn)
+				# REQ-AC-03：谱线同样吃宽带干扰（同一 N_eff 口径，含波束响应）。
+				var has_rx: bool = extra.has("rx_e") and not env.interferers.is_empty()
+				var n_eff: float = (
+					(
+						env
+						. effective_noise_db_at(
+							f,
+							profile.receiver_self_noise_db(recv_kn),
+							recv_kn,
+							float(extra.get("rx_e", 0.0)),
+							float(extra.get("rx_n", 0.0)),
+							z_r,
+							float(extra.get("rx_course_deg", -1.0)),
+							float(extra.get("beam_half_deg", 180.0)),
+						)
+					)
+					if has_rx
+					else env.effective_noise_db_with_self(
+						f, profile.receiver_self_noise_db(recv_kn)
+					)
 				)
 				var se_line: float = lvl - tl_db - n_eff
 				var pd_line: float = AcousticService.detection_probability(

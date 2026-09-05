@@ -265,13 +265,29 @@ func _randn() -> float:
 
 ## 推进背景噪声 texture（AR(1) 时间相关，S1-04.4）。
 func _advance_noise_tex(tex: PackedFloat32Array) -> void:
+	# REQ-AC-05：AR(1) 平稳口径 x'=ρx+√(1-ρ²)z → 平稳标准差=1（乘
+	# NOISE_TEXTURE_DB 后即配置起伏幅度；旧写法只给了 0.378 的平稳 std）。
+	var g: float = sqrt(1.0 - NOISE_TEXTURE_RHO * NOISE_TEXTURE_RHO)
 	for i in range(tex.size()):
-		tex[i] = NOISE_TEXTURE_RHO * tex[i] + (1.0 - NOISE_TEXTURE_RHO) * _randn()
+		tex[i] = NOISE_TEXTURE_RHO * tex[i] + g * _randn()
 
 
 ## 某 bin 的背景声级（噪声底 + texture 起伏）。
 func _noise_floor_at(tex: PackedFloat32Array, i: int) -> float:
 	return NOISE_FLOOR_DB + NOISE_TEXTURE_DB * tex[i]
+
+
+## REQ-AC-01：按仿真节拍追帧推进（倍速/低帧率不跳行）。UI 每帧调用：
+## 落后多少个 ROW_INTERVAL 就补多少行（上限 max_rows 防卡顿），行时刻按
+## _last_row_t + ROW_INTERVAL_S 递增，物理随机序列与 1x 逐行调用一致。
+func catch_up_rows(sim_time: float, targets: Array, acs: Dictionary, max_rows: int = 8) -> int:
+	if _last_row_t < -1.0e8:
+		_last_row_t = 0.0  # 首次调用：从仿真起点开始补行
+	var n: int = 0
+	while sim_time - _last_row_t >= ROW_INTERVAL_S and n < max_rows:
+		update(_last_row_t + ROW_INTERVAL_S, targets, acs)
+		n += 1
+	return n
 
 
 ## 推进一行操作员数据（main_ui 按 ROW_INTERVAL_S 调用）。
@@ -323,6 +339,11 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var ctr: Vector2 = tow.array_center_position(obs_e, obs_n)
 		obs_e = ctr.x
 		obs_n = ctr.y
+	# REQ-AC-05：DEMON 摘要取本行最强 SE 接触，不再被 targets 遍历顺序
+	# 偏向最后处理目标。
+	var demon_best_se: float = -INF
+	var demon_best_rpm: float = 0.0
+	var demon_best_blades: int = 0
 
 	for tgt in targets:
 		var ac: RefCounted = acs.get(tgt.id, null)
@@ -354,6 +375,11 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		# 不得散落 20log10*1.2 之类简化公式
 		var tl: float = AcousticService.propagation_loss(rng_m, 500.0, _env)
 		var noise: float = _env.effective_noise_db(500.0, own_speed)
+		# REQ-AC-03：BB SE 吃宽带干扰（按接触方位的波束响应，线性功率合成）。
+		var jam_bb: float = _env.interference_noise_db(
+			500.0, obs_e, obs_n, own_depth, true_brg, float(def["beamwidth_deg"])
+		)
+		noise = EnvironmentModel.combine_db(noise, jam_bb)
 		var level_db: float = ac.broadband_sl_db(speed_kn, float(tgt.depth_m)) - tl
 		var se_db: float = level_db + gain + dir_gain - noise
 		# S1-07A（Commit 2）：跨温跃层附加 TL（与自动测量链同源；旧场景=0）。
@@ -361,62 +387,64 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		total_se = maxf(total_se, se_db)
 		# 概率探测 P_d（S1-04）：不再用 SE<=0 硬门限，弱目标间歇出现
 		var pd: float = AcousticService.detection_probability(se_db)
-		if _rng.randf() >= pd:
-			continue
-		detection_count += 1
-		# BB 行：高斯波束峰（幅度∝SE），叠加每行随机方位噪声
-		var beamw: float = float(def["beamwidth_deg"])
-		var brg_noise: float = (
-			_randn() * maxf(float(def["sigma_min"]) * pow(2.0, -se_db / 6.0), 0.2)
-		)
-		var amp: float = display_amp_db(se_db)
-		# TOWED 单线阵：对阵轴两侧等角响应 → 生成共享证据的 A/B 镜像候选
-		# （S1-03A：pair 同 ID/同 SE/同噪声样本，消歧前对玩家等价，不标真假）。
-		var pair_id: String = ""
-		var disp_brgs: Array = []  # [{bearing_deg, branch}]
+		# REQ-AC-01：BB 一次 miss 不再整体跳过 NB/DEMON——窄带特征按自身
+		# 频率 SE/概率独立积累（BB 与 NB 带宽/处理增益可不同）。
+		var bb_hit: bool = _rng.randf() < pd
 		var contact_freqs: Array = []  # REQ-10：本接触本行实测谱线频率（附到峰）
 		var contact_peaks: Array = []  # REQ-10：本接触本行的峰引用（回填 freqs_hz）
-		if mirror_lr and active_array_id == "TOWED":
-			_ambiguity_counter += 1
-			pair_id = "AMB%04d" % _ambiguity_counter
-			# P1-01/REQ-06：单次离轴角噪声 → 两支严格关于阵轴对称。
-			# 旧实现两支加同号 brg_noise：(A+B)/2 = psi+e ≠ psi，破坏对称。
-			# 正确：alpha_hat = 离轴角 + 一次噪声；theta_A = psi+alpha_hat、
-			# theta_B = psi-alpha_hat，则 wrap360(theta_A + theta_B) = 2*psi。
-			var alpha_hat: float = array_rel + brg_noise
-			var theta_a: float = NavUtils.wrap360(array_heading + alpha_hat)
-			var theta_b: float = NavUtils.wrap360(array_heading - alpha_hat)
-			disp_brgs.append(
-				{"bearing_deg": NavUtils.true_to_display(own_course, theta_a), "branch": 1}
+		if bb_hit:
+			detection_count += 1
+			# BB 行：高斯波束峰（幅度∝SE），叠加每行随机方位噪声
+			var beamw: float = float(def["beamwidth_deg"])
+			var brg_noise: float = (
+				_randn() * maxf(float(def["sigma_min"]) * pow(2.0, -se_db / 6.0), 0.2)
 			)
-			disp_brgs.append(
-				{"bearing_deg": NavUtils.true_to_display(own_course, theta_b), "branch": -1}
-			)
-		else:
-			# 瀑布/玩家看到的方位 = 艇艏相对方位（问题2）
-			disp_brgs.append(
-				{
-					"bearing_deg": NavUtils.true_to_display(own_course, true_brg) + brg_noise,
-					"branch": 0
+			var amp: float = display_amp_db(se_db)
+			# TOWED 单线阵：对阵轴两侧等角响应 → 生成共享证据的 A/B 镜像候选
+			# （S1-03A：pair 同 ID/同 SE/同噪声样本，消歧前对玩家等价，不标真假）。
+			var pair_id: String = ""
+			var disp_brgs: Array = []  # [{bearing_deg, branch}]
+			if mirror_lr and active_array_id == "TOWED":
+				_ambiguity_counter += 1
+				pair_id = "AMB%04d" % _ambiguity_counter
+				# P1-01/REQ-06：单次离轴角噪声 → 两支严格关于阵轴对称。
+				# 旧实现两支加同号 brg_noise：(A+B)/2 = psi+e ≠ psi，破坏对称。
+				# 正确：alpha_hat = 离轴角 + 一次噪声；theta_A = psi+alpha_hat、
+				# theta_B = psi-alpha_hat，则 wrap360(theta_A + theta_B) = 2*psi。
+				var alpha_hat: float = array_rel + brg_noise
+				var theta_a: float = NavUtils.wrap360(array_heading + alpha_hat)
+				var theta_b: float = NavUtils.wrap360(array_heading - alpha_hat)
+				disp_brgs.append(
+					{"bearing_deg": NavUtils.true_to_display(own_course, theta_a), "branch": 1}
+				)
+				disp_brgs.append(
+					{"bearing_deg": NavUtils.true_to_display(own_course, theta_b), "branch": -1}
+				)
+			else:
+				# 瀑布/玩家看到的方位 = 艇艏相对方位（问题2）
+				disp_brgs.append(
+					{
+						"bearing_deg": NavUtils.true_to_display(own_course, true_brg) + brg_noise,
+						"branch": 0
+					}
+				)
+			for pb in disp_brgs:
+				var brg_disp: float = float(pb["bearing_deg"])
+				for i in range(BB_BINS):
+					var bin_brg: float = -180.0 + 2.0 * i
+					var db: float = absf(NavUtils.angle_diff(bin_brg, brg_disp))
+					if db < 12.0:
+						bb[i] = maxf(bb[i], NOISE_FLOOR_DB + amp * exp(-0.5 * pow(db / beamw, 2.0)))
+				var peak: Dictionary = {
+					"bearing_deg": brg_disp,
+					"level_db": amp,
+					"se_db": se_db,
+					"snr_db": se_db,
+					"ambiguous_pair_id": pair_id,
+					"ambiguity_branch": int(pb["branch"]),
 				}
-			)
-		for pb in disp_brgs:
-			var brg_disp: float = float(pb["bearing_deg"])
-			for i in range(BB_BINS):
-				var bin_brg: float = -180.0 + 2.0 * i
-				var db: float = absf(NavUtils.angle_diff(bin_brg, brg_disp))
-				if db < 12.0:
-					bb[i] = maxf(bb[i], NOISE_FLOOR_DB + amp * exp(-0.5 * pow(db / beamw, 2.0)))
-			var peak: Dictionary = {
-				"bearing_deg": brg_disp,
-				"level_db": amp,
-				"se_db": se_db,
-				"snr_db": se_db,
-				"ambiguous_pair_id": pair_id,
-				"ambiguity_branch": int(pb["branch"]),
-			}
-			bb_peaks.append(peak)
-			contact_peaks.append(peak)
+				bb_peaks.append(peak)
+				contact_peaks.append(peak)
 		# NB 行：目标音线（每条谱线用自身频率算 TL/N_eff，S1-04.2 不得全按 500 Hz；
 		# 可见度随 SNR 概率变化，不再 lvl<=0 硬切）
 		for line_v in ac.tonal_lines:
@@ -425,6 +453,11 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				continue
 			var tl_f: float = AcousticService.propagation_loss(rng_m, f_hz, _env)
 			var noise_f: float = _env.effective_noise_db(f_hz, own_speed)
+			# REQ-AC-03：NB 谱线同样吃宽带干扰（同一 N_eff 口径）。
+			var jam_f: float = _env.interference_noise_db(
+				f_hz, obs_e, obs_n, own_depth, true_brg, float(def["beamwidth_deg"])
+			)
+			noise_f = EnvironmentModel.combine_db(noise_f, jam_f)
 			# P1-03/REQ-08：NB tonal 也吃方向增益 + 部署/弯曲/超速损失——与 BB 同源，
 			# 不得只进 BB se_db（否则 FLANK 扇区边缘谱线强度不随方向衰减）。
 			var lvl: float = float(line_v["level_db"]) + gain + dir_gain - tl_f - noise_f
@@ -457,7 +490,14 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 					break
 				var di: int = clampi(int(fh / DEMON_FMAX_HZ * DEMON_BINS), 0, DEMON_BINS - 1)
 				demon[di] = maxf(demon[di], NOISE_FLOOR_DB + d_amp * pow(0.7, k - 1))
-		_update_demon_estimate(speed_kn * 0.0 + rpm_hz, float(ac.blade_count), se_db)
+		if se_db > demon_best_se:
+			demon_best_se = se_db
+			demon_best_rpm = rpm_hz
+			demon_best_blades = int(ac.blade_count)
+
+	# REQ-AC-05：本行 DEMON 摘要只在遍历结束后按最强接触更新一次。
+	if demon_best_se > -INF:
+		_update_demon_estimate(demon_best_rpm, demon_best_blades, demon_best_se)
 
 	# 每行固化自身观测上下文（S1-01/S1-03）：历史行点击时 Mark 必须用
 	# 那一行的时刻/艏向/阵轴/站位，而不是当前仿真状态。
@@ -521,7 +561,7 @@ func _update_demon_estimate(rpm_hz: float, blades_hint: int, se_db: float) -> vo
 		return
 	var rpm_meas: float = rpm_hz + _randn() * maxf(0.05 * rpm_hz, 0.02)
 	var blade_meas: int = blades_hint if se_db > 8.0 else 0  # 低 SNR 时桨叶数不确定
-	var speed_kn_est: float = rpm_meas * 60.0 * PROP_PITCH_M / 1852.0
+	var speed_kn_est: float = rpm_meas * PROP_PITCH_M / 0.514444  # REQ-AC-05：V=f_shaft·pitch/0.5144
 	var sigma_kn: float = (
 		speed_kn_est * (PROP_PITCH_SIGMA / PROP_PITCH_M) + 1.0 + maxf(0.0, 6.0 - se_db) * 0.5
 	)
@@ -573,13 +613,8 @@ func _update_classification(tonal_count: int, se_db: float) -> void:
 		probs[cname] = float(probs[cname]) / maxf(sum, 1e-9)
 	probs["best"] = _argmax(probs)
 	classification = probs
-	# 用最佳匹配模板重估航速（操作员情报库先验，非目标真值）
-	var best_name: String = str(probs["best"])
-	if best_name != "" and blade_rate_obs > 0.0:
-		var tpl2: Dictionary = CLASS_TEMPLATES[best_name]
-		var spd: float = blade_rate_obs * float(tpl2["kn_per_br_hz"])
-		demon_estimate["speed_kn"] = spd
-		demon_estimate["speed_sigma_kn"] = maxf(1.5, 0.3 * spd)
+	# 用最佳匹配模板只作先验提示，绝不静默覆盖实测航速（REQ-AC-05）。
+	# （模板 blade_rate/kn 换算仅供 UI 参考；实测 speed_kn_est 已在上面固化。）
 
 
 func _argmax(probs: Dictionary) -> String:
@@ -698,7 +733,7 @@ func create_mark(
 	m.bearing_sigma_deg = sigma
 	m.signal_excess_db = se_db
 	m.snr_db = se_db
-	m.detection_probability = clampf(se_db / 12.0, 0.0, 1.0)
+	m.detection_probability = AcousticService.detection_probability(se_db)
 	# REQ-10：保留测得频率（峰上回填的本行实测谱线）供关联兼容性判断；
 	# 阵列来源/时间已由 sensor_id/timestamp 固化。
 	if not matched.is_empty() and matched.has("freqs_hz"):
@@ -776,7 +811,8 @@ func autocrew_step(sim_time: float) -> Array:
 		if pid != "" and seen_pairs.has(pid):
 			continue  # 同一物理到达的镜像峰只 Mark 一次（S1-03B）
 		if float(pk.get("snr_db", 0.0)) >= 9.0:
-			var pd: float = clampf(float(pk["snr_db"]) / 12.0, 0.0, 1.0)
+			# REQ-AC-02：物理 P_d，不再用 clamp(SNR/12) 冒充探测概率。
+			var pd: float = AcousticService.detection_probability(float(pk["snr_db"]))
 			if pd >= AUTOCREW_PD_MIN:
 				seen_pairs[pid] = true
 				var grp: Array = create_mark_group(

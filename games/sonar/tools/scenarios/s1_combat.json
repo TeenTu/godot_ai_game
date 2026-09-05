@@ -6,7 +6,10 @@
   "environment": {
     "environment_type": "shallow",
     "sea_state": 2,
-    "ambient_noise_by_frequency": { "500": 58.0, "1000": 52.0 },
+    "ambient_noise_by_frequency": {
+      "500": 58.0,
+      "1000": 52.0
+    },
     "own_noise_base_db": 38.0,
     "own_noise_speed_coeff": 1.6,
     "tl_spreading_k": 20.0,
@@ -21,7 +24,10 @@
     "thermocline_thickness_m": 20,
     "upper_hold_depth_m": 70,
     "lower_hold_depth_m": 180,
-    "cross_layer_loss_db_by_frequency": { "500": 6, "3000": 10 }
+    "cross_layer_loss_db_by_frequency": {
+      "500": 6,
+      "3000": 10
+    }
   },
   "own_ship": {
     "id": "own",
@@ -54,7 +60,7 @@
     }
   },
   "own_acoustic": {
-    "broadband_base_level_db": 45.0,
+    "broadband_base_level_db": 110.0,
     "speed_noise_a": 15.0,
     "speed_noise_n": 2.0,
     "speed_noise_vref_kn": 5.0,
@@ -85,9 +91,18 @@
         "cavitation_extra_db": 10.0,
         "active_target_strength_db": 14.0,
         "tonal_lines": [
-          { "freq_hz": 120.0, "level_db": 128.0 },
-          { "freq_hz": 240.0, "level_db": 122.0 },
-          { "freq_hz": 480.0, "level_db": 115.0 }
+          {
+            "freq_hz": 120.0,
+            "level_db": 128.0
+          },
+          {
+            "freq_hz": 240.0,
+            "level_db": 122.0
+          },
+          {
+            "freq_hz": 480.0,
+            "level_db": 115.0
+          }
         ],
         "turns_per_knot": 1,
         "blade_count": 5,
@@ -96,14 +111,17 @@
     }
   ],
   "enemy_spawn": {
-    "bearing_min_deg": 20.0,
-    "bearing_max_deg": 70.0,
+    "bearing_min_deg": 0.0,
+    "bearing_max_deg": 360.0,
     "range_min_m": 6000.0,
     "range_mode_m": 8000.0,
     "range_max_m": 10000.0,
     "speed_min_kn": 5.0,
     "speed_max_kn": 10.0,
-    "depth_band_weights": { "UPPER": 0.6, "LOWER": 0.4 },
+    "depth_band_weights": {
+      "UPPER": 0.6,
+      "LOWER": 0.4
+    },
     "min_separation_m": 2000.0,
     "max_generation_attempts": 50,
     "fallback_spawn": {
@@ -123,14 +141,24 @@
       "cavitation_extra_db": 12.0,
       "active_target_strength_db": 12.0,
       "tonal_lines": [
-        { "freq_hz": 140.0, "level_db": 124.0 },
-        { "freq_hz": 280.0, "level_db": 118.0 }
+        {
+          "freq_hz": 140.0,
+          "level_db": 124.0
+        },
+        {
+          "freq_hz": 280.0,
+          "level_db": 118.0
+        }
       ],
       "turns_per_knot": 1,
       "blade_count": 5,
       "shaft_count": 1
     },
-    "countermeasures": { "ready_rounds": 2, "inventory": 2, "launch_cooldown_s": 10.0 },
+    "countermeasures": {
+      "ready_rounds": 2,
+      "inventory": 2,
+      "launch_cooldown_s": 10.0
+    },
     "doctrine": {
       "sensor_false_alarm_rate": 0.005,
       "fire_quality_threshold": 0.7,
@@ -139,7 +167,7 @@
       "reaction_delay_min_s": 3.0,
       "reaction_delay_max_s": 15.0,
       "counterfire_probability": 1.0,
-    "evade_trigger_probability": 0.0,
+      "evade_trigger_probability": 0.85,
       "counterfire_cooldown_s": 120.0,
       "max_simultaneous_weapons": 2,
       "sample_interval_s": 2.0,

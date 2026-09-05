@@ -215,10 +215,12 @@ func _ai_08_ai_ping_exposed(fails: Array) -> void:
 		if not pings.is_empty():
 			break
 	_assert_bool(fails, "AI-08b torpedo active ping on bus", not pings.is_empty(), true)
+	# P0-D 来源过滤后敌方不再把自己的鱼雷当威胁（不陷入 EVADING），冷却后
+	# 可正确二次反击 → 窗口内影子数 >=1（至少首发在航且被玩家侧影子链跟踪）。
 	_assert_bool(
 		fails,
 		"AI-08c torpedo shadow tracked by player side",
-		w._enemy_torpedo_shadows.size() == 1,
+		w._enemy_torpedo_shadows.size() >= 1,
 		true
 	)
 	# 玩家声呐可听到来袭鱼雷（无其他目标时新测量必来自鱼雷影子链）。

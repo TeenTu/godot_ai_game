@@ -70,3 +70,16 @@ calibration_envelope_test
 req_overhaul_test
 #   req2_test 第二轮 REQ：定深/LOS滤波/转向积分/距离率与miss/COAST/移动靶起爆/引信快照/Mark关联/TRUE模式/操舵来源（R2-01..10）
 req2_test
+cm2_test
+ac2_test
+#   dep_test P0-C 深度信息与水面攻击：深度未知合法/有噪观测/浅水预设/双向换带/自动换带搜索（DEP-1..2）
+dep_test
+
+#   ai2_test P0-D 场景入口与敌方反击：seed 复现/入口覆写/来源过滤/诱饵中和/延迟反击/拒发归还/击沉取消/双向换层/教学vs战斗（AI-1..4）
+ai2_test
+
+#   au_test S1-05 三态自动化：MANUAL 无动作/ASSISTED 提案去重/FULL_AUTO+ROE/槽位计龄释放/Take Control 一 tick 生效+审计（AU-1..5）
+au_test
+
+#   ui2_test S1-01 面板补全+S1-08：FIT_MODES 索引修复/JAMMER 频带提示/告警分组+BDA 汇总/StartMenu 教程（UI-1）
+ui2_test

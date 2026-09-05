@@ -63,25 +63,64 @@ func sync() -> void:
 		return
 	var cm: CountermeasureSystem = _world.countermeasures
 	var own_types: Array = cm.supported_types
-	_btn_mobile.disabled = not own_types.has(DecoyProgram.TYPE_MOBILE)
-	_btn_jammer.disabled = not own_types.has(DecoyProgram.TYPE_JAMMER)
 	var cd: float = cm.cooldown_left(_world.sim_time)
-	var own_active: int = 0
-	for d in _world.decoys:
-		if str(d.side) == "blue":
-			own_active += 1
-	_lbl_state.text = (
-		"Rounds %d | Inv %d | CD %.0fs | Own decoys %d"
-		% [
-			cm.ready_rounds,
-			cm.inventory,
-			cd,
-			own_active,
-		]
+	# REQ-UI-03/REQ-CM-04：冷却参与 disabled；无弹/类型不支持各自禁用。
+	var can_mobile: bool = (
+		own_types.has(DecoyProgram.TYPE_MOBILE) and cm.ready_rounds > 0 and cd <= 0.0
 	)
-	if cm.ready_rounds <= 0:
-		_btn_mobile.disabled = true
-		_btn_jammer.disabled = true
+	var can_jammer: bool = (
+		own_types.has(DecoyProgram.TYPE_JAMMER) and cm.ready_rounds > 0 and cd <= 0.0
+	)
+	_btn_mobile.disabled = not can_mobile
+	_btn_jammer.disabled = not can_jammer
+	# 己方诱饵状态：激活倒计时 / 实际与命令航速深度 / 剩余寿命（本艇事实）。
+	var lines: Array = []
+	for d in _world.decoys:
+		if str(d.side) != "blue":
+			continue
+		if d.activated:
+			var life_left: float = maxf(float(d.lifetime_s) - float(d.age_s), 0.0)
+			(
+				lines
+				. append(
+					(
+						"%s %s spd %.1f/%.1fkn dep %.0f/%.0fm life %.0fs"
+						% [
+							str(d.id),
+							"JAM" if d.decoy_type == DecoyProgram.TYPE_JAMMER else "MOB",
+							float(d.speed_kn),
+							float(d.commanded_speed_kn),
+							float(d.depth_m),
+							float(d.commanded_depth_m),
+							life_left,
+						]
+					)
+				)
+			)
+		else:
+			lines.append(
+				(
+					"%s arming %.1fs"
+					% [str(d.id), maxf(float(d.activation_delay_s) - float(d.age_s), 0.0)]
+				)
+			)
+	var state: String = (
+		"Rounds %d | Inv %d | CD %.0fs | Own decoys %d"
+		% [cm.ready_rounds, cm.inventory, cd, lines.size()]
+	)
+	# REQ-UI-03 频带提示：JAMMER 配置的干扰频带（发射前即可见，本艇事实）。
+	var jam: Dictionary = cm.profile_for(DecoyProgram.TYPE_JAMMER)
+	if not jam.is_empty() and float(jam.get("band_max_hz", 0.0)) > 0.0:
+		state += (
+			"\nJAMMER band %.0f–%.0f Hz"
+			% [
+				float(jam.get("band_min_hz", 800.0)),
+				float(jam.get("band_max_hz", 1200.0)),
+			]
+		)
+	if not lines.is_empty():
+		state += "\n" + "\n".join(lines)
+	_lbl_state.text = state
 
 
 func _launch(decoy_type: String) -> void:
@@ -96,20 +135,33 @@ func _launch(decoy_type: String) -> void:
 	prog.lifetime_s = 120.0
 	prog.initial_depth_band = _band_for_own()
 	prog.commanded_depth_band = prog.initial_depth_band
+	# REQ-CM-04：画像从配置读取（scenario own_ship.countermeasures.profiles），
+	# UI 不再回调构造物理参数；无配置时用下列默认。
 	var sig := AcousticProfile.new()
-	sig.broadband_base_level_db = 165.0
-	sig.tonal_lines = [
-		{"freq_hz": 240.0, "level_db": 128.0},
-		{"freq_hz": 480.0, "level_db": 122.0},
-	]
-	if decoy_type == DecoyProgram.TYPE_JAMMER:
-		sig.broadband_base_level_db = 185.0
-		sig.tonal_lines = [{"freq_hz": 900.0, "level_db": 150.0}]
+	var cfg: Dictionary = {}
+	if _world.countermeasures != null:
+		cfg = _world.countermeasures.profile_for(decoy_type)
+	if not cfg.is_empty():
+		sig.from_dict(cfg)
+	else:
+		sig.broadband_base_level_db = 165.0
+		sig.tonal_lines = [
+			{"freq_hz": 240.0, "level_db": 128.0},
+			{"freq_hz": 480.0, "level_db": 122.0},
+		]
+		if decoy_type == DecoyProgram.TYPE_JAMMER:
+			# REQ-AC-03：宽带干扰主体（固定总功率 185 dB / 800–1200 Hz）+
+			# 900 Hz 附加假峰（抖动谱线保留，但不作为宽带全部表示）。
+			sig.broadband_base_level_db = 185.0
+			sig.band_min_hz = 800.0
+			sig.band_max_hz = 1200.0
+			sig.tonal_lines = [{"freq_hz": 900.0, "level_db": 150.0}]
 	prog.signature = sig
 	var ok: bool = _world._launch_decoy(prog)
 	if not ok:
-		var cm: CountermeasureSystem = _world.countermeasures
-		var reason: String = "cooldown" if cm.cooldown_left(_world.sim_time) > 0.0 else "no rounds"
+		var reason: String = _world.last_decoy_reject_reason
+		if reason == "":
+			reason = "unknown"
 		status.emit("Decoy rejected: %s" % reason)
 	else:
 		status.emit("Decoy launched %s @%.0f°" % [decoy_type, prog.launch_bearing_deg])

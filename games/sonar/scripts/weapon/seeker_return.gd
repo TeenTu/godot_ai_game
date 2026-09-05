@@ -38,6 +38,11 @@ var depth_relation: String = "SAME_LAYER"
 # 深度带归向提示（P1-08 配套）：适配器在测量边界内对接触深度做的层带
 # 粗分类（UPPER/LOWER/""），供制导垂直机动；不含精确 Truth 深度。
 var depth_band_hint: String = ""
+# REQ-DEP-01：有噪深度观测（米；<0 = 本帧无有效深度观测）。适配器对接触
+# 深度的带高斯噪声估计——层关系/带提示均从本观测推导。观测值仅供内核
+# 传播/引信几何参考，制导决策只见 depth_band_hint/depth_relation 标签。
+var depth_observed_m: float = -1.0
+var depth_sigma_m: float = 0.0
 var source_kind_hypotheses: Array = []
 var debug_truth_ref: String = ""
 # P0-09：主动链传播——ACTIVE return 携带产生它的 ping_id（同 id 串联）。
@@ -64,5 +69,7 @@ func to_dict() -> Dictionary:
 		"detection_probability": detection_probability,
 		"spectral_features": spectral_features,
 		"depth_relation": depth_relation,
+		"depth_observed_m": depth_observed_m,
+		"depth_sigma_m": depth_sigma_m,
 		"source_kind_hypotheses": source_kind_hypotheses,
 	}

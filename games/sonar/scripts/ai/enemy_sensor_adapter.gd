@@ -85,6 +85,9 @@ func sample_passive(observer: RefCounted, now: float) -> Array:
 				float(observer.depth_m),
 				receiver_ag_db,
 				receiver_dt_db,
+				-1.0,
+				float(observer.position_east_m),
+				float(observer.position_north_m),
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
@@ -148,6 +151,9 @@ func intercept_events(events: Array, observer: RefCounted, now: float) -> Array:
 				float(observer.depth_m),
 				receiver_ag_db,
 				receiver_dt_db,
+				-1.0,
+				float(observer.position_east_m),
+				float(observer.position_north_m),
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
@@ -163,11 +169,12 @@ func intercept_events(events: Array, observer: RefCounted, now: float) -> Array:
 				float(src.get("n", 0.0)),
 			)
 		)
-		out.append(
-			_make_evidence(
-				"EMISSION_INTERCEPT", now, src_brg, se, pd, freq, str(ev.get("emission_kind", ""))
-			)
-		)
+		# REQ-AI-02 诱饵类别中和：敌方只知"有未知瞬态"，绝不从事件类别读到
+		# DECOY 身份（否则敌雷/敌方 doctrine 自动识破反制，违反 §9.3）。
+		var kind: String = str(ev.get("emission_kind", ""))
+		if kind == AcousticEmissionEvent.DECOY_ACTIVATION:
+			kind = "UNKNOWN_TRANSIENT"
+		out.append(_make_evidence("EMISSION_INTERCEPT", now, src_brg, se, pd, freq, kind))
 	return out
 
 
