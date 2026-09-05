@@ -108,6 +108,16 @@ func sync() -> void:
 		"Rounds %d | Inv %d | CD %.0fs | Own decoys %d"
 		% [cm.ready_rounds, cm.inventory, cd, lines.size()]
 	)
+	# REQ-UI-03 频带提示：JAMMER 配置的干扰频带（发射前即可见，本艇事实）。
+	var jam: Dictionary = cm.profile_for(DecoyProgram.TYPE_JAMMER)
+	if not jam.is_empty() and float(jam.get("band_max_hz", 0.0)) > 0.0:
+		state += (
+			"\nJAMMER band %.0f–%.0f Hz"
+			% [
+				float(jam.get("band_min_hz", 800.0)),
+				float(jam.get("band_max_hz", 1200.0)),
+			]
+		)
 	if not lines.is_empty():
 		state += "\n" + "\n".join(lines)
 	_lbl_state.text = state

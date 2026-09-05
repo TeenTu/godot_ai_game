@@ -80,3 +80,6 @@ ai2_test
 
 #   au_test S1-05 三态自动化：MANUAL 无动作/ASSISTED 提案去重/FULL_AUTO+ROE/槽位计龄释放/Take Control 一 tick 生效+审计（AU-1..5）
 au_test
+
+#   ui2_test S1-01 面板补全+S1-08：FIT_MODES 索引修复/JAMMER 频带提示/告警分组+BDA 汇总/StartMenu 教程（UI-1）
+ui2_test

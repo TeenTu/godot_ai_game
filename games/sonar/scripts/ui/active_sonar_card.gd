@@ -269,10 +269,12 @@ func set_data(d: Dictionary) -> void:
 	elif fit_txt == "REJECTED":
 		fit_col = Color(1.0, 0.4, 0.35)
 	_lbl_tma_fit.add_theme_color_override("font_color", fit_col)
-	# REQ-02：模式 OptionButton 同步（select 不触发 item_selected）+ 提示行显隐
+	# REQ-02：模式 OptionButton 同步（select 不触发 item_selected）+ 提示行显隐。
+	# REQ-UI-03 修复 FIT_MODES 索引 bug：旧 maxi(fi,1) 会把 AUTO(0) 误显示为
+	# ASSISTED(1)；未知模式才回退 ASSISTED。
 	var fm: String = str(d.get("fit_mode", "ASSISTED"))
 	var fi: int = FIT_MODES.find(fm)
-	_opt_fit_mode.select(maxi(fi, 1))
+	_opt_fit_mode.select(fi if fi >= 0 else 1)
 	_opt_fit_mode.tooltip_text = (
 		"AUTO: refit Trial on every active range\n"
 		+ "ASSISTED: ask before applying range to Trial\n"
