@@ -136,9 +136,6 @@ func _on_self_resized() -> void:
 	pass
 
 
-# ---- UI 构建 ----
-
-
 func _build_ui() -> void:
 	var root := VBoxContainer.new()
 	root.size = size
@@ -238,6 +235,10 @@ func _build_panel() -> void:
 	_op_panel.active_apply_requested.connect(func(): _ping_ctrl.apply_pending())
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
+	# S1-05：三态自动化最小控制（面板持有 AutomationController，自驱动 _process）。
+	var auto_panel := AutomationPanelUI.new()
+	auto_panel.bind(tracker, _auto_refit_track)
+	_section_body(_make_section("Automation")).add_child(auto_panel)
 
 	# 关键信息区（验收：1280x720 无需滚动可见）
 	_lbl_status = Label.new()
@@ -454,9 +455,6 @@ func _add_spin(title: String, min_v: float, max_v: float, step: float, val: floa
 	return sp
 
 
-# ---- 仿真推进 ----
-
-
 func _process(delta: float) -> void:
 	if world == null:
 		return
@@ -509,9 +507,6 @@ func _feed_new_measurements() -> void:
 					tracker.mark(m, "S")
 		# Operator 模式：测量已在 Mark/Autocrew 时喂 Tracker，这里只推游标。
 		_processed_meas += 1
-
-
-# ---- 数据重建（脏标记触发） ----
 
 
 ## 重建 LOB / meas_index / BT 点列 / 残差数组。
@@ -630,9 +625,6 @@ func _selected_track() -> Track:
 	return null
 
 
-# ---- 轻量每帧更新（不重建数组） ----
-
-
 func _update_displays_light() -> void:
 	var own: TruthEntity = world.world["own"]
 	_chart.now_time = world.sim_time
@@ -695,9 +687,6 @@ func _color_for_track(id: String) -> Color:
 	var c: Color = palette[_track_colors.size() % palette.size()]
 	_track_colors[id] = c
 	return c
-
-
-# ---- 面板 ----
 
 
 func _update_panel() -> void:
@@ -792,9 +781,6 @@ func _on_contact_selected(track_id: String) -> void:
 	_dirty = true
 	_rebuild_display_data()
 	_update_status("Selected " + track_id + " — Auto Fit will use this contact")
-
-
-# ---- 交互回调 ----
 
 
 func _on_layer_toggle(on: bool, key: String) -> void:
@@ -909,6 +895,12 @@ func _on_fit_tma() -> void:
 			]
 		)
 	)
+
+
+## S1-05：FULL_AUTO REFIT 动作执行（选中航迹并走既有 Auto Fit 链）。
+func _auto_refit_track(tid: String) -> void:
+	selected_track_id = tid
+	_on_fit_tma()
 
 
 func _on_enter_solution() -> void:
@@ -1031,9 +1023,6 @@ func _op_step() -> void:
 	_op_panel.refresh(op)
 
 
-# ---- TOWED 拖曳阵：部署/回收 + 状态显示 ----
-
-
 func _towed_ref() -> TowedArray:
 	if world == null:
 		return null
@@ -1094,9 +1083,6 @@ func _refresh_towed_status() -> void:
 	)
 	_op_panel.set_towed_status(line, true)
 	_op_panel.update_towed_controls(t)
-
-
-# ---- 主动声呐 Ping：薄接线，逻辑在 ActivePingController ----
 
 
 func _on_ping_requested() -> void:

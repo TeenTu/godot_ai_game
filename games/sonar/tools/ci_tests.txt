@@ -77,3 +77,6 @@ dep_test
 
 #   ai2_test P0-D 场景入口与敌方反击：seed 复现/入口覆写/来源过滤/诱饵中和/延迟反击/拒发归还/击沉取消/双向换层/教学vs战斗（AI-1..4）
 ai2_test
+
+#   au_test S1-05 三态自动化：MANUAL 无动作/ASSISTED 提案去重/FULL_AUTO+ROE/槽位计龄释放/Take Control 一 tick 生效+审计（AU-1..5）
+au_test
