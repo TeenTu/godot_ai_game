@@ -11,9 +11,10 @@ extends TruthEntity
 ##   JAMMER_CONFUSER：宽带高噪抬噪声底 + 运行时抖动的假峰谱线（稀释/混淆，
 ##     不稳定谱 → 航迹 classification_match 低 → score 竞争中被稀释）。
 
-## REQ-CM-01：世界内全局唯一序号（静态计数器跨 World 实例单调递增，
-## 同平台/不同发射器/重复发射均不碰撞）。
-static var _serial: int = 0
+## REQ-CM-01：全局唯一序号，存于主循环 meta（跨 World 实例单调递增）。不用
+## static var——Godot 4.5 Windows 退出阶段 static 清理会随机段错误（曾是
+## decoy_test 关机 crash 的根因）；主循环 meta 随 SceneTree 释放，无此问题。
+const _SERIAL_META := "_decoy_serial_next"
 
 var decoy_type: String = DecoyProgram.TYPE_MOBILE
 var activation_delay_s: float = 2.0
@@ -29,6 +30,17 @@ var _jitter_rng: RandomNumberGenerator = null
 var _base_tonals: Array = []  # 出厂谱线（JAMMER 抖动的基准）
 
 
+## 全局自增序号（REQ-CM-01）。经 Engine.get_main_loop() meta 持久化；无主循环
+## （纯脚本静态上下文）时退化为 0，调用方仍可显式指定 id_str。
+func _next_serial() -> int:
+	var ml := Engine.get_main_loop()
+	if ml == null:
+		return 0
+	var n: int = int(ml.get_meta(_SERIAL_META, 0)) + 1
+	ml.set_meta(_SERIAL_META, n)
+	return n
+
+
 ## 部署：从发射平台当前实际位置/深度出发（REQ-CM-02：不瞬移到层带 hold），
 ## 按程序设定航向/速度/命令深度（限速率爬降由 TruthEntity.advance 执行）。
 func deploy(
@@ -40,8 +52,7 @@ func deploy(
 ) -> void:
 	# REQ-CM-01：唯一 ID——外部未指定时用全局序号；旧 "DCY-%s" % from.id 会
 	# 让同平台第二枚覆盖第一枚的画像（_acoustic_scene_acs 按 ID 建表）。
-	_serial += 1
-	id = id_str if id_str != "" else "DCY-%d" % _serial
+	id = id_str if id_str != "" else "DCY-%d" % _next_serial()
 	launched_from_id = from.id
 	decoy_type = prog.decoy_type
 	activation_delay_s = prog.activation_delay_s

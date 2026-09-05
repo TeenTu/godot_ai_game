@@ -54,7 +54,7 @@
     }
   },
   "own_acoustic": {
-    "broadband_base_level_db": 45.0,
+    "broadband_base_level_db": 110.0,
     "speed_noise_a": 15.0,
     "speed_noise_n": 2.0,
     "speed_noise_vref_kn": 5.0,

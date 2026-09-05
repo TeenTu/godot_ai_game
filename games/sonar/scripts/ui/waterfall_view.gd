@@ -41,6 +41,17 @@ var cursor_value: float = NAN
 var cursor_time: float = -1.0
 var markers: Array = []  # [{x, color, label}] 竖线标记（谐波/转向）
 
+# REQ-AC-06：AGC 显示校准（只影响显示，不改波形/P_d/证据/TMA）。
+# floor=smooth(P10(window)); ceiling=smooth(P99(window));
+# display=clamp((x-floor)/max(ceiling-floor,min_span),0,1)。
+# 百分位/最小 span 可配置；极强单峰被 P99 稳健统计排除，不致全屏闪烁。
+var agc_enabled: bool = true
+var agc_window_rows: int = 24
+var agc_percentile_lo: float = 0.10
+var agc_percentile_hi: float = 0.99
+var agc_min_span_db: float = 8.0
+var agc_smooth: float = 0.15  # attack/release 平滑系数（每行）
+
 var _img: Image = null
 var _tex: ImageTexture = null
 var _img_dirty: bool = true
@@ -83,8 +94,30 @@ func _rebuild_image() -> void:
 	var h: int = maxi(rows.size(), 2)
 	_img = Image.create(w, h, false, Image.FORMAT_RGB8)
 	var true_mode: bool = axis_mode == "bearing" and bearing_mode == "true"
+	var agc_lo: float = NAN
+	var agc_hi: float = NAN
 	for r in range(rows.size()):
 		var vals: PackedFloat32Array = rows[r]["values"]
+		var lo: float = db_min
+		var hi_span: float = db_max - db_min
+		if agc_enabled:
+			# 滚动稳健统计（最近 window 行）→ 平滑 floor/ceiling（逐行确定，
+			# 同 rows 重建结果一致）。
+			var w0: int = maxi(r - agc_window_rows + 1, 0)
+			var pool: PackedFloat32Array = PackedFloat32Array()
+			for rr in range(w0, r + 1):
+				pool.append_array(rows[rr]["values"])
+			pool.sort()
+			var p_lo: float = pool[clampi(
+				int(agc_percentile_lo * (pool.size() - 1)), 0, pool.size() - 1
+			)]
+			var p_hi: float = pool[clampi(
+				int(agc_percentile_hi * (pool.size() - 1)), 0, pool.size() - 1
+			)]
+			agc_lo = p_lo if is_nan(agc_lo) else lerpf(agc_lo, p_lo, agc_smooth)
+			agc_hi = p_hi if is_nan(agc_hi) else lerpf(agc_hi, p_hi, agc_smooth)
+			lo = agc_lo
+			hi_span = maxf(agc_hi - agc_lo, agc_min_span_db)
 		if true_mode:
 			# TRUE STABILIZED 重排（S1-01）：源列恒为 -180..180（每格 2°，
 			# 与显示轴 x_min/x_max 无关！），目标列才是 0..360 真北方位。
@@ -96,12 +129,12 @@ func _rebuild_image() -> void:
 				var true_deg: float = fposmod(course + rel, 360.0)
 				var tc: int = clampi(int(floor(true_deg / 360.0 * float(w))), 0, w - 1)
 				var db: float = float(vals[c])
-				var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
+				var t: float = clampf((db - lo) / hi_span, 0.0, 1.0)
 				_img.set_pixel(tc, h - 1 - r, _cmap(t))
 		else:
 			for c in range(w):
-				var db: float = float(vals[c]) if c < vals.size() else db_min
-				var t: float = clampf((db - db_min) / (db_max - db_min), 0.0, 1.0)
+				var db: float = float(vals[c]) if c < vals.size() else lo
+				var t: float = clampf((db - lo) / hi_span, 0.0, 1.0)
 				_img.set_pixel(c, h - 1 - r, _cmap(t))
 	_tex = ImageTexture.create_from_image(_img)
 

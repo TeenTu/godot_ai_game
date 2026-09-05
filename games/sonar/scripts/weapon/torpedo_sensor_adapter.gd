@@ -112,6 +112,10 @@ func sample_passive(
 				ag,
 				dt_db,
 				profile.receiver_self_noise_db(tp_speed_kn),
+				tp_e,
+				tp_n,
+				tp_course_deg,
+				beam_half,
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, k_d)
@@ -137,6 +141,10 @@ func sample_passive(
 						"range_m": -1.0,
 						"range_sigma_m": -1.0,
 						"source_token": str(contact_tokens.get(cid, "")),
+						"rx_e": tp_e,
+						"rx_n": tp_n,
+						"rx_course_deg": tp_course_deg,
+						"beam_half_deg": beam_half,
 					},
 				)
 			)
@@ -274,6 +282,10 @@ func collect_due_active_returns(
 					ag,
 					dt_db,
 					profile.receiver_self_noise_db(tp_speed_kn),
+					tp_e,
+					tp_n,
+					float(e.get("tp_course_deg", 0.0)),
+					profile.active_fov_half_deg,
 				)
 			)
 			var pd: float = AcousticService.detection_probability(se, k_d)
@@ -401,8 +413,26 @@ func _spectral_features(
 					continue
 				var tl_db: float = AcousticService.propagation_loss(range_m, f, env)
 				tl_db += env.cross_layer_extra_db(f, z_s, z_r)
-				var n_eff: float = env.effective_noise_db_with_self(
-					f, profile.receiver_self_noise_db(recv_kn)
+				# REQ-AC-03：谱线同样吃宽带干扰（同一 N_eff 口径，含波束响应）。
+				var has_rx: bool = extra.has("rx_e") and not env.interferers.is_empty()
+				var n_eff: float = (
+					(
+						env
+						. effective_noise_db_at(
+							f,
+							profile.receiver_self_noise_db(recv_kn),
+							recv_kn,
+							float(extra.get("rx_e", 0.0)),
+							float(extra.get("rx_n", 0.0)),
+							z_r,
+							float(extra.get("rx_course_deg", -1.0)),
+							float(extra.get("beam_half_deg", 180.0)),
+						)
+					)
+					if has_rx
+					else env.effective_noise_db_with_self(
+						f, profile.receiver_self_noise_db(recv_kn)
+					)
 				)
 				var se_line: float = lvl - tl_db - n_eff
 				var pd_line: float = AcousticService.detection_probability(

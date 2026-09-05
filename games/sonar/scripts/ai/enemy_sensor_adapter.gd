@@ -85,6 +85,9 @@ func sample_passive(observer: RefCounted, now: float) -> Array:
 				float(observer.depth_m),
 				receiver_ag_db,
 				receiver_dt_db,
+				-1.0,
+				float(observer.position_east_m),
+				float(observer.position_north_m),
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
@@ -148,6 +151,9 @@ func intercept_events(events: Array, observer: RefCounted, now: float) -> Array:
 				float(observer.depth_m),
 				receiver_ag_db,
 				receiver_dt_db,
+				-1.0,
+				float(observer.position_east_m),
+				float(observer.position_north_m),
 			)
 		)
 		var pd: float = AcousticService.detection_probability(se, receiver_k_d)

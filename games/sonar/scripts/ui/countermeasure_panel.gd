@@ -140,7 +140,11 @@ func _launch(decoy_type: String) -> void:
 			{"freq_hz": 480.0, "level_db": 122.0},
 		]
 		if decoy_type == DecoyProgram.TYPE_JAMMER:
+			# REQ-AC-03：宽带干扰主体（固定总功率 185 dB / 800–1200 Hz）+
+			# 900 Hz 附加假峰（抖动谱线保留，但不作为宽带全部表示）。
 			sig.broadband_base_level_db = 185.0
+			sig.band_min_hz = 800.0
+			sig.band_max_hz = 1200.0
 			sig.tonal_lines = [{"freq_hz": 900.0, "level_db": 150.0}]
 	prog.signature = sig
 	var ok: bool = _world._launch_decoy(prog)

@@ -18,6 +18,9 @@ var blade_count: int = 7
 var shaft_count: int = 1
 var active_target_strength_db: float = 10.0
 var decoy_similarity: float = 0.0
+## REQ-AC-03：JAMMER 宽带频带（Hz；band_max<=band_min = 无带定义，按总级直用）。
+var band_min_hz: float = 0.0
+var band_max_hz: float = 0.0
 
 
 ## 空化临界速度（随深度增加而提高）：Vcav(z) = Vcav_surf + slope * depth
@@ -31,14 +34,19 @@ func is_cavitating(speed_kn: float, depth_m: float) -> bool:
 
 
 ## 宽带声源级 SL_BB(V, z)。
-## SL_BB = SL0 + A*log10(1 + (V/Vref)^n) + C_cav * I(V > Vcav(z))
+## SL_BB = SL0 + A*log10(1 + (V/Vref)^n) + C_cav * g(V, Vcav(z))。
+## REQ-AC-04：空化改为 smoothstep 连续项（旧实现为 I(V>Vcav) 硬阶跃，
+## 跨临界航速时声级跳变 12 dB 不连续；g 在 [Vcav, 1.25*Vcav] 内 0→1）。
 func broadband_sl_db(speed_kn: float, depth_m: float) -> float:
 	var ratio: float = maxf(speed_kn, 0.0) / maxf(speed_noise_vref_kn, 0.0001)
 	var sl: float = (
 		broadband_base_level_db + speed_noise_a * log(1.0 + pow(ratio, speed_noise_n)) / log(10.0)
 	)
-	if is_cavitating(speed_kn, depth_m):
-		sl += cavitation_extra_db
+	var vcav: float = cavitation_speed_kn(depth_m)
+	if speed_kn > vcav:
+		var t: float = clampf((speed_kn - vcav) / maxf(0.25 * vcav, 0.1), 0.0, 1.0)
+		var g: float = t * t * (3.0 - 2.0 * t)  # smoothstep
+		sl += cavitation_extra_db * g
 	return sl
 
 
@@ -66,3 +74,5 @@ func from_dict(d: Dictionary) -> void:
 	shaft_count = int(d.get("shaft_count", shaft_count))
 	active_target_strength_db = float(d.get("active_target_strength_db", active_target_strength_db))
 	decoy_similarity = float(d.get("decoy_similarity", decoy_similarity))
+	band_min_hz = float(d.get("band_min_hz", band_min_hz))
+	band_max_hz = float(d.get("band_max_hz", band_max_hz))

@@ -850,8 +850,7 @@ func _on_fit_tma() -> void:
 	if sel == null:
 		_update_status("No contact selected — click a contact first")
 		return
-	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），
-	# 不再用原始 Measurement 行数——否则拖曳 2 次点击(4 行)会被误放行。
+	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），不再用原始 Measurement 行数。
 	if sel.evidence_count() < 4:
 		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
 		return
@@ -998,7 +997,8 @@ func _op_step() -> void:
 	var scene: Array = world._acoustic_scene_emitters()
 	var scene_acs: Dictionary = world.world["target_acs"].duplicate()
 	scene_acs.merge(world._acoustic_scene_acs())
-	op.update(world.sim_time, world.world["targets"] + scene, scene_acs)
+	# REQ-AC-01：按仿真节拍追帧（倍速不跳行）；UI 切换不改变物理 RNG 消耗。
+	op.catch_up_rows(world.sim_time, world.world["targets"] + scene, scene_acs)
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
