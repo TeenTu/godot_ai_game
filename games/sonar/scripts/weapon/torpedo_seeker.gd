@@ -9,11 +9,12 @@ extends RefCounted
 ## 相位（§7.3 滞回；映射到 Torpedo.SeekerState 呈现）：
 ##   SEARCH → (best.lock>=acquire) → ACQUIRING
 ##   ACQUIRING → (lock>=stable) → TRACKING
-##   TRACKING → (lock<drop) → LOST
+##   TRACKING → (目标离开 FOV) → COAST（按最后方位+率短时预测）
+##   TRACKING/COAST → (lock<drop / COAST 超时) → LOST
 ##   LOST/REACQUIRE → (任一 track 重新达到 acquire) → REACQUIRE → TRACKING
 ##   LOST 超时 reacquire_timeout_s → SEARCH（§7.6 第 6 步）
 
-enum Phase { SEARCH, ACQUIRING, TRACKING, LOST, REACQUIRE }
+enum Phase { SEARCH, ACQUIRING, TRACKING, COAST, LOST, REACQUIRE }
 
 const MAX_TRACKS: int = 8
 
@@ -23,10 +24,15 @@ var selected_track_id: int = -1
 ## 载体（鱼雷）当前自转率（度/秒，自身运动学合法数据）：相对方位率 + 自转
 ## = 惯性视线率（kine 一致性与提前量消费）。
 var own_turn_rate_deg_s: float = 0.0
+## REQ-06：载体实际艏向 + 接收半角（机会判定：航迹预测方位是否在 FOV 内。
+## FOV 外无有效测量机会，不计 miss；离开 FOV → COAST）。
+var own_course_deg: float = 0.0
+var fov_half_deg: float = 60.0
 
 var _cfg: Dictionary = {}
 var _phase_since: float = 0.0
 var _lost_bearing_deg: float = 0.0
+var _last_now: float = 0.0
 
 
 ## cfg（全部可配置；缺省为文档示例量级）：
@@ -106,15 +112,12 @@ func process_returns(returns: Array, now: float) -> Dictionary:
 	return {"new_track_ids": new_ids}
 
 
-## 每 tick 计龄与相位推进。返回 {changed, phase, selected_track_id, lost_bearing_deg}。
+## 每 tick 推进相位。REQ-03：miss 不再按仿真 tick/壁钟时间统一扣分——
+## 只按"有效测量机会"计龄（notify_passive_scan / notify_active_miss 由
+## Torpedo 在被动扫描完成 / 主动监听窗结束时调用）。本函数只做相位机与
+## 超龄航迹清理。返回 {changed, phase, selected_track_id, lost_bearing_deg}。
 func update(now: float) -> Dictionary:
-	var miss_after: float = _c("miss_after_s", 1.2)
-	var beta: float = _c("beta_miss", 0.10)
-	for t in tracks:
-		if t.last_update_time >= 0.0 and now - t.last_update_time > miss_after:
-			# 每 miss 窗口只计一次。
-			if t.last_miss_time < 0.0 or now - t.last_miss_time >= miss_after:
-				t.age_miss(now, beta)
+	_last_now = now
 	# 超龄航迹清理（久无更新且质量耗尽）。
 	tracks = tracks.filter(
 		func(t: SeekerTrack) -> bool:
@@ -148,17 +151,53 @@ func update(now: float) -> Dictionary:
 			if sel == null or sel.lock_quality < _c("drop_threshold", 0.25):
 				if sel != null:
 					_lost_bearing_deg = sel.bearing_estimate_deg
+					_set_loss_kind(sel, "QUALITY_DROP")
 				else:
 					_lost_bearing_deg = -1.0
 				phase = Phase.LOST
 				_phase_since = now
 				selected_track_id = -1
 				changed = true
+			elif not _track_in_fov(sel):
+				# REQ-06：目标暂时离开 FOV → COAST（保持最后方位+率预测，
+				# 不立刻 LOST）。COAST 超时由 COAST 分支判。
+				phase = Phase.COAST
+				_phase_since = now
+				changed = true
+		Phase.COAST:
+			var sel2: SeekerTrack = _track(selected_track_id)
+			if sel2 == null or sel2.lock_quality < _c("drop_threshold", 0.25):
+				if sel2 != null:
+					_lost_bearing_deg = sel2.bearing_estimate_deg
+					_set_loss_kind(sel2, "QUALITY_DROP")
+				phase = Phase.LOST
+				_phase_since = now
+				selected_track_id = -1
+				changed = true
+			elif _track_in_fov(sel2):
+				# 重新进入覆盖范围 → REACQUIRE（过渡）→ 稳定后 TRACKING。
+				phase = Phase.REACQUIRE
+				_phase_since = now
+				changed = true
+			elif now - _phase_since > _c("coast_timeout_s", 32.0):
+				# COAST 超时（覆盖 Ping 间隔+最大回波延迟+余量）→ LOST。
+				_lost_bearing_deg = sel2.bearing_estimate_deg
+				_set_loss_kind(sel2, "OUT_OF_FOV")
+				phase = Phase.LOST
+				_phase_since = now
+				selected_track_id = -1
+				changed = true
 		Phase.LOST, Phase.REACQUIRE:
 			# §7.6：围绕最后预测方位扩大扇区重搜；任一航迹重新达到捕获阈值
+			# 且**在脱锁后有新测量**（REQ-06：禁止对陈旧航迹幽灵重锁——目标
+			# 永久消失时必须能走到 SEARCH 重搜，不得 COAST→LOST→REACQUIRE 死循环）
 			# → REACQUIRE（过渡相位）→ 稳定后 TRACKING。
 			var best: SeekerTrack = _best_track()
-			if best != null and best.lock_quality >= _c("acquire_threshold", 0.65):
+			if (
+				best != null
+				and best.lock_quality >= _c("acquire_threshold", 0.65)
+				and best.last_update_time > _phase_since
+			):
 				selected_track_id = best.seeker_track_id
 				if phase == Phase.LOST:
 					phase = Phase.REACQUIRE
@@ -168,7 +207,7 @@ func update(now: float) -> Dictionary:
 				phase = Phase.SEARCH
 				_phase_since = now
 				changed = true
-	# REACQUIRE 过渡：再更新一轮仍达标 → TRACKING。
+		# REACQUIRE 过渡：再更新一轮仍达标 → TRACKING。
 	if phase == Phase.REACQUIRE and now - _phase_since > 2.0 * _c("miss_after_s", 1.2):
 		var sel: SeekerTrack = _track(selected_track_id)
 		if sel != null and sel.lock_quality >= _c("acquire_threshold", 0.65):
@@ -186,6 +225,54 @@ func update(now: float) -> Dictionary:
 		"selected_track_id": selected_track_id,
 		"lost_bearing_deg": _lost_bearing_deg,
 	}
+
+
+## 航迹预测方位是否在当前接收 FOV 内（REQ-06：机会判定与 COAST 判定同一门）。
+func _track_in_fov(t: SeekerTrack) -> bool:
+	if fov_half_deg >= 180.0:
+		return true
+	var pred: float = t.predicted_bearing_deg(_last_now)
+	return absf(NavUtils.wrap180(pred - own_course_deg)) <= fov_half_deg
+
+
+## REQ-03：被动扫描完成（无关联 return 的航迹按机会计一次 miss）。
+## 每个 passive_miss_window_s（默认 1.2s）最多计一次；FOV 外航迹无机会，
+## 不计 miss。 Torpedo 在每个被动采样周期末尾调用（无论有无 return——有
+## return 的航迹会被关联更新，自然不受罚）。
+func notify_passive_scan(now: float) -> void:
+	_last_now = now
+	var window: float = _c("passive_miss_window_s", 1.2)
+	var beta: float = _c("beta_miss", 0.10)
+	for t in tracks:
+		if t.last_update_time < 0.0:
+			continue
+		if not _track_in_fov(t):
+			continue
+		if (
+			now - t.last_passive_update_time > window
+			and (t.last_miss_time < 0.0 or now - t.last_miss_time >= window * 0.5)
+		):
+			t.age_miss(now, beta, "PASSIVE")
+
+
+## REQ-03：主动 Ping 监听窗结束且无回波——对 FOV 内航迹记一次 active miss
+##（每次 Ping 恰好一次，两次 Ping 之间绝不按 tick 扣分）。纯被动航迹同判：
+## 它在主动 FOV 内本应产生回波，未产生即有效机会落空。
+func notify_active_miss(now: float) -> void:
+	var beta: float = _c("beta_miss", 0.10)
+	for t in tracks:
+		if t.last_update_time < 0.0:
+			continue
+		if not _track_in_fov(t):
+			continue
+		t.age_miss(now, beta, "ACTIVE")
+
+
+func _set_loss_kind(t: SeekerTrack, kind: String) -> void:
+	if t.last_miss_channel == "ACTIVE":
+		t.loss_kind = "AGED_OUT_ACTIVE"
+	else:
+		t.loss_kind = kind
 
 
 ## 多目标竞争（§7.4）：score 最高且达到捕获阈值的航迹；已锁对象有 continuity

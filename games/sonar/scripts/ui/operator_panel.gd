@@ -29,6 +29,8 @@ var wf_bb: WaterfallView = null
 var wf_nb: WaterfallView = null
 var wf_demon: WaterfallView = null
 var _lbl_bb_mode: Label = null  # 标注当前 BB 瀑布显示基准（RELATIVE / TRUE STABILIZED）
+var _lbl_nb_band: Label = null  # REQ-09：窄带频段标注
+var _sonar: OperatorSonar = null  # REQ-09：refresh 时缓存引用（频段切换用）
 
 var _autocrew: CheckBox = null
 var _lbl_class: Label = null
@@ -174,6 +176,29 @@ func _init() -> void:
 	add_child(wf_bb)
 
 	add_child(_mk_label("Narrowband / LOFAR (freq-time)"))
+	# REQ-09/验收11：窄带频段切换（0-500 / 500-3000 / 8000-16000 Hz）。
+	var nb_band_row := HBoxContainer.new()
+	nb_band_row.add_theme_constant_override("separation", 6)
+	add_child(nb_band_row)
+	_lbl_nb_band = Label.new()
+	_lbl_nb_band.text = "NB band: 0-500 Hz"
+	_lbl_nb_band.add_theme_font_size_override("font_size", 12)
+	nb_band_row.add_child(_lbl_nb_band)
+	var nb_band_opt := OptionButton.new()
+	nb_band_opt.add_item("0-500 Hz")
+	nb_band_opt.add_item("500-3000 Hz")
+	nb_band_opt.add_item("8000-16000 Hz")
+	nb_band_opt.select(0)
+	nb_band_opt.item_selected.connect(
+		func(i: int):
+			var preset: String = ["LOW", "MID", "HIGH"][i]
+			if _sonar != null and _sonar.set_nb_band(preset):
+				var band: Vector2 = OperatorSonar.NB_BANDS[preset]
+				wf_nb.x_min = band.x
+				wf_nb.x_max = band.y
+				_lbl_nb_band.text = "NB band: %d-%d Hz" % [int(band.x), int(band.y)]
+	)
+	nb_band_row.add_child(nb_band_opt)
 	wf_nb = WaterfallView.new()
 	wf_nb.axis_mode = "freq"
 	wf_nb.x_min = 0.0
@@ -259,6 +284,7 @@ func set_active_sonar(data: Dictionary) -> void:
 ## S1-03B：阵列切换后即使行数相同也强制重建——各阵列缓冲独立，必须立即
 ## 只显示当前阵列自己的历史（拖曳阵双峰不得残留到 BOW/FLANK 视图）。
 func refresh(op: OperatorSonar) -> void:
+	_sonar = op
 	var aid: String = op.active_array_id
 	var force: bool = aid != _last_array_id
 	_last_array_id = aid

@@ -244,6 +244,10 @@ func tick() -> void:
 	_advance_ping_session()
 	# 5) 敌方感知/Doctrine（Commit 9）：证据 → 航迹 → 状态机 → 动作。
 	_advance_enemy_ai(dt)
+	# 5b) REQ-09：统一声场无条件同步——无敌方 AI 场景中玩家鱼雷也必须进入
+	# 声场（旧实现 _sync_torpedo_shadows 藏在 _advance_enemy_ai 末尾，
+	# enemy_ai == null 提前返回导致玩家鱼雷声学影子永不产生）。
+	_sync_torpedo_shadows()
 	# 6) 引信引擎（Commit 10）：几何触发 → 爆炸事件 → Truth 伤害 → 净化证据。
 	_advance_fuze_engine()
 	_advance_player_evidence()
@@ -260,6 +264,7 @@ func _advance_only() -> void:
 	_advance_decoys(dt)
 	_advance_ping_session()
 	_advance_enemy_ai(dt)
+	_sync_torpedo_shadows()  # REQ-09：同 tick()——无条件同步统一声场
 	_advance_fuze_engine()
 	_advance_player_evidence()
 
@@ -431,7 +436,6 @@ func _advance_enemy_ai(dt: float) -> void:
 		if enemy_ai != null:
 			for _id in before_ids:
 				enemy_ai.notify_torpedo_resolved()
-	_sync_torpedo_shadows()
 
 
 ## 同步双方在水鱼雷的内核影子：

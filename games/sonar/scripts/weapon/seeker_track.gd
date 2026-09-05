@@ -24,8 +24,18 @@ var bearing_rate_deg_s: float = 0.0
 ## 相对率混入自身转向，kine 一致性与制导提前量都应消费惯性率。
 var los_rate_deg_s: float = 0.0
 var range_estimate_m: float = -1.0  # <0 = 纯被动无测距（绝不补 Truth 距离）
+## REQ-02：距离率（主动测距 alpha-beta 滤波；m/s，正=拉远）。纯被动恒 0。
+var range_rate_m_s: float = 0.0
 var bearing_var_deg2: float = 100.0  # 简化协方差：方位方差（§7.1 covariance）
 var last_update_time: float = -1.0
+## REQ-03：分通道最近测量/机会时刻——被动扫描与主动 Ping 监听窗是不同的
+## 有效测量机会，miss 只能按各自通道的机会计数，绝不按仿真 tick 连续扣分。
+var last_passive_update_time: float = -1.0
+var last_active_update_time: float = -1.0
+## REQ-03/验收14：最近一次 miss 的通道（PASSIVE/ACTIVE）与脱锁原因标签
+## （OUT_OF_FOV / AGED_OUT_ACTIVE / QUALITY_DROP），供脱靶原因判定。
+var last_miss_channel: String = ""
+var loss_kind: String = ""  # LOST 时写 "OUT_OF_FOV"/"AGED_OUT_ACTIVE"/"QUALITY_DROP"
 var last_miss_time: float = -1.0
 var consecutive_hits: int = 0
 var consecutive_misses: int = 0
@@ -49,9 +59,11 @@ static func create() -> SeekerTrack:
 	return t
 
 
-## 用一条净化 return 更新航迹（§7.2 关联后的测量更新）。cfg 键：
+## cfg 键：
 ##   bearing_smoothing(0.45) rate_smoothing(0.30) alpha_hit(0.22)
-##   gamma_innovation(0.15) meas_se_ref_db(15.0)
+##   gamma_innovation(0.15) meas_se_ref_db(15.0) range_smoothing(0.5)
+##   min_update_dt_s(0.05)：dt 低于此值只做位置更新、跳过率更新（REQ-02：
+##   同一扫描内 dt 过小不得产生方位率尖峰——residual/dt 放大被结构上禁止）。
 func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 	if str(r.depth_band_hint) != "":
 		depth_band_hint = str(r.depth_band_hint)
@@ -60,6 +72,12 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 	var alpha: float = float(cfg.get("alpha_hit", 0.22))
 	var gamma: float = float(cfg.get("gamma_innovation", 0.15))
 	var meas_ref: float = float(cfg.get("meas_se_ref_db", 15.0))
+	var min_dt: float = float(cfg.get("min_update_dt_s", 0.05))
+	# REQ-03：按 return 通道登记最近测量时机（被动/主动分开）。
+	if str(r.sensor_mode) == "ACTIVE":
+		last_active_update_time = now
+	else:
+		last_passive_update_time = now
 
 	var innov: float = 0.0
 	if last_update_time >= 0.0:
@@ -70,9 +88,10 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 		var theta_pred: float = NavUtils.wrap360(bearing_estimate_deg + bearing_rate_deg_s * dt)
 		innov = NavUtils.wrap180(r.bearing_deg - theta_pred)
 		bearing_estimate_deg = NavUtils.wrap360(theta_pred + smoothing * innov)
-		bearing_rate_deg_s = clampf(
-			bearing_rate_deg_s + (rate_smoothing / dt) * innov, -MAX_RATE_ABS, MAX_RATE_ABS
-		)
+		if dt >= min_dt:
+			bearing_rate_deg_s = clampf(
+				bearing_rate_deg_s + (rate_smoothing / dt) * innov, -MAX_RATE_ABS, MAX_RATE_ABS
+			)
 		los_rate_deg_s = clampf(
 			bearing_rate_deg_s + float(cfg.get("own_turn_rate_deg_s", 0.0)),
 			-MAX_RATE_ABS,
@@ -84,9 +103,19 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 	var sigma: float = maxf(r.bearing_sigma_deg, 0.5)
 	bearing_var_deg2 = lerp(bearing_var_deg2, sigma * sigma, 0.30)
 	if r.range_m >= 0.0:
-		range_estimate_m = (
-			r.range_m if range_estimate_m < 0.0 else lerp(range_estimate_m, r.range_m, 0.5)
-		)
+		# REQ-02：主动测距同步 alpha-beta——距离状态 + 距离率状态（预测项用
+		# 上一拍距离率；同一 dt 尖峰防护门）。
+		if range_estimate_m < 0.0:
+			range_estimate_m = r.range_m
+			range_rate_m_s = 0.0
+		else:
+			var r_dt: float = maxf(now - last_update_time, 0.001)
+			var r_pred: float = range_estimate_m + range_rate_m_s * r_dt
+			var r_innov: float = r.range_m - r_pred
+			var r_sm: float = float(cfg.get("range_smoothing", 0.5))
+			range_estimate_m = r_pred + r_sm * r_innov
+			if r_dt >= min_dt:
+				range_rate_m_s = clampf(range_rate_m_s + (0.30 / r_dt) * r_innov, -200.0, 200.0)
 	mean_signal_excess_db = (
 		r.signal_excess_db
 		if total_hits == 0
@@ -123,12 +152,16 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 
 
 ## 采样窗内无 return → miss 计龄（β_miss 惩罚，§7.3）。
-func age_miss(now: float, beta_miss: float) -> void:
+## REQ-03：channel = "PASSIVE"/"ACTIVE"（有效测量机会通道），只用于
+## 脱靶原因判定，不影响惩罚本身（惩罚由调用方按机会节流）。
+func age_miss(now: float, beta_miss: float, channel: String = "") -> void:
 	consecutive_misses += 1
 	total_misses += 1
 	lock_quality = clampf(lock_quality - beta_miss, 0.0, 1.0)
 	_recompute_track_quality()
 	last_miss_time = now
+	if channel != "":
+		last_miss_channel = channel
 
 
 ## 航迹质量 = 命中占比（连续性），与 lock_quality（含测量质量/创新惩罚）分离。
@@ -228,6 +261,8 @@ func to_summary() -> Dictionary:
 		"bearing_sigma_deg": snappedf(sqrt(maxf(bearing_var_deg2, 0.0)), 0.1),
 		"bearing_rate_deg_s": snappedf(bearing_rate_deg_s, 0.01),
 		"has_range": range_estimate_m >= 0.0,
+		"range_m": snappedf(range_estimate_m, 0.1) if range_estimate_m >= 0.0 else -1.0,
+		"range_rate_m_s": snappedf(range_rate_m_s, 0.1) if range_estimate_m >= 0.0 else 0.0,
 		"lock_quality": snappedf(lock_quality, 0.01),
 		"track_quality": snappedf(track_quality, 0.01),
 		"mean_se_db": snappedf(mean_signal_excess_db, 0.1),

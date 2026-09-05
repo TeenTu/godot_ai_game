@@ -33,10 +33,18 @@ static func new_from(tp) -> SeekerBeamState:
 	var st := SeekerBeamState.new()
 	st.torpedo_id = str(tp.torpedo_id)
 	var prof = tp.acoustic_profile
-	var half: float = 0.5 * float(prof.horizontal_beamwidth_deg)
-	st.passive_half_angle_deg = half
-	st.active_tx_half_angle_deg = half
-	st.receive_half_angle_deg = half
+	# REQ-06：被动/主动 FOV 半角分别管理（画像独立字段；旧配置回退 beamwidth）。
+	st.passive_half_angle_deg = (
+		float(prof.passive_fov_half_deg)
+		if float(prof.passive_fov_half_deg) > 0.0
+		else 0.5 * float(prof.horizontal_beamwidth_deg)
+	)
+	st.active_tx_half_angle_deg = (
+		float(prof.active_fov_half_deg)
+		if float(prof.active_fov_half_deg) > 0.0
+		else 0.5 * float(prof.horizontal_beamwidth_deg)
+	)
+	st.receive_half_angle_deg = st.passive_half_angle_deg
 	# 扇区中心 = 实际艏向（转率限制后的连续值，非命令航向）。
 	st.center_true_deg = float(tp.course_deg)
 	var prog = tp.program

@@ -66,3 +66,5 @@ patch_e_test
 patch_f_test
 #   calibration_envelope_test AT-16 声学标定包线：被动/主动 P_d(R) MC 曲线 R50/R90 设计区间+复现性
 calibration_envelope_test
+#   req_overhaul_test  REQ 制导重构批：接管状态机/滤波收敛/主动计龄/PN 制导/COAST/统一声场/频段/传播时延/脱靶原因（RO-01..13）
+req_overhaul_test

@@ -43,6 +43,9 @@ var sigma_max_deg: float = 8.0
 
 var _next_evidence_id: int = 1
 var _last_event_id: int = 0
+## 验收12：单程传播时延在途台账——事件按 t_emit + R/c 才可被发现
+##（出管/电机启动/主动 Ping/爆炸等敌方瞬态不是光速）。到点后再结算。
+var _pending_delayed: Array = []  # [ev, ...]（ emit_time + R/c > now 的敌方事件）
 
 
 func bind(env_ref: RefCounted, depth_ref: RefCounted, r: RandomNumberGenerator) -> void:
@@ -53,6 +56,7 @@ func bind(env_ref: RefCounted, depth_ref: RefCounted, r: RandomNumberGenerator) 
 
 func reset_cursor() -> void:
 	_last_event_id = 0
+	_pending_delayed.clear()
 
 
 ## 消费新事件，产出净化证据（DETONATION_HEARD / 告警 / 本艇武器事实）。
@@ -63,87 +67,122 @@ func consume_events(
 	var out: Array = []
 	if env == null:
 		return out
+	# 先结算到点的在途事件（t_emit + R/c <= now），再消费新事件（保持 event_id
+	# 顺序）。到点判定用接收时刻距离——接收端只掌握几何事实（非 Truth 泄露：
+	# 这是声学到达时间的物理事实，与玩家主动测距同源）。
+	var still_pending: Array = []
+	for ev in _pending_delayed:
+		if _event_available_time(ev, own) <= now:
+			var res: Dictionary = _consume_single(ev, own, now)
+			out.append_array(res["evidence"])
+		else:
+			still_pending.append(ev)
+	_pending_delayed = still_pending
 	for ev in events:
 		var eid: int = int(ev.get("event_id", 0))
 		if eid <= _last_event_id:
 			continue
 		_last_event_id = maxi(_last_event_id, eid)
 		var emitter: String = str(ev.get("emitter_internal_ref", ""))
-		var kind: String = str(ev.get("emission_kind", ""))
-		var own_side: bool = own_emitter_refs.has(emitter)
-		if own_side:
-			# 本艇事实：自己的武器/诱饵事件直接转录（无 Truth 目标信息）。
-			# 方位与接收 SE 由本艇位置对事件源计算（己方武器状态合法信息，
-			# 确定性计算、不消耗 RNG、不做探测门限判定）。
-			out.append(_make_fact(ev, kind, emitter, own))
+		if own_emitter_refs.has(emitter):
+			# 己方事件无传播延迟（本艇事实，接收即合法信息）。
+			out.append(_make_fact(ev, str(ev.get("emission_kind", "")), emitter, own))
 			continue
-		# 敌方事件：单程概率截获（§9.3）。
-		var src: Dictionary = ev.get("source_position_internal", {})
-		var range_m: float = (
-			NavUtils
-			. distance(
-				float(own.position_east_m),
-				float(own.position_north_m),
-				float(src.get("e", 0.0)),
-				float(src.get("n", 0.0)),
-			)
-		)
-		var freq: float = float(ev.get("center_frequency_hz", 1000.0))
-		var sl: float = float(ev.get("source_level_db", 0.0))
-		var se: float = (
-			AcousticService
-			. passive_se_layer(
-				sl,
-				range_m,
-				freq,
-				env,
-				float(own.speed_kn),
-				float(ev.get("source_depth_internal", 0.0)),
-				float(own.depth_m),
-				receiver_ag_db,
-				receiver_dt_db,
-			)
-		)
-		var pd: float = AcousticService.detection_probability(se, receiver_k_d)
-		if rng == null or rng.randf() >= pd:
-			continue  # 未探测 → 无证据 → UI/告警绝不变（§9.8 同纪律）
-		var sigma: float = (
-			sigma_min_deg + (sigma_max_deg - sigma_min_deg) / (1.0 + exp((se - 12.0) / 6.0))
-		)
-		var true_brg: float = (
-			NavUtils
-			. bearing_to_true(
-				float(own.position_east_m),
-				float(own.position_north_m),
-				float(src.get("e", 0.0)),
-				float(src.get("n", 0.0)),
-			)
-		)
-		(
-			out
-			. append(
-				{
-					"evidence_id": _next_evidence_id,
-					"timestamp": now,
-					"available_time": now,
-					"side_hint": "INTERCEPT",
-					"alert": _alert_for(kind),
-					"emission_kind": kind,
-					"evidence_kind": _evidence_kind_for(kind),
-					"sensor_id": "own_passive",
-					"observer_e_m": float(own.position_east_m),
-					"observer_n_m": float(own.position_north_m),
-					"bearing_deg": NavUtils.wrap360(true_brg + rng.randfn(0.0, sigma)),
-					"bearing_sigma_deg": sigma,
-					"se_db": se,
-					"pd": pd,
-					"confidence": clampf(pd, 0.0, 1.0),
-					"freq_hz": freq,
-				}
-			)
-		)
-		_next_evidence_id += 1
+		var avail: float = _event_available_time(ev, own)
+		if avail > now:
+			_pending_delayed.append(ev)  # 在途：到点后结算
+			continue
+		var res2: Dictionary = _consume_single(ev, own, now)
+		out.append_array(res2["evidence"])
 	return out
+
+
+## 事件可用时刻 = t_emit + R/c（单程传播；验收12）。
+func _event_available_time(ev: Dictionary, own: RefCounted) -> float:
+	var src: Dictionary = ev.get("source_position_internal", {})
+	var range_m: float = (
+		NavUtils
+		. distance(
+			float(own.position_east_m),
+			float(own.position_north_m),
+			float(src.get("e", 0.0)),
+			float(src.get("n", 0.0)),
+		)
+	)
+	return float(ev.get("emit_time", 0.0)) + range_m / AcousticService.SOUND_SPEED_M_S
+
+
+## 单事件结算（敌方瞬态概率截获）。返回 {"evidence": [...]}。
+func _consume_single(ev: Dictionary, own: RefCounted, now: float) -> Dictionary:
+	var out: Array = []
+	var kind: String = str(ev.get("emission_kind", ""))
+	# 敌方事件：单程概率截获（§9.3）。
+	var src: Dictionary = ev.get("source_position_internal", {})
+	var range_m: float = (
+		NavUtils
+		. distance(
+			float(own.position_east_m),
+			float(own.position_north_m),
+			float(src.get("e", 0.0)),
+			float(src.get("n", 0.0)),
+		)
+	)
+	var freq: float = float(ev.get("center_frequency_hz", 1000.0))
+	var sl: float = float(ev.get("source_level_db", 0.0))
+	var se: float = (
+		AcousticService
+		. passive_se_layer(
+			sl,
+			range_m,
+			freq,
+			env,
+			float(own.speed_kn),
+			float(ev.get("source_depth_internal", 0.0)),
+			float(own.depth_m),
+			receiver_ag_db,
+			receiver_dt_db,
+		)
+	)
+	var pd: float = AcousticService.detection_probability(se, receiver_k_d)
+	if rng == null or rng.randf() >= pd:
+		return {"evidence": out}  # 未探测 → 无证据 → UI/告警绝不变（§9.8 同纪律）
+	var sigma: float = (
+		sigma_min_deg + (sigma_max_deg - sigma_min_deg) / (1.0 + exp((se - 12.0) / 6.0))
+	)
+	var true_brg: float = (
+		NavUtils
+		. bearing_to_true(
+			float(own.position_east_m),
+			float(own.position_north_m),
+			float(src.get("e", 0.0)),
+			float(src.get("n", 0.0)),
+		)
+	)
+	(
+		out
+		. append(
+			{
+				"evidence_id": _next_evidence_id,
+				"timestamp": now,
+				"available_time": now,
+				"side_hint": "INTERCEPT",
+				"alert": _alert_for(kind),
+				"emission_kind": kind,
+				"evidence_kind": _evidence_kind_for(kind),
+				"sensor_id": "own_passive",
+				"observer_e_m": float(own.position_east_m),
+				"observer_n_m": float(own.position_north_m),
+				"bearing_deg": NavUtils.wrap360(true_brg + rng.randfn(0.0, sigma)),
+				"bearing_sigma_deg": sigma,
+				"se_db": se,
+				"pd": pd,
+				"confidence": clampf(pd, 0.0, 1.0),
+				"freq_hz": freq,
+			}
+		)
+	)
+	_next_evidence_id += 1
+	return {"evidence": out}
 
 
 ## 战果反馈层级（§10.4，纯函数）：输入爆炸证据（含方位）与玩家航迹方位集合

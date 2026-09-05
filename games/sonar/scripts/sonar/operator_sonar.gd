@@ -20,8 +20,15 @@ extends RefCounted
 ##   Measurement 只由 玩家 Mark / 已分配 Tracker / Autocrew 产生。
 
 const BB_BINS: int = 180  # 每格 2°
-const NB_BINS: int = 100  # 0..500 Hz，每格 5 Hz
-const NB_FMAX_HZ: float = 500.0
+const NB_BINS: int = 100  # 频段内均分（随所选频段重映射）
+const NB_FMAX_HZ: float = 500.0  # 兼容旧引用：LOW 频段上限
+## REQ-09/验收11：窄带频段可切换——0～500 / 500～3000 / 8000～16000 Hz。
+## 预设谱线（420/540/660/840/1080/1320 Hz 等）不再被固定 0～500 Hz 过滤。
+const NB_BANDS: Dictionary = {
+	"LOW": Vector2(0.0, 500.0),
+	"MID": Vector2(500.0, 3000.0),
+	"HIGH": Vector2(8000.0, 16000.0),
+}
 const DEMON_BINS: int = 128  # 0..32 Hz 包络谱
 const DEMON_FMAX_HZ: float = 32.0
 const NOISE_FLOOR_DB: float = -28.0
@@ -109,6 +116,10 @@ var rows_by_array: Dictionary = {}
 #   own_e, own_n, tow_center_m, tow_length_m, values, peaks}
 var bb_rows: Array = []
 var nb_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values, tonals}]
+## REQ-09：当前窄带频段（预设键，见 NB_BANDS；默认 LOW 保持旧行为）。
+var nb_band: String = "LOW"
+var nb_fmin_hz: float = 0.0
+var nb_fmax_hz: float = 500.0
 var demon_rows: Array = []  # 当前阵列 [{t, array_id, sensor_id, values}]
 var waterfall_seq: int = 0  # P1-10：单调递增行序号（封顶后 UI 仍可据此刷新）
 var demon_estimate: Dictionary = {}  # {rpm_hz, rpm_sigma_hz, blades, speed_kn, speed_sigma_kn, ..}
@@ -146,6 +157,18 @@ func _bind_rows_to_active() -> void:
 	bb_rows = b["bb"]
 	nb_rows = b["nb"]
 	demon_rows = b["demon"]
+
+
+## REQ-09/验收11：切换窄带频段（"LOW"/"MID"/"HIGH"）；未知键保持不变。
+## 返回是否切换成功。
+func set_nb_band(preset: String) -> bool:
+	if not NB_BANDS.has(preset):
+		return false
+	var band: Vector2 = NB_BANDS[preset]
+	nb_band = preset
+	nb_fmin_hz = band.x
+	nb_fmax_hz = band.y
+	return true
 
 
 func setup(world_dict: Dictionary) -> void:
@@ -395,7 +418,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		# 可见度随 SNR 概率变化，不再 lvl<=0 硬切）
 		for line_v in ac.tonal_lines:
 			var f_hz: float = float(line_v["freq_hz"])
-			if f_hz <= 0.0 or f_hz >= NB_FMAX_HZ:
+			if f_hz <= nb_fmin_hz or f_hz >= nb_fmax_hz:
 				continue
 			var tl_f: float = AcousticService.propagation_loss(rng_m, f_hz, _env)
 			var noise_f: float = _env.effective_noise_db(f_hz, own_speed)
@@ -407,7 +430,11 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			var p_line: float = AcousticService.detection_probability(lvl)
 			if _rng.randf() >= p_line:
 				continue
-			var bi: int = clampi(int(f_hz / NB_FMAX_HZ * NB_BINS), 0, NB_BINS - 1)
+			var bi: int = clampi(
+				int((f_hz - nb_fmin_hz) / maxf(nb_fmax_hz - nb_fmin_hz, 1.0) * NB_BINS),
+				0,
+				NB_BINS - 1,
+			)
 			nb[bi] = maxf(nb[bi], NOISE_FLOOR_DB + minf(lvl * 0.5, 28.0))
 			nb_tonals.append({"freq_hz": f_hz, "level_db": lvl})
 			tonal_count += 1

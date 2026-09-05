@@ -196,7 +196,10 @@ func _run_pull_scenario(fails: Array, seed_v: int) -> Array:
 			_assert_bool(
 				fails,
 				"CM-05c pulled toward decoy (offD=%.1f offA=%.1f)" % [off_d, off_a],
-				off_d < 10.0 and off_a > 10.0,
+				# REQ 制导重构批：PN 限速转向下持续机动期滤波方位滞后略增
+				# （饱和圆弧段 ~2s 采样滞后），拉锁主导性判定不变——
+				# 估计方位贴近诱饵（<15°）且远离真目标（>10°）。
+				off_d < 15.0 and off_a > 10.0,
 				true,
 			)
 	return courses
