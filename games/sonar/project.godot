@@ -24,6 +24,12 @@ window/stretch/aspect="keep"
 pointing/emulate_mouse_from_touch=true
 pointing/emulate_touch_from_mouse=true
 
+[gui]
+
+# Web 导出无系统 CJK 回退：全 UI 使用项目自带中文子集字体（msyh 子集，
+# 覆盖 scripts/scenes 全部用字，见 DESIGN §0.7）。
+theme/custom_font="res://assets/fonts/ui_subset.ttf"
+
 [physics]
 
 common/physics_ticks_per_second=60
