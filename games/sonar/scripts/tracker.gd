@@ -219,8 +219,10 @@ func _find_track(track_id: String) -> Track:
 	return null
 
 
-## 组与某 Track 的关联评分：组内每个候选与 Track 最近测量的角差取最小，
-## 归一化 d²（纯方位风格，与 associate 被动分支一致）；最小角差超门限返回 -1。
+## 组与某 Track 的关联评分：组内每个候选与 Track 在**该测量时刻**的预测
+## 方位（REQ-09：历史行按该时刻预测/证据关联，不只比较最新方位）取最小
+## 角差，归一化 d²（纯方位风格，与 associate 被动分支一致）；最小角差超
+## 门限返回 -1。
 func _group_track_d2(cands: Array, track: Track, max_angle_deg: float) -> float:
 	var prev: Measurement = track.latest_measurement()
 	if prev == null:
@@ -228,9 +230,11 @@ func _group_track_d2(cands: Array, track: Track, max_angle_deg: float) -> float:
 	var best_dang: float = 1.0e18
 	var best_sigma: float = 0.1
 	for m in cands:
-		var dang: float = absf(
-			NavUtils.angle_diff(m.measured_bearing_deg, prev.measured_bearing_deg)
-		)
+		# REQ-09：以该测量自己的时间戳向 Track 外推预测方位。
+		var ref_brg: float = track.predicted_bearing_at(m.timestamp)
+		if ref_brg < 0.0:
+			ref_brg = prev.measured_bearing_deg
+		var dang: float = absf(NavUtils.angle_diff(m.measured_bearing_deg, ref_brg))
 		if dang < best_dang:
 			best_dang = dang
 			var s_theta: float = sqrt(

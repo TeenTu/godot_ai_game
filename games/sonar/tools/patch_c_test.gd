@@ -333,7 +333,7 @@ func _pc_05_own_safety(fails: Array) -> void:
 		tp2.pos_east_m = 5.0
 		tp2.pos_north_m = 0.0
 		tp2.actual_depth_m = float(w.world["own"].depth_m)
-		w._fuze_step_torpedo(tp2, w.world["targets"], true)
+		w._fuze_step_torpedo(tp2, w.world["targets"], true, {}, {}, {}, {}, 0.0)
 		_assert_bool(fails, "PC-05b1 no detonation on own ship", not tp2.is_dead(), true)
 		_assert_bool(fails, "PC-05b2 safety inhibit event", evs2.has("FUZE_SAFETY_INHIBIT"), true)
 	# 敌目标上方照常起爆（安全保险只对本侧生效）。
@@ -359,5 +359,5 @@ func _pc_05_own_safety(fails: Array) -> void:
 		tp3.pos_east_m = float(tgt.position_east_m)
 		tp3.pos_north_m = float(tgt.position_north_m)
 		tp3.actual_depth_m = float(tgt.depth_m)
-		w3._fuze_step_torpedo(tp3, w3.world["targets"], true)
+		w3._fuze_step_torpedo(tp3, w3.world["targets"], true, {}, {}, {}, {}, 0.0)
 		_assert_bool(fails, "PC-05b3 detonation on enemy still works", tp3.is_dead(), true)

@@ -20,6 +20,10 @@ var _sections: Dictionary = {}  # torpedo_id -> {labels, buttons...}
 var _note: Label = null
 var _cards: VBoxContainer = null  # P1-03.4：动态武器卡专用容器
 var _seen_ids: Array = []
+## REQ-11：武器结束后的可查结果（tid -> 摘要文本）——脱靶原因/最近通过
+## 等在鱼雷移出列表后仍可查。
+var _finished: Dictionary = {}
+var _tp_refs: Dictionary = {}  # tid -> Torpedo 引用（移出列表后捕获终局摘要用）
 
 
 func _init() -> void:
@@ -50,14 +54,45 @@ func sync() -> void:
 	for tp in tps:
 		ids.append(str(tp.torpedo_id))
 	if str(ids) != str(_seen_ids):
+		# REQ-11：移出列表前捕获终局摘要（DETONATED/FUEL_OUT 均终态）。
+		for tid2 in _seen_ids:
+			if not (tid2 as String) in ids and _tp_refs.has(tid2):
+				var gone: RefCounted = _tp_refs[tid2]
+				if gone.is_dead() and not _finished.has(tid2):
+					_finished[tid2] = _final_summary(gone)
 		_rebuild(tps)
 		_seen_ids = ids
 	for tp in tps:
+		_tp_refs[str(tp.torpedo_id)] = tp
 		_refresh_section(tp)
+		if tp.is_dead():
+			_finished[str(tp.torpedo_id)] = _final_summary(tp)
 	if tps.is_empty():
-		_note.text = "No torpedoes in water"
+		if _finished.is_empty():
+			_note.text = "No torpedoes in water"
+		else:
+			var last_tid: String = _finished.keys()[-1]
+			_note.text = "Last weapon %s: %s" % [last_tid, _finished[last_tid]]
 	else:
 		_note.text = ""
+
+
+## REQ-11：终局摘要（净化事实：脱靶根因 / 最近通过距离 / 结束事件类型）。
+func _final_summary(tp: RefCounted) -> String:
+	var out: String = "DBG " + str(tp.mission_state_name())
+	if str(tp.miss_reason) != "":
+		out += " | miss: %s" % str(tp.miss_reason)
+	if _world != null:
+		var mp: Variant = _world._fuze_min_pass.get(str(tp.torpedo_id), null)
+		if mp != null and float(mp) < 1.0e8:
+			out += " | min pass %.0fm" % float(mp)
+		var dbg: Variant = _world._fuze_debug.get(str(tp.torpedo_id), null)
+		if dbg != null:
+			out += (
+				" | 3D CPA %.0fm@%.0fs" % [float(dbg.get("d3_m", -1.0)), float(dbg.get("t", -1.0))]
+			)
+			out += " | sat %.1fs" % float(dbg.get("sat_time_s", 0.0))
+	return out
 
 
 func _rebuild(tps: Array) -> void:
@@ -96,6 +131,8 @@ func _build_section(tp: RefCounted) -> VBoxContainer:
 	btns["right"] = _mk_btn(row1, "▶5°", func(): _cmd(tp, "course", 5.0))
 	btns["upper"] = _mk_btn(row1, "▲Up", func(): _cmd(tp, "band", WeaponProgram.DEPTH_BAND_UPPER))
 	btns["lower"] = _mk_btn(row1, "▼Low", func(): _cmd(tp, "band", WeaponProgram.DEPTH_BAND_LOWER))
+	# REQ-01：浅水攻击定深（水面/浅深目标；有限升降速率逼近）。
+	btns["shallow"] = _mk_btn(row1, "▲Shal 12m", func(): _cmd(tp, "depth", 12.0))
 	btns["speed"] = _mk_btn(row1, "Speed", func(): _cmd(tp, "speed", 0.0))
 	btns["active"] = _mk_btn(row2, "Active ON", func(): _cmd(tp, "active", true))
 	btns["autonomy"] = _mk_btn(row2, "Autonomy", func(): _cmd(tp, "autonomy", 0.0))
@@ -124,6 +161,8 @@ func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
 			ok = tp.command_course(NavUtils.wrap360(float(tp.course_deg) + float(arg)))
 		"band":
 			ok = tp.command_depth_band(str(arg))
+		"depth":
+			ok = tp.command_depth(float(arg))
 		"speed":
 			var next_mode: int = (int(tp.speed_mode) + 1) % WeaponProgram.SpeedMode.size()
 			ok = tp.command_speed_mode(next_mode)
@@ -208,12 +247,9 @@ func _refresh_section(tp: RefCounted) -> void:
 		txt += " → D %.0fm (CMD)" % tp.commanded_depth_m
 	else:
 		txt += " | D %.0fm" % tp.actual_depth_m
-	# 第三部分 REQ：引信状态 + 最近通过距离（内核台账，净化距离事实）。
+	# REQ-11：玩家面板只显示净化测量/权限/质量/转率/可知武器状态——
+	# Truth CPA（min pass / 3D CPA）仅限调试台账（终局 DBG 摘要/Debrief）。
 	txt += "\nFuze %s" % tp.fuze_state_name()
-	if _world != null:
-		var mp: Variant = _world._fuze_min_pass.get(str(tp.torpedo_id), null)
-		if mp != null and float(mp) < 1.0e8:
-			txt += " | min pass %.0fm" % float(mp)
 	# 第三部分 REQ：声学模式 + 主动 Ping 状态/下一发倒计时（直读权威字段）。
 	txt += "\nMode %s" % WeaponProgram.speed_mode_name(tp.speed_mode)
 	if (
@@ -221,13 +257,32 @@ func _refresh_section(tp: RefCounted) -> void:
 		or int(tp.active_tx_state) == Torpedo.ActiveTxState.COOLDOWN
 	):
 		txt += "\nnext ping %.1fs" % maxf(float(tp._tx_cycle_s), 0.0)
-	# P1-03.5：候选出现后显示 track id、bearing、sigma、quality（+距离/距离率）。
+	# P1-03.5/REQ-11：显示**实际用于制导**的 Track——AUTONOMOUS 显示 seeker
+	# 选中航迹；ASSISTED 显示玩家接受的航迹；都不显示候选列表第一条。
 	var summaries: Array = tp._seeker.track_summaries() if tp._seeker != null else []
-	if not summaries.is_empty():
-		var top: Dictionary = summaries[0]
+	var guid_id: int = -1
+	if int(tp.guidance_authority) == tp.GuidanceAuthority.AUTONOMOUS and tp._seeker != null:
+		guid_id = int(tp._seeker.selected_track_id)
+	elif int(tp.guidance_authority) == tp.GuidanceAuthority.ASSISTED:
+		guid_id = int(tp._assist_track_id)
+	var top: Dictionary = {}
+	if guid_id >= 0:
+		for s in summaries:
+			if int(s.get("track_id", -1)) == guid_id:
+				top = s
+				break
+	if top.is_empty() and not summaries.is_empty():
+		top = summaries[0]
+	if not top.is_empty():
+		var tag: String = (
+			"Trk"
+			if guid_id < 0
+			else ("GUID Trk" if int(top.get("track_id", -1)) == guid_id else "Trk")
+		)
 		txt += (
-			"\nTrk#%s brg %.0f° σ%.1f° q=%.2f (%d cand)"
+			"\n%s#%s brg %.0f° σ%.1f° q=%.2f (%d cand)"
 			% [
+				tag,
 				str(top.get("track_id", "?")),
 				float(top.get("bearing_est_deg", 0.0)),
 				float(top.get("bearing_sigma_deg", 0.0)),
@@ -240,6 +295,9 @@ func _refresh_section(tp: RefCounted) -> void:
 				"\nRng %.0fm | R-rate %.1f m/s"
 				% [float(top.get("range_m", -1.0)), float(top.get("range_rate_m_s", 0.0))]
 			)
+		# REQ-11：脱靶根因（与 FUEL_OUT 结束事件区分；空 = 未终局/命中）。
+		if str(tp.miss_reason) != "":
+			txt += "\nMiss reason: %s" % str(tp.miss_reason)
 	lbl.text = txt
 	# 不可用按钮 disabled（§11.2：说明原因）；P1-03.5：无候选 Accept 禁用。
 	var wire_txt: String = tp.wire_state_name()

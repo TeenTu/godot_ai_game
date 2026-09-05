@@ -35,29 +35,31 @@ const NAV_TERM_MAX_DEG_S: float = 12.0
 
 ## REQ-04 拦截制导（转率命令，度/秒；正值 = 向右转）。
 ## 输入只有净化航迹（bearing/los_rate/可选 range/range_rate）与自身状态——
-## 绝不接受 Truth 距离/航向/速度。主动测距有效时：
+## 绝不接受 Truth 距离/航向/速度。主动测距有效（未过期）时：
 ##   cmd = Kp * bearing_error + N * (closing_speed / torpedo_speed) * los_rate
 ## 纯被动时：
 ##   cmd = Kp * bearing_error + Kd * filtered_los_rate
-## 限幅（omega_max）由调用方（Torpedo）统一执行——本函数返回未饱和命令，
-## 便于 UI/测试观测饱和状态。
+## REQ-07：近程不再强切纯追踪——测距有效即保留拦截提前量（此前 300m 强切
+## 是为掩盖转向积分漏乘 dt 的补偿，根因已修）。测距过期退回被动分支。
+## 限幅（omega_max）由调用方（Torpedo）统一执行——本函数返回未饱和命令。
 static func intercept_turn_rate_deg_s(
-	track: SeekerTrack, torpedo_course_deg: float, torpedo_speed_ms: float, cfg: Dictionary
+	track: SeekerTrack,
+	torpedo_course_deg: float,
+	torpedo_speed_ms: float,
+	cfg: Dictionary,
+	now: float = -1.0
 ) -> float:
 	if track == null:
 		return 0.0
 	var kp: float = float(cfg.get("guidance_kp", DEFAULT_KP))
 	var n: float = float(cfg.get("guidance_n", DEFAULT_N))
 	var kd: float = float(cfg.get("guidance_kd", DEFAULT_KD))
-	var kp_t: float = float(cfg.get("guidance_kp_terminal", DEFAULT_KP_TERMINAL))
-	var t_switch: float = float(cfg.get("terminal_switch_range_m", DEFAULT_TERMINAL_SWITCH_RANGE_M))
 	var bearing_error: float = NavUtils.wrap180(track.bearing_estimate_deg - torpedo_course_deg)
-	if track.range_estimate_m >= 0.0 and track.range_estimate_m <= t_switch:
-		# 近程（主动测距有效且小于切换门）：纯追踪——PN 在近程 LOS 率发散，
-		# 纯追踪 + 有限转率平滑收尾。
-		return kp_t * bearing_error
+	var range_valid: bool = track.range_estimate_m >= 0.0
+	if range_valid and now >= 0.0:
+		range_valid = track.range_is_valid(now, float(cfg.get("active_range_max_age_s", 16.0)))
 	var cmd: float = kp * bearing_error
-	if track.range_estimate_m >= 0.0:
+	if range_valid:
 		# 主动测距有效：比例导航。closing_speed = max(-range_rate, 0)（接近为正）。
 		var closing: float = maxf(-track.range_rate_m_s, 0.0)
 		var v: float = maxf(torpedo_speed_ms, 1.0)
@@ -84,6 +86,11 @@ static func default_seeker_cfg(profile: TorpedoAcousticProfile) -> Dictionary:
 		"passive_miss_window_s": 1.2,
 		"coast_timeout_s": coast_timeout,
 		"reacquire_timeout_s": 120.0,
+		# REQ-03：测距过期门（2×Ping 周期 + 余量）与 REQ-06 主动支持窗。
+		"active_range_max_age_s":
+		(profile.active_ping_interval_s * 2.0 + 2.0) if profile != null else 18.0,
+		"active_support_window_s":
+		(profile.active_ping_interval_s * 2.0) if profile != null else 16.0,
 		"lead_time_s": DEFAULT_LEAD_TIME_S,
 		"max_lead_deg": DEFAULT_MAX_LEAD_DEG,
 		"guidance_kp": DEFAULT_KP,

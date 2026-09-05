@@ -111,10 +111,12 @@ var _enemy_perception_acs: Dictionary = {}
 var _detonations: Array = []  # 内核 Debrief 记录（含 internal target 引用）
 var _fuze_min_pass: Dictionary = {}  # torpedo_id -> 最近通过距离（内核台账）
 var _fuze_alive: Dictionary = {}
-# P1-08：上一 tick 位置快照（swept 连续碰撞用）。id → Vector3(e,n,depth)。
+## REQ-11：引信调试台账（内核侧，仅 Debrief/调试面板）。
+var _fuze_debug: Dictionary = {}  # torpedo_id -> {h_m, v_m, d3_m, t, ...}
+# P1-08：上一 tick 位置快照（swept 用）。id → Vector3(e,n,depth)。
 var _fuze_prev_tp: Dictionary = {}
 var _fuze_prev_contact: Dictionary = {}
-# P1-12.4：引信安全保险闩（每雷一次 INHIBIT 事件）。
+# P1-12.4：引信安全保险闩（每雷一次）。
 var _fuze_safety_latched: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
 
 
@@ -248,8 +250,8 @@ func tick() -> void:
 	# 声场（旧实现 _sync_torpedo_shadows 藏在 _advance_enemy_ai 末尾，
 	# enemy_ai == null 提前返回导致玩家鱼雷声学影子永不产生）。
 	_sync_torpedo_shadows()
-	# 6) 引信引擎（Commit 10）：几何触发 → 爆炸事件 → Truth 伤害 → 净化证据。
-	_advance_fuze_engine()
+	# 6) 引信引擎（Commit 10）：几何触发 → 起爆 → Truth 伤害 → 净化证据。
+	_advance_fuze_engine(dt)
 	_advance_player_evidence()
 
 
@@ -265,7 +267,7 @@ func _advance_only() -> void:
 	_advance_ping_session()
 	_advance_enemy_ai(dt)
 	_sync_torpedo_shadows()  # REQ-09：同 tick()——无条件同步统一声场
-	_advance_fuze_engine()
+	_advance_fuze_engine(dt)
 	_advance_player_evidence()
 
 
@@ -1006,48 +1008,53 @@ func _ping_sensor() -> SensorArray:
 # ------------------------------------------------------------------
 
 
-## 引信引擎（每 tick）：双方在水鱼雷 vs 对方 Truth 接触的几何触发。
-## 玩家鱼雷 → 敌方 targets；敌方鱼雷 → 本艇。诱饵不参与触发（近炸简化版）。
-func _advance_fuze_engine() -> void:
+## 引信引擎（每 tick）。REQ-08：tick 起始对 prev 位置做不可变快照，全部雷
+## 检查完后统一提交缓存（不受遍历顺序影响）。
+func _advance_fuze_engine(dt: float = 0.0) -> void:
+	var prev_contact: Dictionary = _fuze_prev_contact.duplicate()
+	var prev_tp: Dictionary = _fuze_prev_tp.duplicate()
+	var new_prev_tp: Dictionary = {}
+	var touched_contact: Dictionary = {}
 	if weapons != null:
 		for tp in weapons.torpedoes:
-			_fuze_step_torpedo(tp, world["targets"], true)
+			_fuze_step_torpedo(
+				tp, world["targets"], true, prev_contact, prev_tp, new_prev_tp, touched_contact, dt
+			)
 	if enemy_weapons != null:
 		for tp in enemy_weapons.torpedoes:
-			_fuze_step_torpedo(tp, [world["own"]], false)
+			_fuze_step_torpedo(
+				tp, [world["own"]], false, prev_contact, prev_tp, new_prev_tp, touched_contact, dt
+			)
+	# 全部检查完成后统一更新缓存（REQ-08：不在检查中途覆写 prev）。
+	for cid in touched_contact:
+		_fuze_prev_contact[cid] = touched_contact[cid]
+	for tid in new_prev_tp:
+		_fuze_prev_tp[tid] = new_prev_tp[tid]
 
 
-func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> void:
+func _fuze_step_torpedo(
+	tp: RefCounted,
+	contacts: Array,
+	from_player: bool,
+	prev_contact: Dictionary,
+	prev_tp: Dictionary,
+	new_prev_tp: Dictionary,
+	touched_contact: Dictionary,
+	dt: float,
+) -> void:
 	if tp.is_dead() or not tp._in_water():
 		_fuze_alive.erase(str(tp.torpedo_id))
 		_fuze_prev_tp.erase(str(tp.torpedo_id))
 		return
-	# P1-08：本 tick/上 tick 位置快照（含深度）。fuze 引擎在运动推进之后
-	# 运行，故当前值即本 tick 末态 —— 读出旧快照后立即覆写为最新值，
-	# 之后任何早退路径都不会污染下一 tick 的 swept 线段。
+	# P1-08/REQ-08：prev 从 tick 起始不可变快照读，末态写暂存，检查完统一提交。
 	var tid: String = str(tp.torpedo_id)
 	var tp_now := Vector3(float(tp.pos_east_m), float(tp.pos_north_m), float(tp.actual_depth_m))
 	var tp_prev: Vector3 = tp_now
-	if _fuze_prev_tp.has(tid):
-		tp_prev = _fuze_prev_tp[tid]
-	_fuze_prev_tp[tid] = tp_now
+	if prev_tp.has(tid):
+		tp_prev = prev_tp[tid]
+	new_prev_tp[tid] = tp_now
 	_fuze_alive[tid] = true
-	# 最近通过距离台账（Debrief 用；内核侧）——swept 连续最近通过。
-	var min_d: float = INF
-	for c in contacts:
-		if str(c.damage_state) == "sunk":
-			continue
-		var c_now := Vector3(float(c.position_east_m), float(c.position_north_m), float(c.depth_m))
-		var c_prev: Vector3 = c_now
-		if _fuze_prev_contact.has(str(c.id)):
-			c_prev = _fuze_prev_contact[str(c.id)]
-		_fuze_prev_contact[str(c.id)] = c_now
-		var h0 := Vector2(c_prev.x - tp_prev.x, c_prev.y - tp_prev.y)
-		var h1 := Vector2(c_now.x - tp_now.x, c_now.y - tp_now.y)
-		min_d = minf(min_d, FuzeController.swept_min_distance_h_m(h0, h1))
-	if min_d < float(_fuze_min_pass.get(str(tp.torpedo_id), INF)):
-		_fuze_min_pass[str(tp.torpedo_id)] = min_d
-	# 引信解保（§10.2 双保险：arm distance + min_time）。
+	# 引信解保（§10.2 双保险；REQ-08 与 Torpedo 侧统一）。
 	var since_launch: float = sim_time - float(tp._launch_t)
 	var fc := FuzeController.new()
 	var prog: WeaponProgram = tp.program
@@ -1061,8 +1068,40 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 			tp.fuze_state = tp.FuzeState.ARMED
 			tp.event_occurred.emit(tp.torpedo_id, "FUZE_ARMED", {"traveled_m": tp.traveled_m})
 		return
-	# P1-12.4：引信独立安全保险（independent safety inhibit）——与 seeker
-	# 过滤互相独立：即使资格层漏过滤，引信对发射方本侧平台也绝不起爆。
+	var dbg: Dictionary = _fuze_debug.get(tid, {})  # REQ-11 调试台账
+	dbg["fuze_mode"] = fc.fuze_mode
+	dbg["armed"] = true
+	dbg["sat_time_s"] = float(dbg.get("sat_time_s", 0.0)) + (dt if bool(tp.turn_saturated) else 0.0)
+	# 最近通过距离台账（Debrief 用）——swept 连续最近通过。
+	var min_d: float = INF
+	var min_v: float = INF
+	var min_d3: float = INF
+	for c in contacts:
+		if str(c.damage_state) == "sunk":
+			continue
+		var c_now := Vector3(float(c.position_east_m), float(c.position_north_m), float(c.depth_m))
+		var c_prev: Vector3 = c_now
+		if prev_contact.has(str(c.id)):
+			c_prev = prev_contact[str(c.id)]
+		touched_contact[str(c.id)] = c_now
+		var rel0 := c_prev - tp_prev
+		var rel1 := c_now - tp_now
+		var h0 := Vector2(rel0.x, rel0.y)
+		var h1 := Vector2(rel1.x, rel1.y)
+		var hd: float = FuzeController.swept_min_distance_h_m(h0, h1)
+		min_d = minf(min_d, hd)
+		min_d3 = minf(min_d3, FuzeController.swept_min_distance_m(rel0, rel1))
+		var t_ca: float = FuzeController.swept_closest_t(h0, h1)
+		min_v = minf(min_v, absf(lerpf(rel0.z, rel1.z, t_ca)))
+	if min_d < float(_fuze_min_pass.get(str(tp.torpedo_id), INF)):
+		_fuze_min_pass[str(tp.torpedo_id)] = min_d
+	if min_d3 < float(dbg.get("d3_m", INF)):
+		dbg["d3_m"] = min_d3
+		dbg["h_m"] = min_d
+		dbg["v_m"] = min_v
+		dbg["t"] = sim_time
+	_fuze_debug[tid] = dbg
+	# P1-12.4：引信独立安全保险——对发射方本侧平台绝不起爆。
 	var safety_c: RefCounted = null
 	if from_player:
 		safety_c = world["own"]
@@ -1075,8 +1114,8 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 			float(safety_c.depth_m),
 		)
 		var s_prev: Vector3 = s_now
-		if _fuze_prev_contact.has(str(safety_c.id)):
-			s_prev = _fuze_prev_contact[str(safety_c.id)]
+		if prev_contact.has(str(safety_c.id)):
+			s_prev = prev_contact[str(safety_c.id)]
 		var sh0 := Vector2(s_prev.x - tp_prev.x, s_prev.y - tp_prev.y)
 		var sh1 := Vector2(s_now.x - tp_now.x, s_now.y - tp_now.y)
 		var sd: float = FuzeController.swept_min_distance_h_m(sh0, sh1)
@@ -1086,14 +1125,17 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 				_fuze_safety_latched[tid] = true
 				tp.event_occurred.emit(tid, "FUZE_SAFETY_INHIBIT", {"reason": "OWN_SIDE"})
 			return
-	# 几何触发判定（P1-08：swept 连续碰撞，不再逐点采样）。
+	# 几何触发判定（swept 连续碰撞；REQ-08：同一时刻水平+垂直同判）。
 	var res: Dictionary = fc.check_trigger_swept(
-		tp_now, tp_prev, contacts, _fuze_prev_contact, fc.trigger_radius_m()
+		tp_now, tp_prev, contacts, prev_contact, fc.trigger_radius_m()
 	)
 	if not bool(res["triggered"]):
 		return
-	# 爆炸结算（内核）：EXPLOSION 声学事件（可被双方被动链截获）+ Truth 伤害。
 	var contact: RefCounted = res["contact"]
+	# REQ-08：起爆成功后才结算伤害/战果（detonate 二次查 ARMED，双保险）。
+	if not tp.detonate({"min_distance_m": float(res["min_distance_m"])}):
+		return
+	# 爆炸结算：EXPLOSION 声学事件 + Truth 伤害。
 	(
 		emission_bus
 		. record(
@@ -1126,13 +1168,11 @@ func _fuze_step_torpedo(tp: RefCounted, contacts: Array, from_player: bool) -> v
 			}
 		)
 	)
-	tp.detonate({"min_distance_m": float(res["min_distance_m"])})
 	_fuze_alive.erase(tid)
 	_fuze_prev_tp.erase(tid)
 
 
-## 消费新声学事件 → 净化证据（DETONATION_HEARD / 鱼雷告警 / 本艇武器事实）。
-## 己方 emitter 集合每 tick 重建（本艇 id / 己方鱼雷 id / 己方诱饵 id）。
+## 消费新声学事件 → 净化证据（DETONATION_HEARD/鱼雷告警/本艇武器事实）。
 func _advance_player_evidence() -> void:
 	if emission_sanitizer == null:
 		return
@@ -1155,7 +1195,6 @@ func _advance_player_evidence() -> void:
 		player_evidence.pop_front()
 
 
-## Debrief（§10.4/§10.5，内部调试通道；外部经 _debrief_summary 调用）：Truth 命中对象/最近通过距离/解误差对照——仅调试
-## 通道（Debrief 面板/无头测试），普通 UI 禁止使用。
+## Debrief（§10.4/§10.5 内部调试通道）：Truth 命中/最近通过对照——普通 UI 禁用。
 func _debrief_summary() -> Array:
 	return _detonations.duplicate(true)

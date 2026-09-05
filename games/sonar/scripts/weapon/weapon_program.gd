@@ -34,6 +34,10 @@ var initial_course_deg: float = 0.0
 var speed_mode: int = SpeedMode.CRUISE
 var initial_depth_band: String = DEPTH_BAND_UPPER
 var search_depth_band: String = DEPTH_BAND_UPPER
+## REQ-01：浅水攻击定深（米；<0 = 未指定，按层带 hold 深度）。玩家/程序可
+## 显式给定攻击定深（如水面目标 8~15m），保留 UPPER/LOWER 换层与有限升降
+## 速度。运行期由 Torpedo 按深度模型 min/max 钳制——绝不读取目标 Truth 深度。
+var initial_depth_m: float = -1.0
 
 var search_center_deg: float = 0.0
 var search_half_angle_deg: float = 45.0
@@ -71,6 +75,7 @@ func snapshot() -> WeaponProgram:
 	p.speed_mode = speed_mode
 	p.initial_depth_band = initial_depth_band
 	p.search_depth_band = search_depth_band
+	p.initial_depth_m = initial_depth_m
 	p.search_center_deg = search_center_deg
 	p.search_half_angle_deg = search_half_angle_deg
 	p.search_pattern = search_pattern
@@ -98,6 +103,8 @@ func validation_errors() -> Array:
 		errs.append("initial_course out of range")
 	if not _valid_band(initial_depth_band):
 		errs.append("invalid initial_depth_band")
+	if not is_finite(initial_depth_m) or initial_depth_m > 0.0 and initial_depth_m < 3.0:
+		errs.append("invalid initial_depth_m")
 	if not _valid_band(search_depth_band):
 		errs.append("invalid search_depth_band")
 	if search_half_angle_deg <= 0.0 or search_half_angle_deg > 180.0:

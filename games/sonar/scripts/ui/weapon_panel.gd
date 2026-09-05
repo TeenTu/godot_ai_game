@@ -10,12 +10,15 @@ signal fire_requested
 signal status(msg: String)
 
 const MAX_LOG: int = 5
+## REQ-01：浅水攻击定深（米）——勾选后发射程序带 initial_depth_m=12。
+const SHALLOW_ATTACK_DEPTH_M: float = 12.0
 
 var weapons: WeaponSystem = null
 var chart: ChartView = null
 var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰减用）
 
 var _btn_fire: Button = null
+var _chk_shallow: CheckBox = null
 var _lbl_fire_hint: Label = null
 var _lbl_weapons: Label = null
 var _weapon_log: Array = []
@@ -32,6 +35,17 @@ func _build() -> void:
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
+	# REQ-01：浅水攻击定深开关（水面/浅深目标；有限升降速率逼近，非瞬移）。
+	_chk_shallow = CheckBox.new()
+	_chk_shallow.text = "Shallow attack depth 12m"
+	_chk_shallow.button_pressed = false
+	_chk_shallow.add_theme_font_size_override("font_size", 12)
+	_chk_shallow.toggled.connect(
+		func(on: bool):
+			if weapons != null:
+				weapons.default_attack_depth_m = SHALLOW_ATTACK_DEPTH_M if on else -1.0
+	)
+	add_child(_chk_shallow)
 	_lbl_fire_hint = Label.new()
 	_lbl_fire_hint.text = ""
 	_lbl_fire_hint.add_theme_font_size_override("font_size", 12)
@@ -51,6 +65,10 @@ func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> 
 	_chart_dirty = p_on_dirty
 	if weapons != null:
 		weapons.weapon_event.connect(_on_weapon_event)
+		if _chk_shallow != null:
+			weapons.default_attack_depth_m = (
+				SHALLOW_ATTACK_DEPTH_M if _chk_shallow.button_pressed else -1.0
+			)
 	_refresh()
 
 
