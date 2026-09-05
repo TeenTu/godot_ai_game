@@ -26,9 +26,10 @@ pointing/emulate_touch_from_mouse=true
 
 [gui]
 
-# Web 导出无系统 CJK 回退：全 UI 使用项目自带中文子集字体（msyh 子集，
-# 覆盖 scripts/scenes 全部用字，见 DESIGN §0.7）。
-theme/custom_font="res://assets/fonts/ui_subset.ttf"
+# Web 导出无系统 CJK 回退：全 UI 使用项目自带中文子集主题（msyh 子集，
+# 覆盖 scripts/scenes 全部用字，见 DESIGN §0.7）。custom_font 不参与
+# 默认主题字体切换，必须用 custom Theme 资源（default_font）。
+theme/custom="res://assets/fonts/ui_theme.tres"
 
 [physics]
 

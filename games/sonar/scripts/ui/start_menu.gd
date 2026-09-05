@@ -17,6 +17,8 @@ var _lbl_seed: Label = null
 
 func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Web 无系统 CJK 回退：主题继承到子集字体（gui/theme/custom 运行时不生效，需 Control.theme 显式指定）。
+	theme = load("res://assets/fonts/ui_theme.tres")
 	var bg := ColorRect.new()
 	bg.color = Color(0.03, 0.06, 0.09)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
