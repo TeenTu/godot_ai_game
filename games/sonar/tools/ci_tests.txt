@@ -68,3 +68,5 @@ patch_f_test
 calibration_envelope_test
 #   req_overhaul_test  REQ 制导重构批：接管状态机/滤波收敛/主动计龄/PN 制导/COAST/统一声场/频段/传播时延/脱靶原因（RO-01..13）
 req_overhaul_test
+#   req2_test 第二轮 REQ：定深/LOS滤波/转向积分/距离率与miss/COAST/移动靶起爆/引信快照/Mark关联/TRUE模式/操舵来源（R2-01..10）
+req2_test

@@ -374,6 +374,8 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		# （S1-03A：pair 同 ID/同 SE/同噪声样本，消歧前对玩家等价，不标真假）。
 		var pair_id: String = ""
 		var disp_brgs: Array = []  # [{bearing_deg, branch}]
+		var contact_freqs: Array = []  # REQ-10：本接触本行实测谱线频率（附到峰）
+		var contact_peaks: Array = []  # REQ-10：本接触本行的峰引用（回填 freqs_hz）
 		if mirror_lr and active_array_id == "TOWED":
 			_ambiguity_counter += 1
 			pair_id = "AMB%04d" % _ambiguity_counter
@@ -414,6 +416,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 				"ambiguity_branch": int(pb["branch"]),
 			}
 			bb_peaks.append(peak)
+			contact_peaks.append(peak)
 		# NB 行：目标音线（每条谱线用自身频率算 TL/N_eff，S1-04.2 不得全按 500 Hz；
 		# 可见度随 SNR 概率变化，不再 lvl<=0 硬切）
 		for line_v in ac.tonal_lines:
@@ -437,7 +440,12 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			)
 			nb[bi] = maxf(nb[bi], NOISE_FLOOR_DB + minf(lvl * 0.5, 28.0))
 			nb_tonals.append({"freq_hz": f_hz, "level_db": lvl})
+			contact_freqs.append(f_hz)
 			tonal_count += 1
+		# REQ-10：把本接触本行实测谱线频率附到其 BB 峰上（玩家 Mark 时
+		# 保留测得频率供关联兼容性判断；不重复加噪）。
+		for pk_ref in contact_peaks:
+			pk_ref["freqs_hz"] = contact_freqs.duplicate()
 		# DEMON：桨叶率谐波（blades × 轴转速）
 		var rpm_hz: float = speed_kn * float(ac.turns_per_knot) / 60.0
 		var blade_rate: float = rpm_hz * float(ac.blade_count)
@@ -632,11 +640,15 @@ func create_mark(
 		input_disp = NavUtils.true_to_display(own_course, bearing_deg)
 	var matched: Dictionary = {}
 	var se_db: float = -1.0
+	# REQ-10：选**最近**峰（6° 门内角差最小），而非首个命中峰——重叠峰
+	# 顺序随机时首中会选错峰。
+	var best_disp_diff: float = 6.0
 	for pk in peaks:
-		if absf(NavUtils.angle_diff(float(pk["bearing_deg"]), input_disp)) < 6.0:
+		var dd: float = absf(NavUtils.angle_diff(float(pk["bearing_deg"]), input_disp))
+		if dd < best_disp_diff:
+			best_disp_diff = dd
 			se_db = float(pk["se_db"])
 			matched = pk
-			break
 	var sigma: float = float(def["sigma_min"])
 	if se_db > 0.0:
 		sigma = maxf(sigma * pow(2.0, -se_db / 6.0), 0.2)
@@ -674,13 +686,23 @@ func create_mark(
 	elif matched.has("bearing_deg"):
 		brg_in = float(matched["bearing_deg"])
 	if as_true:
-		m.measured_bearing_deg = NavUtils.wrap360(brg_in)
+		# REQ-10：匹配峰存的是显示 frame（艇艏相对）方位——TRUE 模式必须
+		# 按该行艏向转回真方位，绝不把相对方位直写为真方位；无峰时输入
+		# 已是真方位，直接用。
+		if matched.is_empty():
+			m.measured_bearing_deg = NavUtils.wrap360(brg_in)
+		else:
+			m.measured_bearing_deg = NavUtils.rel_to_true(own_course, brg_in)
 	else:
 		m.measured_bearing_deg = NavUtils.rel_to_true(own_course, brg_in)
 	m.bearing_sigma_deg = sigma
 	m.signal_excess_db = se_db
 	m.snr_db = se_db
 	m.detection_probability = clampf(se_db / 12.0, 0.0, 1.0)
+	# REQ-10：保留测得频率（峰上回填的本行实测谱线）供关联兼容性判断；
+	# 阵列来源/时间已由 sensor_id/timestamp 固化。
+	if not matched.is_empty() and matched.has("freqs_hz"):
+		m.detected_frequencies = matched["freqs_hz"]
 	# 拖曳镜像歧义字段随 Measurement 固化（S1-03A）
 	if not matched.is_empty() and str(matched.get("ambiguous_pair_id", "")) != "":
 		m.ambiguous_pair_id = str(matched["ambiguous_pair_id"])

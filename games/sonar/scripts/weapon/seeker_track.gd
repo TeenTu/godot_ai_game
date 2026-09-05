@@ -20,8 +20,8 @@ static var _next_id: int = 1
 var seeker_track_id: int = 0
 var bearing_estimate_deg: float = 0.0
 var bearing_rate_deg_s: float = 0.0
-## 惯性视线率 = 相对方位率 + 本艇/鱼雷自转率（P0-03 约束 3 / CM-05 修正）：
-## 相对率混入自身转向，kine 一致性与制导提前量都应消费惯性率。
+## REQ-02：惯性视线率 = 滤波方位率（bearing_deg 已是真方位，惯性系）。
+## 不叠加自身转率——那会把自身机动重复计入目标视线率。
 var los_rate_deg_s: float = 0.0
 var range_estimate_m: float = -1.0  # <0 = 纯被动无测距（绝不补 Truth 距离）
 ## REQ-02：距离率（主动测距 alpha-beta 滤波；m/s，正=拉远）。纯被动恒 0。
@@ -32,6 +32,8 @@ var last_update_time: float = -1.0
 ## 有效测量机会，miss 只能按各自通道的机会计数，绝不按仿真 tick 连续扣分。
 var last_passive_update_time: float = -1.0
 var last_active_update_time: float = -1.0
+## REQ-03：最近一次有效测距的接收时刻（供过期判定）。
+var last_range_update_time: float = -1.0
 ## REQ-03/验收14：最近一次 miss 的通道（PASSIVE/ACTIVE）与脱锁原因标签
 ## （OUT_OF_FOV / AGED_OUT_ACTIVE / QUALITY_DROP），供脱靶原因判定。
 var last_miss_channel: String = ""
@@ -50,6 +52,7 @@ var classification_match: float = 0.0  # 谱一致性 EMA（1=与首次捕获谱
 var source_history: Array = []  # SeekerReturn.return_id 时间线（封顶）
 
 var _spectral_ref: Array = []  # 首次捕获的谱线频率基准（分类锚点）
+var _range_meas_epoch: float = -1.0  # REQ-03：距离滤波用测量历元（回波=Ping 发射时刻）
 
 
 static func create() -> SeekerTrack:
@@ -92,30 +95,31 @@ func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 			bearing_rate_deg_s = clampf(
 				bearing_rate_deg_s + (rate_smoothing / dt) * innov, -MAX_RATE_ABS, MAX_RATE_ABS
 			)
-		los_rate_deg_s = clampf(
-			bearing_rate_deg_s + float(cfg.get("own_turn_rate_deg_s", 0.0)),
-			-MAX_RATE_ABS,
-			MAX_RATE_ABS,
-		)
+		los_rate_deg_s = bearing_rate_deg_s
 	else:
 		bearing_estimate_deg = NavUtils.wrap360(r.bearing_deg)
-		los_rate_deg_s = float(cfg.get("own_turn_rate_deg_s", 0.0))
+		los_rate_deg_s = 0.0
 	var sigma: float = maxf(r.bearing_sigma_deg, 0.5)
 	bearing_var_deg2 = lerp(bearing_var_deg2, sigma * sigma, 0.30)
 	if r.range_m >= 0.0:
-		# REQ-02：主动测距同步 alpha-beta——距离状态 + 距离率状态（预测项用
-		# 上一拍距离率；同一 dt 尖峰防护门）。
+		# REQ-02/03：主动测距独立 alpha-beta。距离滤波只使用前后有效测距的
+		# 测量历元间隔（主动回波 = Ping 发射时刻 r.timestamp），绝不混用被动
+		# 扫描的 last_update_time（8s 测距间隔被算成 0~1s 的 bug 根源）。
+		var meas_t: float = r.timestamp if r.timestamp >= 0.0 else now
 		if range_estimate_m < 0.0:
 			range_estimate_m = r.range_m
 			range_rate_m_s = 0.0
+			_range_meas_epoch = meas_t
 		else:
-			var r_dt: float = maxf(now - last_update_time, 0.001)
+			var r_dt: float = maxf(meas_t - _range_meas_epoch, 0.001)
 			var r_pred: float = range_estimate_m + range_rate_m_s * r_dt
 			var r_innov: float = r.range_m - r_pred
 			var r_sm: float = float(cfg.get("range_smoothing", 0.5))
 			range_estimate_m = r_pred + r_sm * r_innov
 			if r_dt >= min_dt:
 				range_rate_m_s = clampf(range_rate_m_s + (0.30 / r_dt) * r_innov, -200.0, 200.0)
+			_range_meas_epoch = meas_t
+		last_range_update_time = now
 	mean_signal_excess_db = (
 		r.signal_excess_db
 		if total_hits == 0
@@ -168,6 +172,14 @@ func age_miss(now: float, beta_miss: float, channel: String = "") -> void:
 func _recompute_track_quality() -> void:
 	var n: int = total_hits + total_misses
 	track_quality = clampf(float(total_hits) / float(maxi(n, 1)), 0.0, 1.0)
+
+
+## REQ-03：主动测距是否有效（有测距且未过期）。过期退回被动制导——
+## 绝不仅凭 range_estimate_m >= 0 判有效。
+func range_is_valid(now: float, max_age_s: float) -> bool:
+	if range_estimate_m < 0.0 or last_range_update_time < 0.0:
+		return false
+	return now - last_range_update_time <= maxf(max_age_s, 0.0)
 
 
 ## 预测方位（供关联门限，§7.2 预测方位差）。

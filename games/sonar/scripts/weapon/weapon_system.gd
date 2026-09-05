@@ -27,6 +27,9 @@ const MAX_FIRING_RANGE_M: float = 20000.0
 
 var tubes: Array = []  # [{state: TubeState, torpedo_id}]
 var torpedoes: Array = []  # 在水的 Torpedo
+## REQ-01：浅水攻击定深（米；<0 = 按层带 hold）。UI 可切换；发射时写入
+## 程序快照 initial_depth_m，由鱼雷按深度模型钳制并有限速率逼近。
+var default_attack_depth_m: float = -1.0
 # Commit 5：声学事件总线（由 World 注入；null=无总线跳过发射瞬态广播）。
 var emission_bus: AcousticEmissionBus = null
 ## 鱼雷 id 前缀（Commit 10：敌方发射器用 "ET"，与玩家 "T" 区分——净化器
@@ -84,6 +87,7 @@ func fire(
 		weapon_event.emit("", "RANGE_INVALID", {"range_m": sys.range_m})
 		return null
 	var program: WeaponProgram = _build_solution_program(sys, own_e, own_n, sim_time)
+	program.initial_depth_m = default_attack_depth_m
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 
@@ -98,6 +102,7 @@ func fire_manual(
 	initial_depth_band: String = WeaponProgram.DEPTH_BAND_UPPER,
 ) -> Torpedo:
 	var program: WeaponProgram = WeaponProgram.make_manual(course_deg, initial_depth_band)
+	program.initial_depth_m = default_attack_depth_m
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 
@@ -106,6 +111,7 @@ func fire_bearing_only(
 	bearing_deg: float, own_e: float, own_n: float, sim_time: float, own_depth_m: float = 50.0
 ) -> Torpedo:
 	var program: WeaponProgram = WeaponProgram.make_bearing_only(bearing_deg)
+	program.initial_depth_m = default_attack_depth_m
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 

@@ -79,6 +79,24 @@ func latest_measurement() -> Measurement:
 	return measurement_history[measurement_history.size() - 1]
 
 
+## REQ-09：时刻 t 的预测方位（历史行关联用）。以最近两条测量的方位率线性
+## 外推到 t（测量时间与点击行时间一致——不能只比较最新方位）；只有一条
+## 测量时直接返回其方位；无测量返回 -1。
+func predicted_bearing_at(t: float) -> float:
+	var n: int = measurement_history.size()
+	if n == 0:
+		return -1.0
+	if n == 1:
+		return measurement_history[0].measured_bearing_deg
+	var m1: Measurement = measurement_history[n - 1]
+	var m0: Measurement = measurement_history[n - 2]
+	var dt: float = m1.timestamp - m0.timestamp
+	var rate: float = 0.0
+	if dt > 0.01:
+		rate = NavUtils.wrap180(m1.measured_bearing_deg - m0.measured_bearing_deg) / dt
+	return NavUtils.wrap360(m1.measured_bearing_deg + rate * (t - m1.timestamp))
+
+
 ## 移除一条测量（S1-04C 撤销自动关联/改绑）。维护时间排序与更新时间。
 ## 找不到时返回 false；移除后空历史保留（由调用方决定是否弃用 Track）。
 func remove_measurement(m: Measurement) -> bool:

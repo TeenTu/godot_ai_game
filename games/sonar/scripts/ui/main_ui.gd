@@ -1,8 +1,6 @@
 class_name SonarUI
 extends Control
-## main_ui.gd — 主 UI 装配与仿真驱动。只拟合选中接触；脏标记驱动重建；
-## BT↔海图↔残差联动；Truth 仅 Show Truth 打开才进海图；侧栏契约见 UiContract。
-
+## main_ui.gd — 主 UI 装配与仿真驱动（脏标记重建；Truth 仅 Show Truth 进海图）。
 const PANEL_W: float = 280.0
 const BT_H: float = 240.0
 const RES_H: float = 150.0
@@ -774,6 +772,14 @@ func _update_contact_rows() -> void:
 
 func _on_contact_selected(track_id: String) -> void:
 	if selected_track_id == track_id:
+		# REQ-09：再次点击同一接触 = 取消选择。
+		selected_track_id = ""
+		if _ping_ctrl != null:
+			_ping_ctrl.preferred_track_id = ""
+		_lbl_selected.text = "Selected: none"
+		_dirty = true
+		_rebuild_display_data()
+		_update_status("Selection cleared")
 		return
 	selected_track_id = track_id
 	# REQ-02 多回波优先级：命中当前选中 Track 的回波排最前。
@@ -838,7 +844,7 @@ func _on_mark() -> void:
 	_update_status("Manual Mark: new contact")
 
 
-## Auto Fit：只拟合 selected_track_id；也由主动回波 REFIT 复用。
+## Auto Fit：只拟合 selected_track_id（主动回波 REFIT 复用）。
 func _on_fit_tma() -> void:
 	var sel: Track = _selected_track()
 	if sel == null:
@@ -917,8 +923,7 @@ func _on_enter_solution() -> void:
 		_update_status("System Solution submitted (%s)" % st)
 
 
-## S1-07 Commit 3：任意条件发射。有解 → SOLUTION；有选中接触 → BEARING_ONLY；
-## 都无 → MANUAL（沿本艇艏向）。绝不读 Truth（接触方位来自玩家测量链）。
+## 任意条件发射：有解 → SOLUTION；有选中接触 → BEARING_ONLY；否则 MANUAL。
 func _on_fire_torpedo() -> void:
 	if world == null or world.weapons == null:
 		return
@@ -1067,8 +1072,7 @@ func _on_towed_length_commanded(frac: float) -> void:
 	_update_status("Towed length cmd -> %.0f m" % t.commanded_tow_length_m)
 
 
-## 刷新操作员面板的 TOWED 状态行 + 控件可用性（S1-03）。
-## 状态行同时显示 ACT（实际缆长）与 CMD（命令缆长）——二者分离是 S1-03 核心。
+## 刷新 TOWED 状态行 + 控件可用性（S1-03；ACT/CMD 分离显示）。
 func _refresh_towed_status() -> void:
 	if _op_panel == null:
 		return
@@ -1124,8 +1128,7 @@ func _on_active_return_selected(i: int) -> void:
 	_on_contact_selected(tid)
 
 
-## 主动回波命中回调（REQ-02）：控制器已按 fit_mode 裁决（AUTO 重拟合 /
-## ASSISTED 挂起 / MANUAL 仅入 Track）；这里只把最高优先命中选中高亮。
+## 主动回波命中回调（REQ-02）：按 fit_mode 裁决后高亮最高优先命中。
 func _on_ping_echo_hits(fed: Array) -> void:
 	if fed.is_empty():
 		return
@@ -1139,7 +1142,6 @@ func _on_ping_echo_hits(fed: Array) -> void:
 
 
 ## REQ-02：AUTO 命中 / ASSISTED Apply 触发的重拟合（选中 + Auto Fit）。
-## 成功后卡片 Fit 行置 RANGE AIDED；失败 → REFIT REQUIRED（证据仍在）。
 func _on_ping_fit_requested(track_id: String) -> void:
 	if track_id != selected_track_id:
 		selected_track_id = track_id
@@ -1150,10 +1152,8 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
-## BB 瀑布图点击 → 玩家 Mark（Measurement 合法来源：玩家手动）。x_value 为当前
-## 显示基准方位（as_true=false 艇艏相对 -180..180 / true 真北 0..360）。
-## S1-03C：A/B 镜像组作为"一个物理证据"整体关联——选中接触时只对选中 Track
-## 门控，通过则原子追加整组、不通过则提示且绝不静默新建第二个接触。
+## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）；
+## Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
 	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
@@ -1162,14 +1162,16 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 		return
 	var pm: Measurement = group[0] as Measurement
 	var t: Track = null
-	if selected_track_id != "":
-		# 选中接触：只对该 Track 门控（候选集合最小角差）
+	var locked: bool = bool(row.get("shift", false))
+	if locked and selected_track_id != "":
+		# 锁定关联：只对选中 Track 门控；失败不污染（不新建、不切换）。
 		t = tracker.feed_evidence_group(group, selected_track_id, 8.0)
 		if t == null:
 			_update_status("Mark ignored: inconsistent with %s" % selected_track_id)
 			return
 	else:
-		# 无选中：全局最近邻关联；无匹配才由本次 Mark 新建 Contact
+		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中；
+		# 无匹配才由本次 Mark 新建 Contact 并选中。
 		t = tracker.feed_evidence_group(group, "", 8.0)
 		if t == null:
 			t = tracker.mark(pm, "M")
@@ -1186,7 +1188,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 	_update_status("Marked %.1f deg -> %s%s" % [brg, t.track_id, amb_txt])
 
 
-## AlertPanel 用：当前在跟航迹的最新方位集合（玩家合法数据，供战果评估）。
+## AlertPanel 用：当前在跟航迹的最新方位集合（战果评估）。
 func _alert_track_bearings() -> Array:
 	var out: Array = []
 	if tracker == null:

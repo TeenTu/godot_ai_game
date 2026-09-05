@@ -44,7 +44,7 @@ static func new_from(tp) -> SeekerBeamState:
 		if float(prof.active_fov_half_deg) > 0.0
 		else 0.5 * float(prof.horizontal_beamwidth_deg)
 	)
-	st.receive_half_angle_deg = st.passive_half_angle_deg
+	st.receive_half_angle_deg = st.active_tx_half_angle_deg
 	# 扇区中心 = 实际艏向（转率限制后的连续值，非命令航向）。
 	st.center_true_deg = float(tp.course_deg)
 	var prog = tp.program
@@ -74,15 +74,15 @@ func to_dict() -> Dictionary:
 	}
 
 
-## 操舵来源推导（P0-02 优先级：制导 > 线控命令 > 搜索扫掠）：
-##   - ATTACK/TERMINAL 且 seeker 有选中航迹 → SEEKER_TRACK；
-##   - SEARCH（程序扇区扫掠生效）→ SEARCH_PATTERN；
-##   - 其余（WIRE_RUN 线控 / 直航）→ MANUAL_COURSE。
+## 操舵来源推导（REQ-11：读实际命令来源 _guidance_mode，不按 Mission 猜）。
+## 退回 WIRE_ONLY 后制导命令为 NONE → 不会显示 Seeker 操舵。
 static func _steering_source(tp) -> String:
-	var mission: String = str(tp.mission_state_name())
-	if mission == "ATTACK" or mission == "TERMINAL":
-		if tp._seeker != null and tp._seeker.selected_track() != null:
-			return "SEEKER_TRACK"
-	if mission == "SEARCH":
+	var gm: int = int(tp._guidance_mode)
+	if gm == int(tp.GuidanceMode.RATE):
+		return "SEEKER_TRACK"
+	if gm == int(tp.GuidanceMode.COURSE) and float(tp._guidance_course_deg) >= 0.0:
+		# COURSE 来源 = COAST 预测保持 / LOST·REACQUIRE 重搜扇区（均 Seeker 驱动）。
+		return "SEEKER_TRACK"
+	if str(tp.mission_state_name()) == "SEARCH":
 		return "SEARCH_PATTERN"
 	return "MANUAL_COURSE"

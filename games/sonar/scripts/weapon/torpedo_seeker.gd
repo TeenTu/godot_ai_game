@@ -21,8 +21,8 @@ const MAX_TRACKS: int = 8
 var phase: int = Phase.SEARCH
 var tracks: Array = []  # SeekerTrack
 var selected_track_id: int = -1
-## 载体（鱼雷）当前自转率（度/秒，自身运动学合法数据）：相对方位率 + 自转
-## = 惯性视线率（kine 一致性与提前量消费）。
+## REQ-02：保留字段兼容（历史签名）；滤波方位率已是真方位惯性率，
+## 不再消费自身转率。
 var own_turn_rate_deg_s: float = 0.0
 ## REQ-06：载体实际艏向 + 接收半角（机会判定：航迹预测方位是否在 FOV 内。
 ## FOV 外无有效测量机会，不计 miss；离开 FOV → COAST）。
@@ -91,9 +91,7 @@ func process_returns(returns: Array, now: float) -> Dictionary:
 			continue
 		used_returns[ri] = true
 		used_tracks[t.seeker_track_id] = true
-		var uc: Dictionary = _cfg.duplicate()
-		uc["own_turn_rate_deg_s"] = own_turn_rate_deg_s
-		t.update_with_return(returns[ri], now, uc)
+		t.update_with_return(returns[ri], now, _cfg)
 	# ---- 未分配 return 才创建新航迹（满编先淘汰最弱）。
 	for ri in range(returns.size()):
 		var r2 = returns[ri]
@@ -105,9 +103,7 @@ func process_returns(returns: Array, now: float) -> Dictionary:
 			_evict_weakest()
 		var nt := SeekerTrack.create()
 		tracks.append(nt)
-		var nc: Dictionary = _cfg.duplicate()
-		nc["own_turn_rate_deg_s"] = own_turn_rate_deg_s
-		nt.update_with_return(r2, now, nc)
+		nt.update_with_return(r2, now, _cfg)
 		new_ids.append(nt.seeker_track_id)
 	return {"new_track_ids": new_ids}
 
@@ -235,18 +231,23 @@ func _track_in_fov(t: SeekerTrack) -> bool:
 	return absf(NavUtils.wrap180(pred - own_course_deg)) <= fov_half_deg
 
 
-## REQ-03：被动扫描完成（无关联 return 的航迹按机会计一次 miss）。
-## 每个 passive_miss_window_s（默认 1.2s）最多计一次；FOV 外航迹无机会，
-## 不计 miss。 Torpedo 在每个被动采样周期末尾调用（无论有无 return——有
-## return 的航迹会被关联更新，自然不受罚）。
+## REQ-03/06：被动扫描完成——仅对“被动通道有支持历史”的航迹按机会计 miss。
+## REQ-06：主动回波近期待的航迹（active-only 支持）不因空被动扫描被抽干
+## 质量——没有被动支持不代表被动通道探测失败（目标安静属预期）。
+## 每个 passive_miss_window_s 最多一次；FOV 外航迹无机会，不计 miss。
 func notify_passive_scan(now: float) -> void:
 	_last_now = now
 	var window: float = _c("passive_miss_window_s", 1.2)
 	var beta: float = _c("beta_miss", 0.10)
+	var active_support: float = _c("active_support_window_s", 16.0)
 	for t in tracks:
 		if t.last_update_time < 0.0:
 			continue
 		if not _track_in_fov(t):
+			continue
+		# REQ-06：有近期主动回波支持的航迹跳过被动 miss（不因无被动支持
+		# 而清空有效主动航迹）。
+		if t.last_range_update_time >= 0.0 and now - t.last_range_update_time <= active_support:
 			continue
 		if (
 			now - t.last_passive_update_time > window
@@ -255,14 +256,17 @@ func notify_passive_scan(now: float) -> void:
 			t.age_miss(now, beta, "PASSIVE")
 
 
-## REQ-03：主动 Ping 监听窗结束且无回波——对 FOV 内航迹记一次 active miss
-##（每次 Ping 恰好一次，两次 Ping 之间绝不按 tick 扣分）。纯被动航迹同判：
-## 它在主动 FOV 内本应产生回波，未产生即有效机会落空。
-func notify_active_miss(now: float) -> void:
+## REQ-03/06：主动 Ping 监听窗结束且无回波——只对“该 Ping 发射前已存在、
+## FOV 内、且未因该 Ping 得到回波更新”的航迹记一次 active miss（每次 Ping
+## 恰好一次；收到回波的航迹绝不扣分；Ping 发射后新建的航迹无此机会）。
+func notify_active_miss(now: float, ping_emit_t: float = -1.0) -> void:
 	var beta: float = _c("beta_miss", 0.10)
+	var emit_t: float = ping_emit_t if ping_emit_t >= 0.0 else now
 	for t in tracks:
 		if t.last_update_time < 0.0:
 			continue
+		if t.last_update_time > emit_t:
+			continue  # Ping 发射后有过测量（含该 Ping 回波）→ 有机会已兑现
 		if not _track_in_fov(t):
 			continue
 		t.age_miss(now, beta, "ACTIVE")

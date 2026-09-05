@@ -438,6 +438,46 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
     FUZE-05 命中后留传播窗口再收证据；decoy_test CM-05c 容差 10→15°
     （PN 饱和圆弧段滤波滞后，主导性判定不变）。
 
+**第二轮 REQ 整改（2026-09-05，鱼雷命中/航迹脱锁/瀑布 Mark 切换）**：
+回归 `tools/req2_test.gd`（R2-01..10 对应验收 1~10，44 断言）。根因与修复：
+
+- **REQ-01 定深**：UPPER=70m 层带无法攻击 0m 水面目标。`WeaponProgram.
+  initial_depth_m`（<0=按层带 hold）+ `Torpedo.command_depth(m)` 线控；
+  `explicit_depth_m` 显式定深持续保持（`_explicit_from_band` 区分层带
+  hold——到达即释放供层带提示重新归向；线控/程序定深不释放）。制导不读
+  Truth 深度（只读本艇命令链）。
+- **REQ-02 LOS 系**：`Return.bearing_deg` 已是真方位惯性系，seeker 端删除
+  `own_turn_rate_deg_s` 注入（重复计自身机动导致跟踪发散）。保留 alpha-beta
+  预测项与跨 0° wrap 处理。
+- **REQ-03 主动距离率**：`last_range_update_time`（接收时刻，供过期判定
+  `active_range_max_age_s=2×ping_interval+2`）与 `_range_meas_epoch`（测量
+  历元=回波 Ping 发射时刻，供 rate dt）分离；测距过期退回被动制导分支。
+- **REQ-04 转向积分**：`rate_cmd deg/s` 漏乘 dt 导致航向阶跃超转率限 →
+  `actual_rate = clampf(rate_cmd, ±omega); course += actual_rate*dt`；
+  `turn_saturated = |rate_cmd| > omega+0.05`（供 SAT 徽标与脱靶归因）。
+- **REQ-05 tick 短路**：step() 内 `fired_event = fired_event or _advance_xxx()`
+  的惰性短路使后续模块随机丢 tick → 各模块独立调用、末尾统一 or 返回。
+- **REQ-06 机会记账**：miss 只按有效机会记——`notify_active_miss(now,
+  ping_emit_t)` 仅 heard=false 的 ping 触发（seeker 端按 last_update_time
+  > emit_t 跳过已更新航迹）；`notify_passive_scan` 跳过 support window 内
+  的 active-only 航迹（空被动扫描不再扣 active 航迹分）。
+- **REQ-07 COAST/近程**：COAST 为独立分支（从 PN 分支剥离）；删除 300m
+  强切纯追踪（kp_t 分支）——修完 REQ-04 后纯 PN 即可命中移动靶。给定
+  PN 律 `rate_cmd = Kp*error + N*(closing/v)*los_rate` 保持。
+- **REQ-08 引信快照**：`_advance_fuze_engine` tick 起始 `duplicate()` 生成
+  prev_contact/prev_tp 不可变快照 → 各雷读快照、末态写暂存 → 全部检查完
+  统一提交（消除遍历顺序依赖）；`tp.detonate()` 成功后才结算伤害/战果；
+  Torpedo 侧补 `FUZE_MIN_ARM_TIME_S` 解保条件。
+- **REQ-09 Mark 选中/关联分离**：普通左键=全局关联（匹配切换/无匹配新建
+  并选中）；Shift+左键=锁定关联；再点选中接触=取消选择。历史行关联改用
+  `Track.predicted_bearing_at(t)`（末两测量线性外推）匹配该时刻预测方位。
+- **REQ-10 TRUE 模式 Mark**：create_mark 匹配峰转真方位（`rel_to_true`）+
+  选 6° 门内角差最近峰；保留测得频率（peak 回填 `freqs_hz`）。
+- **REQ-11 武器 UI**：武器卡 GUID Trk 显示实际制导 Track（AUTONOMOUS→
+  selected_track_id / ASSISTED→_assist_track_id）；Steering Source 读实际
+  `_guidance_mode`；Truth min pass 移出实时面板（DBG 终局摘要）；miss 根因
+  区分 FUEL_OUT。
+
 ---
 
 ## 1. 单位与坐标约定（全局唯一，禁止改）

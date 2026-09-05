@@ -198,5 +198,8 @@ func _gui_input(event: InputEvent) -> void:
 		var ri: int = row_index_from_y(event.position.y)
 		var row: Dictionary = rows[ri] if ri >= 0 and ri < rows.size() else {}
 		var t: float = float(row.get("t", rows[-1]["t"])) if not rows.is_empty() else 0.0
+		# REQ-09：Shift+左键 = 锁定关联（强制追加到当前选中接触）。
+		row = row.duplicate()
+		row["shift"] = event.shift_pressed
 		mark_requested.emit(v2, t, row)
 		accept_event()
