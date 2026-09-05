@@ -13,6 +13,10 @@ var _ui: Control = null
 
 
 func _ready() -> void:
+	# Web 无系统 CJK 回退：全局默认字体指向项目子集字体（豆腐块修复）。
+	# 经代码 load 引用保证导出时字体被打进 pck（gui/theme/custom_font
+	# 不参与导出依赖扫描，见 DESIGN §0.7）。
+	ThemeDB.fallback_font = load("res://assets/fonts/ui_subset.ttf")
 	_show_menu()
 
 
