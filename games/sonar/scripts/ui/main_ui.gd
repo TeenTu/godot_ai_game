@@ -68,6 +68,8 @@ var _scenario_name: String = ""  # P0-08 实际加载的场景名
 
 func _ready() -> void:
 	var vp: Vector2 = get_viewport_rect().size
+	# Web 无系统 CJK 回退：主题继承到子集字体（见 start_menu 同步修复）。
+	theme = load("res://assets/fonts/ui_theme.tres")
 	set_size(vp)
 	resized.connect(_on_self_resized)
 	_build_ui()
