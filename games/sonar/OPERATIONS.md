@@ -434,7 +434,12 @@ bearing_sigma_deg，PE-01..06）、
 告警封顶后 sequence 驱动持续刷新（AT-14）/s1_combat e2e 反击链无 Truth
 泄漏（AT-17 来袭半环），PF-01..03）、
 `calibration_envelope_test`（AT-16 声学标定包线：固定 seed MC 被动/主动
-P_d(R)，R50/R90 设计区间冻结+次序关系+复现性，CAL-1..9）。
+P_d(R)，R50/R90 设计区间冻结+次序关系+复现性，CAL-1..9）、
+`req_overhaul_test`（REQ 制导重构批：四轴接管状态机（WIRE_ONLY+TRACKING
+=TRACK AVAILABLE 不转向）/Accept 即 ASSISTED+≤1 tick 转向/自主接管/alpha-beta
+收敛与跨 0°/仅 8s 主动回波保持航迹（机会计龄）/1500m-10kn 横向目标拦截/
+FOV→COAST→REACQUIRE/冲过后重搜不无限绕圈/无敌 AI 玩家雷统一声场/窄带
+频段切换/瞬态证据 t_emit+R/c 传播时延/七种脱靶原因，RO-01..13）。
 
 ### S1-00 信息链热修状态（2026-09）
 

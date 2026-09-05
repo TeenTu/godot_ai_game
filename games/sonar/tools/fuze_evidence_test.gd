@@ -158,6 +158,9 @@ func _fuze_05_enemy_torpedo_hits_own(fails: Array) -> void:
 		w.run_steps(1)
 		if str(w.world["own"].damage_state) != "ok":
 			break
+	# REQ 批：爆炸证据按 t_emit + R/c 到达——命中后留出传播窗口再收证据。
+	for i in range(20):
+		w.run_steps(1)
 	# Truth 侧：本艇 damaged（普通 UI 只会收到净化证据）。
 	_assert_bool(
 		fails, "FUZE-05b own damaged in Truth", str(w.world["own"].damage_state) == "damaged", true

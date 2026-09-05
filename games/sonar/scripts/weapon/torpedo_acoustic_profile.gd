@@ -42,6 +42,11 @@ var receiver_array_gain_db: float = 12.0
 var detection_threshold_db: float = 0.0
 var detection_k_d: float = AcousticService.DEFAULT_K_D
 var horizontal_beamwidth_deg: float = 120.0
+## REQ-06：被动接收 / 主动发射 FOV 半角分别管理（旧配置回退 0.5×
+## horizontal_beamwidth_deg；默认 60° 保持行为不变）。UI 扇区绘制与物理
+## 采样门同源（SeekerBeamState 单一真源）。
+var passive_fov_half_deg: float = 60.0
+var active_fov_half_deg: float = 60.0
 ## P1-05：鱼雷接收机自噪模型（与辐射噪声 SL 分离；也不同于潜艇级
 ## EnvironmentModel.own_noise_db——那会把 40/50kn 放大成 ~100+dB 自噪）。
 var receiver_self_noise_base_db: float = 55.0
@@ -117,6 +122,8 @@ func from_dict(d: Dictionary) -> void:
 	detection_threshold_db = float(d.get("detection_threshold_db", detection_threshold_db))
 	detection_k_d = float(d.get("detection_k_d", detection_k_d))
 	horizontal_beamwidth_deg = float(d.get("horizontal_beamwidth_deg", horizontal_beamwidth_deg))
+	passive_fov_half_deg = float(d.get("passive_fov_half_deg", passive_fov_half_deg))
+	active_fov_half_deg = float(d.get("active_fov_half_deg", active_fov_half_deg))
 	tube_launch_transient = d.get("tube_launch_transient", tube_launch_transient)
 	motor_start_transient = d.get("motor_start_transient", motor_start_transient)
 	bearing_sigma_min_deg = float(d.get("bearing_sigma_min_deg", bearing_sigma_min_deg))

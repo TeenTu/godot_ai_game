@@ -71,7 +71,9 @@ func _pd_01_observer_snapshot(fails: Array) -> void:
 	_mk_bus_event(bus, AcousticEmissionEvent.TORPEDO_RUNNING_NOISE, src_e, src_n)
 	var san := EmissionSanitizer.new()
 	san.bind(w.world["env"], w.world.get("depth_model"), _mk_rng(SEED + 11))
-	var evs: Array = san.consume_events(bus.events, own, 10.0, {})
+	# REQ 批：敌方瞬态证据按单程传播时延 t_emit + R/c 出现（验收12）——
+	# 事件 10.0s 发出、源距 500m → 可用时刻 ≈ 10.33s，消费点取 10.4s。
+	var evs: Array = san.consume_events(bus.events, own, 10.4, {})
 	_ok(fails, "PD-01a intercept evidence produced", evs.size() == 1)
 	if evs.is_empty():
 		return
@@ -92,7 +94,7 @@ func _pd_01_observer_snapshot(fails: Array) -> void:
 	_ok(
 		fails,
 		"PD-01d available_time present",
-		absf(float(ev.get("available_time", -1)) - 10.0) < 1e-6
+		absf(float(ev.get("available_time", -1)) - 10.4) < 1e-6
 	)
 	_ok(fails, "PD-01e sensor_id present", str(ev.get("sensor_id", "")) != "")
 	# 本艇机动 1000m 后：LOB 起点仍是接收时快照（AT-09）。
@@ -366,7 +368,9 @@ func _pd_05_threat_sanitized(fails: Array) -> void:
 	)
 	var san := EmissionSanitizer.new()
 	san.bind(w.world["env"], w.world.get("depth_model"), _mk_rng(SEED + 31))
-	var evs: Array = san.consume_events(bus.events, own, 10.0, {})
+	# REQ 批：瞬态证据按 t_emit + R/c 出现——源距 ~854m → 时延 ~0.57s，
+	# 消费点取 11.0s。
+	var evs: Array = san.consume_events(bus.events, own, 11.0, {})
 	_ok(fails, "PD-05a transient evidence produced", evs.size() == 1)
 	if evs.is_empty():
 		return

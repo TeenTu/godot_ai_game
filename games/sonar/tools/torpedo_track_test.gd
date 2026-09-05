@@ -70,10 +70,12 @@ func _trk_07_08_acquire_then_lost(fails: Array) -> void:
 			break
 	_assert_bool(fails, "SEEK-07a passed through ACQUIRING", saw_acquiring, true)
 	_assert_bool(fails, "SEEK-07b reached TRACKING", tracking, true)
-	# miss：源消失（无 return），每 1.2s 窗口 β_miss 惩罚 → drop 以下 → LOST。
+	# miss：源消失（无 return）——REQ-03：按“被动扫描完成且无关联 return”
+	# 的有效机会计龄（每窗口一次 β_miss）→ drop 以下 → LOST。
 	var lost: bool = false
 	for i in range(12):
 		now += 1.2
+		s.notify_passive_scan(now)
 		s.update(now)
 		if s.phase == TorpedoSeeker.Phase.LOST:
 			lost = true
@@ -91,6 +93,7 @@ func _trk_10_reacquire(fails: Array) -> void:
 		s.update(now)
 	for i in range(12):
 		now += 1.2
+		s.notify_passive_scan(now)  # REQ-03：源消失 → 每轮被动扫描完成均无关联
 		s.update(now)
 	_assert_bool(fails, "SEEK-10a precondition LOST", s.phase == TorpedoSeeker.Phase.LOST, true)
 	var reacq: bool = false
@@ -130,12 +133,14 @@ func _trk_11_score_competition(fails: Array) -> void:
 			id_b = t.seeker_track_id
 	_assert_bool(fails, "SEEK-11pre both tracks exist", id_a >= 0 and id_b >= 0, true)
 	_assert_bool(fails, "SEEK-11a quality beats loud single", s.selected_track_id == id_a, true)
-	# B 持续强命中，A 消失（miss 衰减）→ score 翻转（continuity bonus 非永久）。
+	# B 持续强命中，A 消失（REQ-03：被动扫描完成无关联 → miss 衰减）→ score
+	# 翻转（continuity bonus 非永久）。
 	var flipped: bool = false
 	for i in range(10):
 		var rs: Array = [_mk_ret(100.0 + 0.05 * i, 30.0, now)]
 		s.process_returns(rs, now)
 		now += 1.2
+		s.notify_passive_scan(now)
 		s.update(now)
 		if s.selected_track_id == id_b:
 			flipped = true

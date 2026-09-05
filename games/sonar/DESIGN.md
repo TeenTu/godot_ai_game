@@ -366,6 +366,77 @@ Commit 3（任意条件发射）+ Commit 4（WireLink 与 fallback）+ Commit 5�
     `tools/calibration_envelope_test.gd`（CAL-1..9）。WIRE-02h 断言随发射
     hold 修复更新（按实际起点动态下限）；FUZE-05 在新垂直语义下保持原
     几何（敌雷向层带 hold 机动后同带命中）。
+- **Patch G（REQ 鱼雷制导链路重构，2026-09-05）**——目标不是保证必中，
+  而是"捕获—接管—制导—保持航迹—引信—声学反馈"逻辑正确且每次脱靶可
+  解释；禁止用提转率/扩 FOV/扩引信半径/提源级掩盖机制错误：
+  - REQ-01 四轴状态分离：Seeker Phase（SEARCH/ACQUIRING/TRACKING/COAST/
+    LOST/REACQUIRE，新增 COAST）/ Guidance Authority / Steering Source /
+    Mission 各自独立；进 ATTACK 需同持有效航迹 + ASSISTED/AUTONOMOUS +
+    航迹达捕获阈值，且**每 tick 评估**（TRACKING 可发生在 WIRE_ONLY 期间、
+    之后才授权自主——只在相位变化时评估会永久滞留 WIRE_RUN）；
+    WIRE_ONLY+TRACKING 仅表示 TRACK AVAILABLE。
+  - REQ-02 滤波：SeekerTrack 标准 alpha-beta（预测项+wrap 跨界+率限幅
+    ±25°/s）；`min_update_dt_s`(0.05) 门——dt 过小只更新位置不更新率
+    （结构性禁止 residual/dt 尖峰）；主动测距同步 alpha-beta 滤波
+    `range_rate_m_s`。
+  - REQ-03 机会计龄：miss 不再按仿真 tick/壁钟扣分——被动扫描完成
+    （`notify_passive_scan`，FOV 内且超过 passive_miss_window_s 每窗口一次）
+    与主动监听窗结束无回波（`notify_active_miss`，每次 Ping 恰好一次）
+    是仅有的有效测量机会；COAST 超时 = Ping 间隔 + 监听窗 + 余量
+    （`coast_timeout_s` 默认 interval+34s）。仅 8s 一次主动回波可稳定
+    保持航迹（RO-05）。
+  - REQ-04 制导律：废除固定 12s 提前量单算法。TorpedoGuidance 新增
+    `intercept_turn_rate_deg_s`——中段主动测距有效时比例导航
+    `Kp·err + N·(v_closing/v_t)·λ_dot`（λ_dot 项限幅 ±12°/s）；纯被动
+    `Kp·err + Kd·λ_dot`；近程（range ≤ `terminal_switch_range_m`=300m）
+    切纯追踪（PN 的 LOS 率在过靶前发散，继续用会 bang-bang 抖振导致
+    擦过——标定 Kp=1.2/N=3.0/Kd=3.0/Kp_t=2.0）。输入只有净化航迹 +
+    自身状态，绝不读 Truth。
+  - REQ-05 tick 顺序：权限推进 → 主动发射机 → 被动采样+到点回波 →
+    Seeker 相位 → 制导命令 → 有限转率转向 → 垂直 → 平移（引信 swept 由
+    World 在运动后统一判定）；捕获并取得权限后同一 tick 即转向（≤1 tick）。
+  - REQ-06 FOV/COAST：目标预测方位离开接收 FOV → COAST（按最后方位+率
+    短时预测惯性保持），超时才 LOST；重进覆盖 → REACQUIRE；LOST/REACQUIRE
+    重锁要求**脱锁后有新测量**（`last_update_time > phase_since`，禁止对
+    陈旧航迹幽灵重锁 → 冲过目标后必然走向 SEARCH 重搜，不无限 COAST/
+    REACQUIRE 死循环）；被动/主动 FOV 半角独立配置
+    （`passive_fov_half_deg`/`active_fov_half_deg`，旧配置回退 beamwidth/2）；
+    扇区中心恒为实际艏向（SeekerBeamState 单一真源不变）。
+  - REQ-07 转弯性能：`omega_max = min(机械限 6°/s, 横向过载限/速度)
+    （`max_lateral_accel_m_s2`=4.5，40kn 时 12.5°/s 不绑定）；诊断字段
+    `commanded/actual_turn_rate_deg_s`、`turn_saturated`；禁止提转率掩盖。
+  - REQ-08/验收14 脱靶原因：TorpedoMissReason 纯函数按优先级判定
+    NO_GUIDANCE_AUTHORITY / TURN_RATE_SATURATED / ACTIVE_TRACK_AGED_OUT /
+    TRACK_LOST_OUTSIDE_FOV / TRACK_FILTER_DIVERGED /
+    FUZE_MISSED_BETWEEN_TICKS / FUEL_EXHAUSTED，随死亡事件 detail 下发
+    Debrief（FUEL_OUT 短路为 FUEL_EXHAUSTED；命中为空）。
+  - REQ-09 鱼雷声谱：`_sync_torpedo_shadows` 从 `_advance_enemy_ai` 移出、
+    tick 主路径无条件调用——无敌方 AI 场景玩家鱼雷也进入统一声场（旧实现
+    enemy_ai==null 提前返回导致玩家雷声学影子永不产生）；死亡鱼雷影子
+    自然消失（is_dead 过滤）；瀑布窄带频段可切换
+    （`OperatorSonar.set_nb_band`：LOW 0-500 / MID 500-3000 / HIGH 8000-
+    16000 Hz，CRUISE 540/1080、HIGH 660/1320 预设谱线不再被 0-500 过滤，
+    OperatorPanel 下拉切换）；EmissionSanitizer 敌方瞬态证据增加单程传播
+    时延（`_pending_delayed` 在途台账，t_emit + R/c 后才结算，验收12），
+    出管/电机/Ping/爆炸证据全部按声速到达；TORPEDO 分类仍走观测特征
+    （威胁证据 source_class_hypothesis，绝不读 Truth 类型）。
+  - 结构：torpedo.gd 超 1200 行上限 → 拆出 `torpedo_emitter.gd`（声学
+    广播子控制器：motor_start/active_ping/running_noise 的 bus 写入收敛）、
+    `miss_reason.gd`（脱靶原因纯函数）；seeker cfg 默认值收敛至
+    `TorpedoGuidance.default_seeker_cfg`；扫掠相位求偏移收敛至
+    `TorpedoGuidance.search_phase_offset_for`。
+  - UI：在水武器卡新增 命令/实际转率+SAT 徽标、Desired（PN/期望航向）、
+    引信状态+最近通过距离、声学模式+下一发 Ping 倒计时、航迹距离/距离率
+    （第三部分遥测清单）；普通 UI 无 Truth（既有纪律不变）。
+  - 回归 `tools/req_overhaul_test.gd`（RO-01 WIRE_ONLY 不转向/RO-02 Accept
+    即 ASSISTED+下一 tick 转向/RO-03 自主接管与无航迹进 SEARCH/RO-04 滤波
+    收敛+跨 0°/RO-05 仅主动回波保持航迹/RO-06 1500m-10kn 横向目标拦截/
+    RO-07 FOV-COAST-REACQUIRE/RO-08 冲过后重搜/RO-10 无敌 AI 统一声场/
+    RO-11 频段切换/RO-12 传播时延/RO-13 脱靶原因）。既有测试随语义更新：
+    torpedo_track_test SEEK-08/10/11b 按 REQ-03 改为机会计龄驱动；
+    patch_d_test PD-01/05 消费点让出传播时延；s107 INT-A/B、fuze_evidence
+    FUZE-05 命中后留传播窗口再收证据；decoy_test CM-05c 容差 10→15°
+    （PN 饱和圆弧段滤波滞后，主导性判定不变）。
 
 ---
 

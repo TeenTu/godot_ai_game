@@ -66,6 +66,9 @@ func _int_a_full_kill_chain(fails: Array) -> void:
 			"DEAD":
 				phases["dead"] = true
 				break
+	# REQ 批：爆炸证据按 t_emit + R/c 到达——命中后留出传播窗口再收证据。
+	for i in range(20):
+		w.run_steps(1)
 	for k in phases:
 		_assert_bool(fails, "INT-A3 phase %s reached" % k, bool(phases[k]), true)
 	# Truth 战果（内核侧）。
@@ -103,6 +106,9 @@ func _int_b_enemy_counterfire(fails: Array) -> void:
 			launched = true
 			break
 	_assert_bool(fails, "INT-B1 enemy doctrine fired", launched, true)
+	# REQ 批：瞬态证据按单程传播时延 t_emit + R/c 到达——发射后留出传播窗口。
+	for i in range(20):
+		w.run_steps(1)
 	# 玩家告警证据（发射瞬态截获）。
 	var alerts: Array = []
 	for e in w.player_evidence:

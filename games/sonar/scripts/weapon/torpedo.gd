@@ -1,43 +1,32 @@
 class_name Torpedo
 extends RefCounted
-## torpedo.gd — 鱼雷实体（S1-07 正交状态重构版，Commit 1-4）。
+## torpedo.gd — 鱼雷实体（S1-07 正交状态重构版 + REQ 制导重构批）。
 ##
-## 信息链纪律（S1-07 §2.1/§2.2）：
-##   - 本类不接收 TruthEntity targets：step(dt, sim_time, ctx) 的 ctx 只含
-##     服务接口（TorpedoContext），结构上禁止 Guidance 读目标 Truth；
-##   - 发射参数来自 WeaponProgram 快照（SystemSolution 只是可选预填来源，
-##     本批仍由 WeaponSystem.fire 统一构建程序）；
-##   - 目标 Truth 选择 / 声自导捕获（Seeker 采样 → SeekerTrack）是 Commit 6
-##     以后的事，本批不做——鱼雷是"线导直航 + 默认被动监听"的诚实中间态。
+## 信息链纪律（S1-07 §2.1/§2.2）：本类不接收 TruthEntity targets——step() 的
+## ctx 只含服务接口（TorpedoContext），结构上禁止 Guidance 读目标 Truth；
+## 发射参数来自 WeaponProgram 快照；Seeker/Guidance 只消费净化 SeekerReturn
+## （无 target_id / 无被动真实 range），主动 Ping 回波按 tau=2R/c 延迟到达。
 ##
-## 线导（S1-07 §5.4/§5.5，Commit 4）：wire_link 持有线长/放线/断裂/切断状态，
-## 命令门只认 CONNECTED；导线 BROKEN/CUT 后拒绝新命令并执行发射前保存的
-## fallback program（保持最后命令航向 → 预设搜索深度带 → 按预设距离/时间
-## 授权自主与开主动 → 预设扇区 SEARCH）。命令全部记 CommandLog，绝不改写
-## 发射程序快照。
+## 线导（§5.4/§5.5）：wire_link 持有线长/放线/断裂/切断状态，命令门只认
+## CONNECTED；导线 BROKEN/CUT 后拒绝新命令并执行发射前保存的 fallback
+## program。命令全部记 CommandLog，绝不改写发射程序快照。
 ##
-## Seeker 采样（S1-07 §6.3/§6.5，Commit 6）：发射并安全出管后被动接收机默认
-## ON（REQ-DECISION-01），经 ctx 注入的 TorpedoSensorAdapter 周期采样并收集
-## 净化 SeekerReturn（无 target_id / 无被动真实 range）；主动 Ping 的回波按
-## tau=2R/c 延迟到达。本类只消费净化 Return，绝不接触 Truth targets；转向 /
-## 捕获 / 跟踪（SeekerTrack）为 Commit 7，本批仅"监听并记录"。
-##
-## 正交状态模型（S1-07 §3，REQ-DECISION-02）：不再用一个 State 同时暗含
-## "主动开机、已锁定、导线断裂、引信已解保"。任务/Seeker/主动发射机/制导
-## 权限/导线/深度/引信各自独立状态机，见下方 enum。
-##
-## 生命周期（任务层）：
-##   STOWED → LAUNCHING → WIRE_RUN（→ SEARCH/ATTACK/TERMINAL 由后续 Commit
-##   的 Seeker/命中链驱动）→ DEAD（燃料耗尽 / 命中 / 自毁）。
+## 正交状态模型（§3，REQ-DECISION-02）：任务/Seeker/主动发射机/制导权限/
+## 导线/深度/引信各自独立状态机（REQ 批再加四轴呈现：Seeker Phase /
+## Guidance Authority / Steering Source / Mission，进 ATTACK 需同持有效
+## 航迹 + 权限 + 制导实际接管）。
 
 signal event_occurred(torpedo_id: String, kind: String, detail: Dictionary)
 
 enum MissionState { STOWED, LAUNCHING, WIRE_RUN, SEARCH, ATTACK, TERMINAL, DEAD }
 enum SeekerState {
-	PASSIVE_LISTEN, ACTIVE_SEARCH, COMBINED_SEARCH, ACQUIRING, TRACKING, LOST, REACQUIRE
+	PASSIVE_LISTEN, ACTIVE_SEARCH, COMBINED_SEARCH, ACQUIRING, TRACKING, COAST, LOST, REACQUIRE
 }
 enum ActiveTxState { OFF, WAITING_TRIGGER, PINGING, COOLDOWN }
 enum GuidanceAuthority { WIRE_ONLY, ASSISTED, AUTONOMOUS }
+## REQ-04：制导输出两态——直接转率命令（PN 拦截）或期望航向（重搜扫掠/COAST
+## 预测方位）。_apply_steering 按优先级消费，全部受 omega_max 限幅。
+enum GuidanceMode { NONE, COURSE, RATE }
 enum DepthState { HOLDING_UPPER, DIVING, HOLDING_LOWER, CLIMBING }
 enum FuzeState { SAFE, ARMED, TRIGGERED, INERT }
 
@@ -96,6 +85,16 @@ var max_vertical_speed_m_s: float = 2.0
 var min_depth_m: float = 0.0
 var max_depth_m: float = 400.0
 var max_turn_rate_deg_s: float = DEFAULT_TURN_RATE_DEG_S
+## REQ-07：横向过载限（m/s²）。omega_max = min(mech_limit, lat_accel/speed)。
+## 默认 4.5：40kn → 12.5°/s > 机械 6°/s（机械限仍绑定）。禁止仅靠提高
+## 转率掩盖制导错误。
+var max_lateral_accel_m_s2: float = 4.5
+## REQ-07/验收14：转向诊断——命令/实际转率、饱和状态。
+var turn_saturated: bool = false
+var commanded_turn_rate_deg_s: float = 0.0
+var actual_turn_rate_deg_s: float = 0.0
+## 验收14：脱靶原因（死亡时确定；七种枚举之一或空=命中/未终局）。
+var miss_reason: String = ""
 
 var trail: Array = []  # [{e, n, t}] 供海图画轨迹（自身状态，非 Truth）
 # Commit 4 命令日志（S1-07 §5.1：线控命令另记 CommandLog，绝不悄悄改写原始
@@ -109,6 +108,10 @@ var last_cmd_reject_reason: String = ""
 var seeker_returns: Array = []
 # Commit 6（REQ-DECISION-01）：被动接收机默认 ON；发射并安全出管后开始监听。
 var passive_receiver_on: bool = true
+# REQ-07/验收14：本次运行是否曾取得制导权限并实际操舵（NO_GUIDANCE_AUTHORITY
+# 判定依据）；是否曾发生转率饱和（TURN_RATE_SATURATED 判定依据）。
+var _ever_guidance_engaged: bool = false
+var _ever_turn_saturated: bool = false
 var _cmd_course_deg: float = -1.0  # <0 = 无航向命令（保持当前航向）
 var _launch_t: float = 0.0
 var _sim_time: float = 0.0
@@ -121,25 +124,38 @@ var _tx_cycle_s: float = 0.0
 var _tx_manual_armed: bool = false
 var _depth_model: RefCounted = null  # DepthLayerModel（Commit 2 由 ctx 注入）
 var _fallback_active: bool = false
-# P0-09：主动链 ping 序号与在途 ping 台账（ping_id -> {emit_t, heard}）。
-# 同一 ping_id 串联 TX_PING → ECHO（同 id）/ LISTEN_COMPLETE_NO_RETURN。
+# P0-09：主动链 ping 序号与在途 ping 台账（ping_id -> {emit_t, heard}，串联
+# TX_PING → ECHO / LISTEN_COMPLETE_NO_RETURN）。
 var _ping_seq: int = 0
 ## 上一步实际执行的转向率（自身运动学；喂给 seeker 做惯性视线率补偿）。
 var _last_turn_rate_deg_s: float = 0.0
 var _active_pings_outstanding: Dictionary = {}
-# Commit 5：ctx 注入的声学事件总线（null=无总线，如直接单测不发射）。
+
+# Commit 5：ctx 注入的声学事件总线（null=无总线）；_emitter 收敛 bus 写入。
 var _emission_bus: AcousticEmissionBus = null
+var _emitter: TorpedoEmitter = TorpedoEmitter.new()
 var _noise_timer_s: float = 0.0
 # Commit 6：ctx 注入的传感器采样适配器（仿真内核唯一可触 Truth 的武器侧对象，
 # 输出净化 SeekerReturn）与被动采样计时。
 var _sensor_adapter: TorpedoSensorAdapter = null
 var _passive_sample_timer_s: float = 0.0
 # Commit 7（§7）：Seeker 航迹/相位 + 制导。只消费净化 SeekerReturn，绝不接触
-# Truth；_guidance_course_deg >= 0 时按 AUTONOMOUS / ASSISTED-accepted 制导转向，
-# WIRE_ONLY 恒 -1（Seeker 只侦听提示，§7.7）。
+# Truth（WIRE_ONLY 恒不接管操舵，§7.7）。
 var _seeker: TorpedoSeeker = null
 var _assist_track_id: int = -1  # ASSISTED：玩家 ACCEPT_SEEKER_TRACK 接受的航迹
 var _guidance_course_deg: float = -1.0
+var _guidance_mode: int = GuidanceMode.NONE
+var _guidance_turn_rate_cmd: float = 0.0
+
+
+## REQ-07：omega_max = min(机械限，横向过载限/速度)；不靠提转率掩盖制导错误。
+func _max_turn_rate() -> float:
+	var mech: float = maxf(max_turn_rate_deg_s, 0.1)
+	var v_ms: float = NavUtils.kn_to_ms(speed_kn)
+	if max_lateral_accel_m_s2 > 0.0 and v_ms > 0.1:
+		var lat: float = max_lateral_accel_m_s2 / v_ms * 180.0 / PI
+		return minf(mech, lat)
+	return mech
 
 
 ## 发射：装入 WeaponProgram 快照并进入 LAUNCHING。from_depth = 发射平台深度。
@@ -172,11 +188,22 @@ func launch(
 	_seeker.configure(_seeker_cfg())
 	_assist_track_id = -1
 	_guidance_course_deg = -1.0
+	# REQ-04/07/验收14：制导模式与转向诊断复位。
+	_guidance_mode = GuidanceMode.NONE
+	_guidance_turn_rate_cmd = 0.0
+	turn_saturated = false
+	commanded_turn_rate_deg_s = 0.0
+	actual_turn_rate_deg_s = 0.0
+	_ever_guidance_engaged = false
+	_ever_turn_saturated = false
+	miss_reason = ""
 	if program != null:
 		wire_link.enabled = program.wire_guidance_enabled
 		guidance_authority = program.guidance_authority
 		# Commit 5：速度/续航来自声学画像（§6.2 模式同时改速度与续航）。
 		acoustic_profile = TorpedoAcousticProfile.make_default()
+		_emitter.torpedo_id = id
+		_emitter.profile = acoustic_profile
 		var sm: String = WeaponProgram.speed_mode_name(program.speed_mode)
 		speed_mode = program.speed_mode
 		speed_kn = acoustic_profile.speed_kn(sm)
@@ -491,6 +518,10 @@ func _log_command(kind: String, detail: Dictionary) -> void:
 
 ## ---- 推进 ----
 ## ctx: TorpedoContext（服务接口；绝不含 Truth targets）。
+## REQ-05 tick 顺序（每物理 tick 固定）：①权限推进 → ②主动发射机（Ping 排程）
+## → ③被动采样+到点回波收集 → ④航迹/Seeker 相位 → ⑤制导命令 → ⑥有限转率
+## 转向 → ⑦垂直 → ⑧平移（引信 swept 由 World 在运动后统一判定）。捕获并
+## 取得权限后同一 tick 即开始实际转向（≤1 tick）。
 func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 	if mission_state == MissionState.DEAD or mission_state == MissionState.STOWED:
 		return false
@@ -503,23 +534,25 @@ func step(dt: float, sim_time: float, ctx: RefCounted) -> bool:
 		_die("FUEL_OUT", {})
 		return true
 
-	fired_event = fired_event or _advance_mission(dt, sim_time)
 	if _seeker != null:
 		_seeker.own_turn_rate_deg_s = _last_turn_rate_deg_s
 	_advance_running_noise(dt)
+	# (1) 权限推进（P0-02.2/3 主程序 + fallback）。
 	fired_event = fired_event or _advance_fallback_autonomy()
-	# P0-02.2/3：主程序生命周期的距离/时间自主触发（非 fallback 专属）。
 	fired_event = fired_event or _advance_program_autonomy()
 	fired_event = fired_event or _advance_fuze()
+	# (2) 主动发射机（本轮 Ping 的回波最早也要 tau 后才到，绝不同 tick 返回）。
 	fired_event = fired_event or _advance_active_tx(dt)
-	_advance_vertical(dt)
-	# Commit 7（§7）：采样/回波收集 → Seeker 相位推进 → 制导期望航向；
-	# 之后 _advance_mission 按优先级（制导 > 线控命令 > 搜索扫掠）有限速率转向。
+	# (3) 采样：被动周期扫描 + 到点主动回波（净化 return 喂航迹机）。
 	_advance_seeker_passive(dt, sim_time)
 	_collect_active_returns(sim_time)
+	# (4)+(5) Seeker 相位推进 + 制导命令计算（转率/期望航向）。
 	_advance_seeker_and_guidance(sim_time)
-
-	# 平移（水平）
+	# (6) 转向（制导 > 线控命令 > 搜索扫掠，全受 omega_max）。
+	fired_event = fired_event or _advance_mission(dt, sim_time)
+	# (7) 垂直。
+	_advance_vertical(dt)
+	# (8) 平移（水平）。
 	var v_ms: float = NavUtils.kn_to_ms(speed_kn)
 	fired_event = fired_event or _advance_wire(dt, v_ms)
 	var next: Dictionary = NavUtils.advance_pos(pos_east_m, pos_north_m, course_deg, v_ms, dt)
@@ -539,6 +572,7 @@ func _bind_ctx(ctx: RefCounted) -> void:
 	# Commit 5：声学事件总线（null=无总线，跳过声源广播）。
 	if ctx.emission_bus != null:
 		_emission_bus = ctx.emission_bus
+		_emitter.bus = ctx.emission_bus
 	# Commit 6：传感器采样适配器（输出净化 SeekerReturn，无 Truth）。
 	if ctx.sensor_adapter != null:
 		_sensor_adapter = ctx.sensor_adapter
@@ -555,29 +589,58 @@ func _advance_mission(dt: float, sim_time: float) -> bool:
 				_emit_motor_start()
 				return true
 		MissionState.WIRE_RUN, MissionState.SEARCH, MissionState.ATTACK, MissionState.TERMINAL:
-			# 期望航向优先级（Commit 7，§7.7）：制导（AUTONOMOUS/ASSISTED 已接受）
-			# > 线控命令 > 搜索扫掠（仅 SEARCH 且无锁定、无命令时）。全部经最大
-			# 转向率逼近——绝无瞬时指向（WPN-SEEK-13）。
-			var desired: float = _guidance_course_deg
-			if desired < 0.0:
-				desired = _cmd_course_deg
-			if desired < 0.0 and mission_state == MissionState.SEARCH:
-				desired = _search_sweep_course(sim_time)
-			if desired >= 0.0:
-				var err: float = NavUtils.wrap180(desired - course_deg)
-				var rate: float = maxf(max_turn_rate_deg_s, 0.1)
-				var applied: float = clampf(err, -rate * dt, rate * dt)
-				_last_turn_rate_deg_s = applied / maxf(dt, 0.001)
-				course_deg = NavUtils.wrap360(course_deg + applied)
-				if (
-					absf(NavUtils.wrap180(desired - course_deg)) < 0.05
-					and desired == _cmd_course_deg
-				):
-					course_deg = NavUtils.wrap360(desired)
-					_cmd_course_deg = -1.0
+			_apply_steering(dt, sim_time)
 		_:
 			_last_turn_rate_deg_s = 0.0
+			commanded_turn_rate_deg_s = 0.0
+			turn_saturated = false
 	return false
+
+
+## REQ-05(6)/REQ-07：转向应用（每 tick 恰好一次）。优先级：制导（转率命令/
+## 期望航向）> 线控命令 > 搜索扫掠。全部受 omega_max = min(机械限，
+## 横向过载限/速度) 约束；记录命令/实际转率与饱和状态（诊断 + 脱靶原因）。
+func _apply_steering(dt: float, sim_time: float) -> void:
+	var omega: float = _max_turn_rate()
+	var rate_cmd: float = 0.0
+	var have: bool = false
+	var from_guidance: bool = false
+	if _guidance_mode == GuidanceMode.RATE:
+		rate_cmd = _guidance_turn_rate_cmd
+		have = true
+		from_guidance = true
+		turn_saturated = absf(rate_cmd) > omega + 0.05
+	elif _guidance_mode == GuidanceMode.COURSE and _guidance_course_deg >= 0.0:
+		var g_err: float = NavUtils.wrap180(_guidance_course_deg - course_deg)
+		rate_cmd = clampf(g_err / maxf(dt, 0.001), -omega, omega)
+		have = true
+		from_guidance = true
+		turn_saturated = absf(g_err) > omega * dt + 0.05
+	elif _cmd_course_deg >= 0.0:
+		var err: float = NavUtils.wrap180(_cmd_course_deg - course_deg)
+		rate_cmd = clampf(err / maxf(dt, 0.001), -omega, omega)
+		have = true
+		turn_saturated = absf(err) > omega * dt + 0.05
+		if absf(err) < 0.05:
+			course_deg = NavUtils.wrap360(_cmd_course_deg)
+			_cmd_course_deg = -1.0
+			turn_saturated = false
+	elif mission_state == MissionState.SEARCH:
+		var desired: float = _search_sweep_course(sim_time)
+		if desired >= 0.0:
+			var serr: float = NavUtils.wrap180(desired - course_deg)
+			rate_cmd = clampf(serr / maxf(dt, 0.001), -omega, omega)
+			have = true
+			turn_saturated = absf(serr) > omega * dt + 0.05
+	if not have:
+		turn_saturated = false
+	commanded_turn_rate_deg_s = rate_cmd if have else 0.0
+	var applied: float = clampf(rate_cmd, -omega * dt, omega * dt) if have else 0.0
+	_last_turn_rate_deg_s = applied / maxf(dt, 0.001)
+	actual_turn_rate_deg_s = _last_turn_rate_deg_s
+	course_deg = NavUtils.wrap360(course_deg + applied)
+	if turn_saturated:
+		_ever_turn_saturated = true
 
 
 func _try_mission(to: int, ev: String, detail: Dictionary) -> bool:
@@ -704,28 +767,13 @@ func _tx_trigger_met() -> bool:
 
 
 ## ---- 声学事件广播（§9.2，Commit 5）----
-## 记录进 ctx 注入的 AcousticEmissionBus；无总线（直接单测 ctx=null）时跳过。
+## bus 写入收敛在 _emitter（TorpedoEmitter）；无总线时全部跳过。
 ## 事件只带 torpedo_id 与自身状态/位置，绝不含任何目标 Truth / target_id。
 
 
 ## 动力启动瞬态（出管后进入 WIRE_RUN 时一次）。
 func _emit_motor_start() -> void:
-	if _emission_bus == null:
-		return
-	var t: Dictionary = acoustic_profile.motor_start_transient
-	(
-		_emission_bus
-		. record(
-			AcousticEmissionEvent.TORPEDO_MOTOR_START,
-			torpedo_id,
-			_sim_time,
-			Vector3(pos_east_m, pos_north_m, actual_depth_m),
-			float(t.get("center_frequency_hz", 800.0)),
-			float(t.get("bandwidth_hz", 4000.0)),
-			float(t.get("sl_db", 158.0)),
-			float(t.get("duration_s", 1.5)),
-		)
-	)
+	_emitter.motor_start(Vector3(pos_east_m, pos_north_m, actual_depth_m), _sim_time)
 
 
 ## 主动 Ping（每次进入 PINGING 记录；TOF/回波由 adapter 按 tau=2R/c 延迟结算，
@@ -736,21 +784,7 @@ func _emit_active_ping() -> void:
 	var pid: String = "%s-P%03d" % [torpedo_id, _ping_seq]
 	_active_pings_outstanding[pid] = {"emit_t": _sim_time, "heard": false}
 	event_occurred.emit(torpedo_id, "ACTIVE_TX_PING", {"ping_id": pid})
-	if _emission_bus != null:
-		(
-			_emission_bus
-			. record(
-				AcousticEmissionEvent.TORPEDO_ACTIVE_PING,
-				torpedo_id,
-				_sim_time,
-				Vector3(pos_east_m, pos_north_m, actual_depth_m),
-				acoustic_profile.active_center_frequency_hz,
-				acoustic_profile.active_bandwidth_hz,
-				acoustic_profile.active_source_level_db,
-				acoustic_profile.active_pulse_duration_s,
-				{"ping_id": pid},
-			)
-		)
+	_emitter.active_ping(Vector3(pos_east_m, pos_north_m, actual_depth_m), _sim_time, pid)
 	# Commit 6：登记各接触回波（Ping 时刻几何为测距基准；到点后净化为
 	# ACTIVE SeekerReturn）。仅当 adapter 存在（ctx 注入）时登记。
 	if _sensor_adapter != null:
@@ -773,8 +807,6 @@ func _emit_active_ping() -> void:
 ## 航行噪声（持续声源）：按 RUNNING_NOISE_CADENCE_S 周期性广播，源级随速度
 ## 模式（§6.2：HIGH 更响）。事件 duration = 本次发射代表的一段时间。
 func _advance_running_noise(dt: float) -> void:
-	if _emission_bus == null:
-		return
 	if (
 		mission_state != MissionState.WIRE_RUN
 		and mission_state != MissionState.SEARCH
@@ -786,23 +818,13 @@ func _advance_running_noise(dt: float) -> void:
 	if _noise_timer_s > 0.0:
 		return
 	_noise_timer_s = RUNNING_NOISE_CADENCE_S
-	var sm: String = WeaponProgram.speed_mode_name(speed_mode)
-	var band: Vector2 = acoustic_profile.running_noise_band_hz()
-	var center: float = 0.5 * (band.x + band.y)
-	var bw: float = maxf(band.y - band.x, 1.0)
 	(
-		_emission_bus
-		. record(
-			AcousticEmissionEvent.TORPEDO_RUNNING_NOISE,
-			torpedo_id,
-			_sim_time,
+		_emitter
+		. running_noise(
 			Vector3(pos_east_m, pos_north_m, actual_depth_m),
-			center,
-			bw,
-			acoustic_profile.own_noise_sl_db(sm),
+			_sim_time,
+			WeaponProgram.speed_mode_name(speed_mode),
 			RUNNING_NOISE_CADENCE_S,
-			# Commit 8（§6.1）：窄带谱线随模式（分类/频谱相似度竞争的特征来源）。
-			{"tonal_lines": acoustic_profile.tonal_lines(sm)},
 		)
 	)
 
@@ -859,6 +881,10 @@ func _advance_seeker_passive(dt: float, sim_time: float) -> void:
 		)
 	)
 	_record_seeker_returns(returns)
+	# REQ-03：本轮被动扫描完成——对无关联 return 的 FOV 内航迹按机会计一次
+	# miss（窗口限频；有 return 的航迹已被关联更新，不受罚）。
+	if _seeker != null:
+		_seeker.notify_passive_scan(sim_time)
 
 
 ## 主动回波（§6.4）：adapter 到点（tau=2R/c）结算的 ACTIVE return 收集。
@@ -897,6 +923,10 @@ func _collect_active_returns(sim_time: float) -> void:
 				event_occurred.emit(torpedo_id, "LISTEN_COMPLETE_NO_RETURN", {"ping_id": pid2})
 	for pid3 in done:
 		_active_pings_outstanding.erase(pid3)
+	# REQ-03：主动监听窗结束且无回波——对 FOV 内航迹记一次 active miss
+	#（每次 Ping 恰好一次；两次 Ping 之间绝不按 tick 扣分）。
+	if _seeker != null and not done.is_empty():
+		_seeker.notify_active_miss(sim_time)
 
 
 func _record_seeker_returns(returns: Array) -> void:
@@ -919,37 +949,49 @@ func _record_seeker_returns(returns: Array) -> void:
 		_seeker.process_returns(eligible, _sim_time)
 
 
-## ---- Commit 7（§7）：Seeker 相位推进 + 制导 ----
-
-
-## Seeker/制导共用配置（§7.3 阈值 + §7.7 提前量 + §7.5 扫掠周期；可测试标定）。
+## Seeker/制导共用配置（默认值收敛在 TorpedoGuidance.default_seeker_cfg）。
 func _seeker_cfg() -> Dictionary:
-	return {
-		"acquire_threshold": 0.65,
-		"stable_track_threshold": 0.80,
-		"drop_threshold": 0.25,
-		"beta_miss": 0.10,
-		"bearing_gate_deg": 12.0,
-		"miss_after_s": 1.2,
-		"reacquire_timeout_s": 120.0,
-		"lead_time_s": 12.0,
-		"max_lead_deg": 25.0,
-		"snake_period_s": 120.0,
-		"circle_period_s": 240.0,
-		"terminal_range_m": 250.0,
-	}
+	return TorpedoGuidance.default_seeker_cfg(acoustic_profile)
 
 
 func _advance_seeker_and_guidance(sim_time: float) -> void:
 	if _seeker == null or not _in_water():
 		return
+	# REQ-06：机会/COAST 判定用实际艏向 + 接收半角（与物理采样同一 FOV 门）。
+	_seeker.own_course_deg = course_deg
+	_seeker.fov_half_deg = _passive_fov_half()
 	var res: Dictionary = _seeker.update(sim_time)
 	if bool(res.get("changed", false)):
 		_on_seeker_phase_changed()
 	_advance_guidance(sim_time)
+	# REQ-01：任务联动每 tick 评估（不只相位变化时）——TRACKING 可能发生在
+	# WIRE_ONLY 期间、之后才授权自主；只在相位变化时评估会永久停在 WIRE_RUN。
+	# 进 ATTACK 需同持有效航迹 + 权限 + 航迹达标。
+	if _seeker.phase in [TorpedoSeeker.Phase.TRACKING, TorpedoSeeker.Phase.REACQUIRE]:
+		var can_steer := false
+		if guidance_authority == GuidanceAuthority.AUTONOMOUS:
+			can_steer = _seeker.selected_track() != null
+		elif guidance_authority == GuidanceAuthority.ASSISTED and _assist_track_id >= 0:
+			var at: SeekerTrack = _seeker.track_by_id(_assist_track_id)
+			can_steer = (
+				at != null
+				and at.lock_quality >= float(_seeker_cfg().get("acquire_threshold", 0.65))
+			)
+		if (
+			can_steer
+			and (mission_state == MissionState.WIRE_RUN or mission_state == MissionState.SEARCH)
+		):
+			_try_mission(MissionState.ATTACK, "ATTACK", {"track_id": _seeker.selected_track_id})
 
 
-## 相位变化 → SeekerState 呈现 + 任务状态联动（§3.2/§3.3）。
+## 接收 FOV 半角（REQ-06）：画像独立字段优先；旧配置回退 0.5×beamwidth。
+func _passive_fov_half() -> float:
+	if acoustic_profile.passive_fov_half_deg > 0.0:
+		return acoustic_profile.passive_fov_half_deg
+	return 0.5 * acoustic_profile.horizontal_beamwidth_deg
+
+
+## 相位变化 → SeekerState 呈现 + 任务状态联动（§3.2/§3.3 + REQ-01）。
 func _on_seeker_phase_changed() -> void:
 	var mapped: int = SeekerState.PASSIVE_LISTEN
 	match _seeker.phase:
@@ -967,6 +1009,8 @@ func _on_seeker_phase_changed() -> void:
 			mapped = SeekerState.ACQUIRING
 		TorpedoSeeker.Phase.TRACKING:
 			mapped = SeekerState.TRACKING
+		TorpedoSeeker.Phase.COAST:
+			mapped = SeekerState.COAST
 		TorpedoSeeker.Phase.LOST:
 			mapped = SeekerState.LOST
 		TorpedoSeeker.Phase.REACQUIRE:
@@ -974,28 +1018,19 @@ func _on_seeker_phase_changed() -> void:
 	if mapped != seeker_state:
 		seeker_state = mapped
 		event_occurred.emit(torpedo_id, "SEEKER_PHASE", {"state": seeker_state_name()})
-	# 任务联动（P0-02.7）：TRACKING + 实际操舵权 → ATTACK；ATTACK 中 LOST →
-	# SEARCH（重搜，§7.6）。WIRE_ONLY 下即使 seeker TRACKING 也不接管操舵，
-	# 不进 ATTACK（旧实现仅看 seeker 相位）。
-	var can_steer: bool = (
-		guidance_authority == GuidanceAuthority.AUTONOMOUS
-		or (guidance_authority == GuidanceAuthority.ASSISTED and _assist_track_id >= 0)
-	)
-	if (
-		_seeker.phase == TorpedoSeeker.Phase.TRACKING
-		and can_steer
-		and (mission_state == MissionState.WIRE_RUN or mission_state == MissionState.SEARCH)
-	):
-		_try_mission(MissionState.ATTACK, "ATTACK", {"track_id": _seeker.selected_track_id})
-	elif _seeker.phase == TorpedoSeeker.Phase.LOST and mission_state == MissionState.ATTACK:
+	# 任务联动（REQ-01）：进 ATTACK 条件在 _advance_seeker_and_guidance 每
+	# tick 评估；此处仅处理 LOST → SEARCH 重搜（COAST 保持 ATTACK）。
+	if _seeker.phase == TorpedoSeeker.Phase.LOST and mission_state == MissionState.ATTACK:
 		_try_mission(MissionState.SEARCH, "SEARCH", {"reason": "SEEKER_LOST"})
 
 
-## 制导期望航向（§7.7）：WIRE_ONLY 恒不接管；AUTONOMOUS 跟随 seeker 选中的
-## 航迹；ASSISTED 只在玩家 ACCEPT_SEEKER_TRACK 接受且航迹仍达捕获阈值时跟随。
-## 期望航向写 _guidance_course_deg，实际转向仍受 max_turn_rate 限制。
+## 制导命令（§7.7 + REQ-04）：WIRE_ONLY 恒不接管；AUTONOMOUS 跟随选中航迹；
+## ASSISTED 只在接受航迹达捕获阈值时跟随。有航迹 → PN 转率命令（RATE）；
+## COAST → 预测方位惯性保持（COURSE）；LOST/REACQUIRE → 扩大扇区扫掠。
 func _advance_guidance(sim_time: float) -> void:
+	_guidance_mode = GuidanceMode.NONE
 	_guidance_course_deg = -1.0
+	_guidance_turn_rate_cmd = 0.0
 	var autonomy: bool = guidance_authority == GuidanceAuthority.AUTONOMOUS
 	var assisted: bool = guidance_authority == GuidanceAuthority.ASSISTED and _assist_track_id >= 0
 	if not (autonomy or assisted):
@@ -1008,7 +1043,8 @@ func _advance_guidance(sim_time: float) -> void:
 			in [
 				TorpedoSeeker.Phase.ACQUIRING,
 				TorpedoSeeker.Phase.TRACKING,
-				TorpedoSeeker.Phase.REACQUIRE
+				TorpedoSeeker.Phase.COAST,
+				TorpedoSeeker.Phase.REACQUIRE,
 			]
 		):
 			track = _seeker.selected_track()
@@ -1017,7 +1053,12 @@ func _advance_guidance(sim_time: float) -> void:
 		if track != null and track.lock_quality < float(cfg.get("acquire_threshold", 0.65)):
 			track = null
 	if track != null:
-		_guidance_course_deg = TorpedoGuidance.pursuit_course_deg(track, cfg)
+		_ever_guidance_engaged = true
+		# REQ-04：比例导航拦截制导（转率命令；输入只有净化航迹 + 自身状态）。
+		_guidance_mode = GuidanceMode.RATE
+		_guidance_turn_rate_cmd = TorpedoGuidance.intercept_turn_rate_deg_s(
+			track, course_deg, NavUtils.kn_to_ms(speed_kn), cfg
+		)
 		# P1-08 配套：深度带归向——选中航迹的层带提示（测量边界内粗分类）
 		# 驱动垂直机动（Vz_max 限速），异层目标才可能进入引信垂直门。
 		var band_hint: String = track.depth_band_hint
@@ -1026,7 +1067,6 @@ func _advance_guidance(sim_time: float) -> void:
 		# TERMINAL：主动回波测距进入近程（距离来自回波测量，绝不读 Truth）。
 		if (
 			mission_state == MissionState.ATTACK
-			and _seeker.phase == TorpedoSeeker.Phase.TRACKING
 			and track.range_estimate_m >= 0.0
 			and track.range_estimate_m <= float(cfg.get("terminal_range_m", 250.0))
 		):
@@ -1036,11 +1076,19 @@ func _advance_guidance(sim_time: float) -> void:
 				{"range_est_m": track.range_estimate_m},
 			)
 		return
+	# COAST（REQ-06）：按最后方位 + 方位率短时预测惯性保持（期望航向模式）。
+	if _seeker.phase == TorpedoSeeker.Phase.COAST:
+		var ct: SeekerTrack = _seeker.selected_track()
+		if ct != null:
+			_guidance_mode = GuidanceMode.COURSE
+			_guidance_course_deg = ct.predicted_bearing_deg(sim_time)
+		return
 	# LOST/REACQUIRE（§7.6）：围绕最后预测方位扩大扇区扫掠重搜。
 	if _seeker.phase in [TorpedoSeeker.Phase.LOST, TorpedoSeeker.Phase.REACQUIRE]:
 		var prog := _search_program()
 		var half: float = prog.search_half_angle_deg if prog != null else 60.0
 		var sec: Dictionary = _seeker.reacquire_sector(half)
+		_guidance_mode = GuidanceMode.COURSE
 		_guidance_course_deg = TorpedoGuidance.search_course_deg(
 			"SNAKE",
 			float(sec.get("center_deg", 0.0)),
@@ -1050,10 +1098,8 @@ func _advance_guidance(sim_time: float) -> void:
 		)
 
 
-## 搜索扫掠（§7.5）：SEARCH 且无制导目标、无玩家命令时按程序扇区扫掠
-## （SNAKE 三角波 / CIRCLE 旋转），转向速率仍受 max_turn_rate 约束。
-## P2-01：扫掠相位在进入 SEARCH 时连续初始化（从当前航向展开），
-## 不取全局 sim_time 相位。
+## 搜索扫掠（§7.5）：SEARCH 且无制导/命令时按程序扇区扫掠；P2-01：扫掠
+## 相位在进入 SEARCH 时自当前航向连续初始化，不取全局 sim_time 相位。
 func _search_sweep_course(sim_time: float) -> float:
 	var prog := _search_program()
 	if prog == null:
@@ -1071,20 +1117,10 @@ func _search_sweep_course(sim_time: float) -> float:
 	)
 
 
-## P2-01：求 t0 使 pattern(t0) = 当前航向（三角波取第一半周期分支，
-## 中心外夹到扇区边界；圆周取最近角），扫掠自当前航向连续展开。
+## P2-01：扫掠相位在进入 SEARCH 时连续初始化——求 t0 使 pattern(t0) = 当前
+## 航向（三角波取第一半周期分支，中心外夹到扇区边界；圆周取最近角）。
 func _search_phase_offset_for(prog: WeaponProgram, pattern: String) -> float:
-	var cfg := _seeker_cfg()
-	var center: float = float(prog.search_center_deg)
-	if pattern == "CIRCLE":
-		var period: float = float(
-			cfg.get("circle_period_s", TorpedoGuidance.DEFAULT_CIRCLE_PERIOD_S)
-		)
-		return NavUtils.wrap360(course_deg - center) * period / 360.0
-	var period2: float = float(cfg.get("snake_period_s", TorpedoGuidance.DEFAULT_SNAKE_PERIOD_S))
-	var half: float = maxf(float(prog.search_half_angle_deg), 1.0)
-	var v: float = clampf(NavUtils.wrap180(course_deg - center) / half, -1.0, 1.0)
-	return (v + 1.0) / 4.0 * period2
+	return TorpedoGuidance.search_phase_offset_for(course_deg, prog, pattern, _seeker_cfg())
 
 
 ## 搜索参数来源：fallback 激活后按 fallback（§5.5），否则按发射程序。
@@ -1148,4 +1184,16 @@ func _depth_state_for_band(band: String) -> int:
 func _die(kind: String, detail: Dictionary) -> void:
 	mission_state = MissionState.DEAD
 	fuze_state = FuzeState.INERT
+	# 验收14：脱靶原因（命中时为空；其余按七种枚举确定性判定，供 Debrief）。
+	if kind != "DETONATED":
+		if miss_reason == "":
+			miss_reason = "FUEL_EXHAUSTED" if kind == "FUEL_OUT" else _compute_miss_reason()
+		detail["miss_reason"] = miss_reason
 	event_occurred.emit(torpedo_id, kind, detail)
+
+
+## 脱靶原因确定性判定（验收14）：委托纯函数 TorpedoMissReason（按优先级
+## 首个命中项）。
+func _compute_miss_reason() -> String:
+	var tracks: Array = _seeker.tracks if _seeker != null else []
+	return TorpedoMissReason.compute(not _ever_guidance_engaged, _ever_turn_saturated, tracks)

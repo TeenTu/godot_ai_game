@@ -78,7 +78,11 @@ func sample_passive(
 	var ag: float = profile.receiver_array_gain_db
 	var dt_db: float = profile.detection_threshold_db
 	var k_d: float = profile.detection_k_d
-	var beam_half: float = 0.5 * profile.horizontal_beamwidth_deg
+	var beam_half: float = (
+		profile.passive_fov_half_deg
+		if profile.passive_fov_half_deg > 0.0
+		else 0.5 * profile.horizontal_beamwidth_deg
+	)
 	for c in contacts:
 		var cid: String = str(c.id)
 		if not contact_acs.has(cid):
@@ -160,9 +164,13 @@ func schedule_active_echoes(
 ) -> void:
 	if profile == null or env == null:
 		return
-	# P0-09/P0-10：主动发射门 = 被动/主动同一 FOV 参数（单一真源）。
-	# 扇区外目标不排程回波——UI 画的扇区与物理一致。
-	var beam_half: float = 0.5 * profile.horizontal_beamwidth_deg
+	# P0-09/P0-10：主动发射门 = 独立 active FOV 半角（REQ-06：被动/主动
+	# 分开管理；扇区外目标不排程回波——UI 画的扇区与物理一致）。
+	var beam_half: float = (
+		profile.active_fov_half_deg
+		if profile.active_fov_half_deg > 0.0
+		else 0.5 * profile.horizontal_beamwidth_deg
+	)
 	for c in contacts:
 		var range_m: float = NavUtils.distance(
 			tp_e, tp_n, float(c.position_east_m), float(c.position_north_m)

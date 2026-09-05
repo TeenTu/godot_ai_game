@@ -194,11 +194,34 @@ func _refresh_section(tp: RefCounted) -> void:
 		]
 	)
 	txt += "\nCrs %.0f°" % tp.course_deg
+	# 第三部分 REQ：制导/转向遥测——Desired vs Actual、命令/实际转率、饱和。
+	var sat: String = " (SAT)" if bool(tp.turn_saturated) else ""
+	txt += (
+		"\nTurn cmd %.2f°/s | act %.2f°/s%s"
+		% [float(tp.commanded_turn_rate_deg_s), float(tp.actual_turn_rate_deg_s), sat]
+	)
+	if tp._guidance_mode == tp.GuidanceMode.RATE:
+		txt += "\nDesired: PN intercept"
+	elif tp._guidance_mode == tp.GuidanceMode.COURSE and tp._guidance_course_deg >= 0.0:
+		txt += "\nDesired crs %.0f°" % tp._guidance_course_deg
 	if tp.commanded_depth_m >= 0.0:
 		txt += " → D %.0fm (CMD)" % tp.commanded_depth_m
 	else:
 		txt += " | D %.0fm" % tp.actual_depth_m
-	# P1-03.5：候选出现后显示 track id、bearing、sigma、quality。
+	# 第三部分 REQ：引信状态 + 最近通过距离（内核台账，净化距离事实）。
+	txt += "\nFuze %s" % tp.fuze_state_name()
+	if _world != null:
+		var mp: Variant = _world._fuze_min_pass.get(str(tp.torpedo_id), null)
+		if mp != null and float(mp) < 1.0e8:
+			txt += " | min pass %.0fm" % float(mp)
+	# 第三部分 REQ：声学模式 + 主动 Ping 状态/下一发倒计时（直读权威字段）。
+	txt += "\nMode %s" % WeaponProgram.speed_mode_name(tp.speed_mode)
+	if (
+		int(tp.active_tx_state) == Torpedo.ActiveTxState.PINGING
+		or int(tp.active_tx_state) == Torpedo.ActiveTxState.COOLDOWN
+	):
+		txt += "\nnext ping %.1fs" % maxf(float(tp._tx_cycle_s), 0.0)
+	# P1-03.5：候选出现后显示 track id、bearing、sigma、quality（+距离/距离率）。
 	var summaries: Array = tp._seeker.track_summaries() if tp._seeker != null else []
 	if not summaries.is_empty():
 		var top: Dictionary = summaries[0]
@@ -212,6 +235,11 @@ func _refresh_section(tp: RefCounted) -> void:
 				summaries.size(),
 			]
 		)
+		if bool(top.get("has_range", false)):
+			txt += (
+				"\nRng %.0fm | R-rate %.1f m/s"
+				% [float(top.get("range_m", -1.0)), float(top.get("range_rate_m_s", 0.0))]
+			)
 	lbl.text = txt
 	# 不可用按钮 disabled（§11.2：说明原因）；P1-03.5：无候选 Accept 禁用。
 	var wire_txt: String = tp.wire_state_name()
