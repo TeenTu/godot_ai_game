@@ -70,3 +70,4 @@ calibration_envelope_test
 req_overhaul_test
 #   req2_test 第二轮 REQ：定深/LOS滤波/转向积分/距离率与miss/COAST/移动靶起爆/引信快照/Mark关联/TRUE模式/操舵来源（R2-01..10）
 req2_test
+cm2_test

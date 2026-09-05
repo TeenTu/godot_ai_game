@@ -2,13 +2,8 @@ class_name World
 extends RefCounted
 ## world.gd — 固定步长仿真主循环（阶段一，无 UI）。
 ##
-## 职责：
-##   - 持有全部 Truth 实体（本艇 + 目标）、环境、传感器、测量生成器
-##   - 按固定步长推进运动学
-##   - 按各传感器 update_interval 触发测量生成
-##   - 收集所有测量流（Measurement）
-##   - 支持暂停 / 时间加速（1x/2x/4x/8x）——阶段三接 UI，阶段一保留接口
-##
+## 职责：持有 Truth 实体/环境/传感器/测量生成器；固定步长推进运动学；
+##   按 update_interval 触发测量生成；收集测量流；支持暂停/倍速接口。
 ## Truth 隔离：本类只产出 Measurement，绝不把 Truth 位置直接暴露给上层 UI。
 
 # 艇首主动阵 id（S1-04B-REQ-20）：仅当场景显式配置 own_ship.active_sonar
@@ -58,6 +53,8 @@ var active_emissions: Array = []
 # 玩家发射器（敌方发射器属 Commit 9 Doctrine，用同一 CountermeasureSystem 类）。
 var countermeasures: CountermeasureSystem = null
 var decoys: Array = []  # 活动诱饵（Truth 实体，随 tick 推进/寿命到期移除）
+## REQ-CM-04：最近一次诱饵发射拒绝原因（UI 展示；来自 CountermeasureSystem）。
+var last_decoy_reject_reason: String = ""
 
 var emission_sanitizer: EmissionSanitizer = null
 var player_evidence: Array = []  # 净化证据（告警/爆炸/本艇武器事实，可进 UI）
@@ -89,13 +86,11 @@ var _next_ping_id: int = 1
 
 # ---- S1-07 §9（Commit 9）：敌方出生 / 感知 / Doctrine ----
 # 敌方使用与玩家同一物理声学服务（EnemySensorAdapter 内核边界 → 净化证据 →
-# EnemyTrackManager → EnemyDoctrineController）。AI 只拿方位证据，绝不拿
-# 玩家 TruthEntity；反应带延迟；AI 鱼雷经独立 WeaponSystem + TorpedoContext。
-# 内核影子（Torpedo 无 TruthEntity 接口，声学采样需要统一接触面）：
-#   _player_torpedo_shadows — 玩家在水鱼雷（敌方感知"来袭鱼雷"证据源）；
-#   _enemy_torpedo_shadows  — 敌方在水鱼雷（玩家声呐可听到来袭鱼雷，告警
-#                             UI 属 Commit 11）。无敌方 AI 时两表恒空，
-#                             旧场景零行为变化。
+# EnemyTrackManager → EnemyDoctrineController）；AI 只拿方位证据带延迟，绝不拿
+# 玩家 TruthEntity；AI 鱼雷经独立 WeaponSystem + TorpedoContext。
+# 内核影子（Torpedo 无 TruthEntity 接口，声学采样需统一接触面）：
+#   _player_torpedo_shadows = 玩家在水鱼雷（敌方"来袭鱼雷"证据源）；
+#   _enemy_torpedo_shadows = 敌方在水鱼雷（玩家可听到，告警 UI 属 Commit 11）。
 var _player_torpedo_shadows: Array = []
 var _player_shadow_acs: Dictionary = {}
 var _enemy_torpedo_shadows: Array = []
@@ -273,15 +268,23 @@ func _advance_only() -> void:
 
 ## 推进活动诱饵：激活瞬间记 DECOY_ACTIVATION 事件（§9.1）并进入武器采样集
 ## （激活前静默）；寿命到期后移除（诱饵有限寿命，§8.6）。
+## REQ-CM-01/03：同步注册/注销 player seeker 的 contact_acs 画像；source_token
+## 按接收方核查——己方诱饵=FRIENDLY（确知己方来源），敌方诱饵=""（未知，
+## 必须经声学竞争，绝不因 Truth 归属获得"这是诱饵"豁免）。
 func _advance_decoys(dt: float) -> void:
 	var rng: RandomNumberGenerator = world.get("rng", null)
 	var expired: Array = []
+	var p_adapter: TorpedoSensorAdapter = (
+		torpedo_ctx.sensor_adapter if torpedo_ctx != null else null
+	)
 	for d in decoys:
 		var just_activated: bool = d.step(dt)
 		if just_activated:
 			_weapon_contacts.append(d)
-			if torpedo_ctx != null and torpedo_ctx.sensor_adapter != null:
-				torpedo_ctx.sensor_adapter.contact_tokens[str(d.id)] = "FRIENDLY"
+			if p_adapter != null:
+				# REQ-CM-01：player seeker 此前未注册诱饵画像 → 采样直接跳过。
+				p_adapter.contact_acs[str(d.id)] = d.signature_ac
+				p_adapter.contact_tokens[str(d.id)] = "FRIENDLY" if str(d.side) == "blue" else ""
 			if emission_bus != null:
 				var ac: RefCounted = d.signature_ac
 				var sl: float = 160.0
@@ -307,6 +310,8 @@ func _advance_decoys(dt: float) -> void:
 		_weapon_contacts.erase(d)
 		if torpedo_ctx != null and torpedo_ctx.sensor_adapter != null:
 			torpedo_ctx.sensor_adapter.contact_tokens.erase(str(d.id))
+			# REQ-CM-02：注销画像注册（历史瀑布/Track 自然计龄，不删玩家接触）。
+			torpedo_ctx.sensor_adapter.contact_acs.erase(str(d.id))
 
 
 ## 玩家发射诱饵（§8.5）：发射器库存/冷却/程序合法性校验；诱饵先进入活动
@@ -314,12 +319,17 @@ func _advance_decoys(dt: float) -> void:
 ## enemy 侧（Commit 9）用同一 CountermeasureSystem 流程。
 func _launch_decoy(prog: DecoyProgram) -> bool:
 	if countermeasures == null or prog == null or world.get("own") == null:
+		last_decoy_reject_reason = "no_launcher"
 		return false
-	var initial_depth: float = _hold_depth_for(prog.initial_depth_band)
+	# REQ-CM-02：从发射平台当前实际深度出发（不再瞬移到层带 hold）；
+	# 命令深度按程序层带 hold 解析，限垂速爬降由 TruthEntity.advance 执行。
+	var own: TruthEntity = world["own"]
+	var initial_depth: float = float(own.depth_m)
 	var commanded_depth: float = _hold_depth_for(prog.commanded_depth_band)
 	var d: Decoy = countermeasures.launch(
-		prog, world["own"], sim_time, world.get("rng", null), initial_depth, commanded_depth
+		prog, own, sim_time, world.get("rng", null), initial_depth, commanded_depth
 	)
+	last_decoy_reject_reason = countermeasures.last_reject_reason
 	if d == null:
 		return false
 	decoys.append(d)
@@ -337,14 +347,11 @@ func _hold_depth_for(band: String) -> float:
 
 
 # ------------------------------------------------------------------
-#  S1-07 §9（Commit 9）：敌方随机出生 / 感知 / Doctrine
-#  - 出生：EnemySpawnGenerator（独立派生 RNG，确定性；约束校验 + fallback）。
-#  - 感知：EnemySensorAdapter（内核边界）→ 净化证据（无 range/位置/target_id）。
-#  - 航迹：EnemyTrackManager（方位航迹质量，衰减=不确定区扩大）。
-#  - Doctrine：EnemyDoctrineController 状态机（反应延迟 + 概率；命令值接口）。
-#  - AI 鱼雷：独立 WeaponSystem + TorpedoContext（seeker 声源 = 本艇 + 蓝方
-#    诱饵）；AI 无主动声呐，反击走 BEARING_ONLY 宽扇区（无隐藏距离）。
-#  - AI 行为绝不读玩家 TruthEntity；未探测事件绝不改变 AI 行为（§9.8）。
+#  S1-07 §9（Commit 9）：敌方随机出生 / 感知 / Doctrine。
+#  出生=EnemySpawnGenerator（独立 RNG+约束校验）；感知=EnemySensorAdapter
+#  （内核边界，净化证据）；航迹=EnemyTrackManager；Doctrine=状态机（延迟+概
+#  率）；AI 鱼雷独立 WeaponSystem（seeker 声源=本艇+蓝方诱饵，BEARING_ONLY
+#  宽扇区）；AI 绝不读玩家 TruthEntity，未探测事件绝不改变行为（§9.8）。
 # ------------------------------------------------------------------
 
 
@@ -509,11 +516,14 @@ func _rebuild_enemy_contacts() -> void:
 			_enemy_perception_acs[str(s.id)] = _player_shadow_acs[str(s.id)]
 	for d in decoys:
 		if str(d.side) == enemy_side:
-			continue
-		_enemy_perception_contacts.append(d)
-		e_tokens[str(d.id)] = "FRIENDLY"
-		if d.signature_ac != null:
-			_enemy_perception_acs[str(d.id)] = d.signature_ac
+			continue  # 己方诱饵：确知己方来源，不入敌方感知竞争集
+		# REQ-CM-02：激活前静默；REQ-CM-03：玩家诱饵对敌方 = 未知声源，
+		# token="" 绝不标 FRIENDLY（否则敌雷自动识破反制）。
+		if d.activated and not d.expired:
+			_enemy_perception_contacts.append(d)
+			e_tokens[str(d.id)] = ""
+			if d.signature_ac != null:
+				_enemy_perception_acs[str(d.id)] = d.signature_ac
 	if enemy_torpedo_ctx != null and enemy_torpedo_ctx.sensor_adapter != null:
 		enemy_torpedo_ctx.sensor_adapter.contact_tokens = e_tokens
 
@@ -527,7 +537,9 @@ func _acoustic_scene_emitters() -> Array:
 	for sh in _player_torpedo_shadows:
 		out.append(sh)
 	for d in decoys:
-		out.append(d)
+		# REQ-CM-02：统一发声条件 activated && !expired（激活前静默）。
+		if d.activated and not d.expired:
+			out.append(d)
 	return out
 
 
@@ -538,7 +550,7 @@ func _acoustic_scene_acs() -> Dictionary:
 	for k in _player_shadow_acs:
 		out[k] = _player_shadow_acs[k]
 	for d in decoys:
-		if d.signature_ac != null:
+		if d.signature_ac != null and d.activated and not d.expired:
 			out[str(d.id)] = d.signature_ac
 	return out
 
@@ -597,21 +609,18 @@ func _enemy_launch_decoy(launch_bearing_deg: float) -> void:
 		{"freq_hz": 480.0, "level_db": 122.0},
 	]
 	prog.signature = sig
-	var initial_depth: float = _hold_depth_for(prog.initial_depth_band)
+	var initial_depth: float = float(e.depth_m)  # REQ-CM-02：从实际深度出舱
 	var d: Decoy = enemy_countermeasures.launch(
-		prog, e, sim_time, enemy_ai._rng, initial_depth, initial_depth
+		prog, e, sim_time, enemy_ai._rng, initial_depth, _hold_depth_for(prog.commanded_depth_band)
 	)
 	if d != null:
 		decoys.append(d)
 
 
-## 为某个传感器生成一次测量（针对所有目标）。
-## S1-00（GAP-DATA-01/02）：
-##   - 主动阵（array_type=="active"）绝不在本函数自动产测量——唯一玩家路径是
-##     issue_ping() → PingSession → 回波到达 → generate_active（REQ-03）；否则
-##     同一项目同时存在"显式 Ping"与"自动主动测量"两套矛盾链路。
-##   - 未探测样本（detected=false）绝不 append 进 measurements——miss 不携带
-##     未加噪真方位进入玩家链。
+## 为某个传感器生成一次测量（针对所有目标）。S1-00（GAP-DATA-01/02）：
+## 主动阵绝不在本函数自动产测量（唯一路径 issue_ping → PingSession → 回波
+## → generate_active，REQ-03）；未探测样本绝不进 measurements（miss 不携带
+## 未加噪真方位进玩家链）。
 func _emit_for_sensor(sensor: RefCounted) -> void:
 	if str(sensor.array_type) == "active":
 		return  # 主动阵只由 PingSession 驱动（REQ-03），跳过自动旁路
@@ -660,15 +669,11 @@ func measurement_count() -> int:
 
 
 # ------------------------------------------------------------------
-#  主动声呐 Ping（S1-04B PingSession）
-#  单在途状态机：READY →(issue_ping) LISTENING →(全部回波结算/监听窗口
-#  结束) RETURN | NO_RETURN →(冷却到) READY。UNAVAILABLE = 无硬件。
-#  铁律（REQ-16/17/19/20）：
-#    - 单在途：新 Ping 绝不清空未返回回波、绝不覆盖在途会话；
-#    - 测距即测时：R_meas 以发射时刻登记距离（c·τ/2 静态近似）为基准，
-#      到达时绝不读当前 Truth 距离回填；τ 内目标位移并入 range_sigma；
-#    - 无显式硬件（own_ship.active_sonar 或 sensors 含 active 阵）→
-#      UNAVAILABLE，禁止 Ping，绝不自动构造缺省主动阵。
+#  主动声呐 Ping（S1-04B PingSession）单在途状态机：
+#  READY →(issue_ping) LISTENING →(回波全结算/监听窗结束) →(冷却到) READY。
+#  铁律（REQ-16/17/19/20）：单在途绝不清空未返回回波；测距即测时（R_meas
+#  以发射时刻登记距离为基准，绝不读当前 Truth 回填）；无显式硬件 →
+#  UNAVAILABLE 禁止 Ping，绝不自动构造缺省主动阵。
 # ------------------------------------------------------------------
 
 
@@ -730,12 +735,9 @@ func ping_max_range_m() -> float:
 
 
 ## 玩家发起一次主动脉冲（S1-04B/S1-04C）。发射瞬间按各目标当前几何距离登记
-## 在途回波（R=c·τ/2 静态基准），会话进入 LISTENING；每个回波在各自
-## arrive_t = emit + 2R/c 结算（检测 + 测距 + 进测量流）。
-## REQ-04（固定监听窗）：listen_end_t = emit_t + configured_listen_window_s，
-## 绝不用最远 Truth 目标的 τ 延长监听窗；arrive_t 超出窗口的回波在窗口
-## 到期时丢弃（不可接收），不延长状态机。
-## REQ-05：发射成功即记录一条 ActiveEmissionEvent（本艇发射事实）。
+## 在途回波（R=c·τ/2 静态基准）按各自 arrive_t=emit+2R/c 结算。REQ-04 固定
+## 监听窗：listen_end_t=emit_t+configured_listen_window_s，绝不用最远 Truth
+## 目标的 τ 延长；窗口到期丢弃超窗回波。REQ-05：发射成功即记一条发射事件。
 ## 无硬件 / 在途未清 / 冷却中返回 false（不发脉冲、不推进冷却）。
 func issue_ping() -> bool:
 	if not can_ping():
@@ -998,13 +1000,10 @@ func _ping_sensor() -> SensorArray:
 
 
 # ------------------------------------------------------------------
-#  S1-07 §10（Commit 10）：引信引擎 / 净化战果证据 / Debrief
-#  - 引信与制导解耦：FuzeController 纯几何触发（SAFE 绝不起爆）；
-#  - 爆炸结算在本引擎（内核允许接触 Truth 几何）：EXPLOSION 事件 + Truth
-#    伤害（敌=sunk / 本艇=damaged）；
-#  - 普通玩法层只收净化 EvidenceEvent（emission_sanitizer）：DETONATION_HEARD
-#    / PROBABLE_HIT / PROBABLE_KILL 由证据+玩家航迹方位推导，绝无 target_id；
-#  - CONFIRMED_KILL 只经 debrief_summary()（调试通道）。
+#  S1-07 §10（Commit 10）：引信引擎 / 净化战果证据 / Debrief。
+#  FuzeController 纯几何触发；爆炸结算在本引擎（EXPLOSION + Truth 伤害：
+#  敌=sunk/本艇=damaged）；玩法层只收净化 EvidenceEvent（绝无 target_id）；
+#  CONFIRMED_KILL 只经 debrief_summary()（调试通道）。
 # ------------------------------------------------------------------
 
 
