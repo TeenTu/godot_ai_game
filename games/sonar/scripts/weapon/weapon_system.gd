@@ -30,6 +30,9 @@ var torpedoes: Array = []  # 在水的 Torpedo
 ## REQ-01：浅水攻击定深（米；<0 = 按层带 hold）。UI 可切换；发射时写入
 ## 程序快照 initial_depth_m，由鱼雷按深度模型钳制并有限速率逼近。
 var default_attack_depth_m: float = -1.0
+## REQ-DEP-02：搜索深度预设（SURFACE/UPPER/LOWER/CUSTOM）。玩家浅水开关
+## （default_attack_depth_m>0）优先；否则按预设解析显式定深/层带。
+var search_depth_preset: int = WeaponProgram.SearchDepthPreset.UPPER
 # Commit 5：声学事件总线（由 World 注入；null=无总线跳过发射瞬态广播）。
 var emission_bus: AcousticEmissionBus = null
 ## 鱼雷 id 前缀（Commit 10：敌方发射器用 "ET"，与玩家 "T" 区分——净化器
@@ -75,6 +78,17 @@ func reload_tube(idx: int) -> bool:
 	return true
 
 
+## REQ-DEP-02：按浅水开关/预设解析发射程序的显式定深（优先级：玩家浅水开关
+## > SURFACE/CUSTOM 预设 > 层带 hold）。显式深度由 Torpedo 按模型钳制。
+func _apply_depth_preset(program: WeaponProgram) -> void:
+	program.search_depth_preset = search_depth_preset
+	if default_attack_depth_m > 0.0:
+		program.initial_depth_m = default_attack_depth_m
+	else:
+		var z: float = program.resolve_initial_depth_m()
+		program.initial_depth_m = z if z > 0.0 else -1.0
+
+
 ## 按 SystemSolution 发射（SOLUTION 模式，保留射程联锁：解有射程概念）。
 ## own_depth_m：发射平台当前深度（鱼雷初始深度）。
 func fire(
@@ -87,7 +101,7 @@ func fire(
 		weapon_event.emit("", "RANGE_INVALID", {"range_m": sys.range_m})
 		return null
 	var program: WeaponProgram = _build_solution_program(sys, own_e, own_n, sim_time)
-	program.initial_depth_m = default_attack_depth_m
+	_apply_depth_preset(program)
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 
@@ -102,7 +116,7 @@ func fire_manual(
 	initial_depth_band: String = WeaponProgram.DEPTH_BAND_UPPER,
 ) -> Torpedo:
 	var program: WeaponProgram = WeaponProgram.make_manual(course_deg, initial_depth_band)
-	program.initial_depth_m = default_attack_depth_m
+	_apply_depth_preset(program)
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 
@@ -111,7 +125,7 @@ func fire_bearing_only(
 	bearing_deg: float, own_e: float, own_n: float, sim_time: float, own_depth_m: float = 50.0
 ) -> Torpedo:
 	var program: WeaponProgram = WeaponProgram.make_bearing_only(bearing_deg)
-	program.initial_depth_m = default_attack_depth_m
+	_apply_depth_preset(program)
 	return fire_program(program, own_e, own_n, sim_time, own_depth_m)
 
 

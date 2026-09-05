@@ -280,6 +280,7 @@ func to_summary() -> Dictionary:
 		"mean_se_db": snappedf(mean_signal_excess_db, 0.1),
 		"classification_match": snappedf(classification_match, 0.01),
 		"depth_relation": depth_relation,
+		"depth_band_hint": depth_band_hint,
 		"hits": total_hits,
 		"misses": total_misses,
 	}

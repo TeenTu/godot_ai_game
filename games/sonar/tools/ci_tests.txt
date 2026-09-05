@@ -72,3 +72,5 @@ req_overhaul_test
 req2_test
 cm2_test
 ac2_test
+#   dep_test P0-C 深度信息与水面攻击：深度未知合法/有噪观测/浅水预设/双向换带/自动换带搜索（DEP-1..2）
+dep_test

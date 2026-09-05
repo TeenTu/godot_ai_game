@@ -19,6 +19,7 @@ var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰�
 
 var _btn_fire: Button = null
 var _chk_shallow: CheckBox = null
+var _sel_preset: OptionButton = null
 var _lbl_fire_hint: Label = null
 var _lbl_weapons: Label = null
 var _weapon_log: Array = []
@@ -46,6 +47,19 @@ func _build() -> void:
 				weapons.default_attack_depth_m = SHALLOW_ATTACK_DEPTH_M if on else -1.0
 	)
 	add_child(_chk_shallow)
+	# REQ-DEP-02：搜索深度预设 SURFACE/UPPER/LOWER/CUSTOM（浅水数值配置化，
+	# 程序侧仍按深度模型/武器限制鈐制）。玩家浅水开关优先于预设。
+	_sel_preset = OptionButton.new()
+	for i in WeaponProgram.SearchDepthPreset.size():
+		_sel_preset.add_item(WeaponProgram.search_depth_preset_name(i), i)
+	_sel_preset.selected = WeaponProgram.SearchDepthPreset.UPPER
+	_sel_preset.add_theme_font_size_override("font_size", 12)
+	_sel_preset.item_selected.connect(
+		func(i: int):
+			if weapons != null:
+				weapons.search_depth_preset = i
+	)
+	add_child(_sel_preset)
 	_lbl_fire_hint = Label.new()
 	_lbl_fire_hint.text = ""
 	_lbl_fire_hint.add_theme_font_size_override("font_size", 12)
@@ -69,6 +83,8 @@ func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> 
 			weapons.default_attack_depth_m = (
 				SHALLOW_ATTACK_DEPTH_M if _chk_shallow.button_pressed else -1.0
 			)
+		if _sel_preset != null:
+			weapons.search_depth_preset = _sel_preset.selected
 	_refresh()
 
 

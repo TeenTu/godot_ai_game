@@ -21,6 +21,9 @@ enum SearchPattern { SNAKE, CIRCLE }
 enum GuidanceAuthority { WIRE_ONLY, ASSISTED, AUTONOMOUS }
 enum ActiveEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT, IMMEDIATE }
 enum AutonomyEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT }
+## REQ-DEP-02：搜索深度预设——SURFACE=浅水攻击（配置化深度）；UPPER/LOWER=
+## 层带 hold；CUSTOM=显式定深。未知深度仍可 BEARING_ONLY/MANUAL 发射。
+enum SearchDepthPreset { SURFACE, UPPER, LOWER, CUSTOM }
 
 const DEPTH_BAND_UPPER: String = "UPPER"
 const DEPTH_BAND_LOWER: String = "LOWER"
@@ -38,6 +41,11 @@ var search_depth_band: String = DEPTH_BAND_UPPER
 ## 显式给定攻击定深（如水面目标 8~15m），保留 UPPER/LOWER 换层与有限升降
 ## 速度。运行期由 Torpedo 按深度模型 min/max 钳制——绝不读取目标 Truth 深度。
 var initial_depth_m: float = -1.0
+## REQ-DEP-02：搜索深度预设与配置值。surface_attack_depth_m 为浅水数值
+## （默认 12 m，可配置，遵守武器/海底限制钳制）；CUSTOM 用 custom_search_depth_m。
+var search_depth_preset: int = SearchDepthPreset.UPPER
+var surface_attack_depth_m: float = 12.0
+var custom_search_depth_m: float = -1.0
 
 var search_center_deg: float = 0.0
 var search_half_angle_deg: float = 45.0
@@ -76,6 +84,9 @@ func snapshot() -> WeaponProgram:
 	p.initial_depth_band = initial_depth_band
 	p.search_depth_band = search_depth_band
 	p.initial_depth_m = initial_depth_m
+	p.search_depth_preset = search_depth_preset
+	p.surface_attack_depth_m = surface_attack_depth_m
+	p.custom_search_depth_m = custom_search_depth_m
 	p.search_center_deg = search_center_deg
 	p.search_half_angle_deg = search_half_angle_deg
 	p.search_pattern = search_pattern
@@ -105,6 +116,11 @@ func validation_errors() -> Array:
 		errs.append("invalid initial_depth_band")
 	if not is_finite(initial_depth_m) or initial_depth_m > 0.0 and initial_depth_m < 3.0:
 		errs.append("invalid initial_depth_m")
+	if (
+		search_depth_preset == SearchDepthPreset.CUSTOM
+		and (not is_finite(custom_search_depth_m) or custom_search_depth_m < 3.0)
+	):
+		errs.append("invalid custom_search_depth_m")
 	if not _valid_band(search_depth_band):
 		errs.append("invalid search_depth_band")
 	if search_half_angle_deg <= 0.0 or search_half_angle_deg > 180.0:
@@ -146,6 +162,29 @@ func make_default_fallback() -> WeaponProgram:
 
 static func _valid_band(b: String) -> bool:
 	return b == DEPTH_BAND_UPPER or b == DEPTH_BAND_LOWER
+
+
+## REQ-DEP-02：按预设解析初始/搜索显式定深。SURFACE/CUSTOM → 配置深度
+## （仍由 Torpedo 按深度模型/武器限制钳制）；UPPER/LOWER → -1 表示层带 hold。
+func resolve_initial_depth_m() -> float:
+	match search_depth_preset:
+		SearchDepthPreset.SURFACE:
+			return surface_attack_depth_m
+		SearchDepthPreset.CUSTOM:
+			return custom_search_depth_m
+	return -1.0
+
+
+## UI/日志用：搜索深度预设转可读字符串。
+static func search_depth_preset_name(m: int) -> String:
+	match m:
+		SearchDepthPreset.SURFACE:
+			return "SURFACE"
+		SearchDepthPreset.LOWER:
+			return "LOWER"
+		SearchDepthPreset.CUSTOM:
+			return "CUSTOM"
+	return "UPPER"
 
 
 ## S1-07 §5.2 MANUAL：无 Track/解，玩家直接给航向/深度带；无距离概念，

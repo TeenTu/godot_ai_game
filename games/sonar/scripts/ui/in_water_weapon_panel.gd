@@ -244,7 +244,14 @@ func _refresh_section(tp: RefCounted) -> void:
 	elif tp._guidance_mode == tp.GuidanceMode.COURSE and tp._guidance_course_deg >= 0.0:
 		txt += "\nDesired crs %.0f°" % tp._guidance_course_deg
 	if tp.commanded_depth_m >= 0.0:
-		txt += " → D %.0fm (CMD)" % tp.commanded_depth_m
+		# REQ-DEP-02：命令深度 + 来源（PLAYER/PROGRAM/AUTO）+ 垂向 ETA。
+		var vz: float = float(tp.max_vertical_speed_m_s)
+		var eta: float = absf(tp.commanded_depth_m - tp.actual_depth_m) / vz if vz > 0.0 else INF
+		var eta_txt: String = "N/A" if is_infinite(eta) else "%.0fs" % maxf(eta, 0.0)
+		txt += (
+			" → D %.0fm (CMD %s ETA %s)"
+			% [tp.commanded_depth_m, str(tp.depth_command_source), eta_txt]
+		)
 	else:
 		txt += " | D %.0fm" % tp.actual_depth_m
 	# REQ-11：玩家面板只显示净化测量/权限/质量/转率/可知武器状态——
@@ -290,6 +297,9 @@ func _refresh_section(tp: RefCounted) -> void:
 				summaries.size(),
 			]
 		)
+		# REQ-DEP-01/02：目标深度只显示未知/带噪层带假设，绝无精确水深。
+		var dpt_hint: String = str(top.get("depth_band_hint", ""))
+		txt += ("\nTgtDpt %s" % (("NEAR-%s (hyp)" % dpt_hint) if dpt_hint != "" else "UNKNOWN"))
 		if bool(top.get("has_range", false)):
 			txt += (
 				"\nRng %.0fm | R-rate %.1f m/s"

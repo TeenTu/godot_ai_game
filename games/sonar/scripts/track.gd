@@ -23,6 +23,14 @@ enum TrackState {
 	MERGED,  # 已合并进 Master Track
 }
 
+## REQ-DEP-01：深度评估状态（独立估计/假设，绝不是精确水深）。仅当存在有噪
+## 深度观测模型（俯仰测角/多路径/多深度观测）时才允许离开 UNKNOWN；BB/NB/
+## 主动 Ping 距离均不能唯一解深度。默认 UNKNOWN，绝不编码成 0 m 或 UPPER。
+const DEPTH_ASSESSMENT_UNKNOWN := "UNKNOWN"
+const DEPTH_ASSESSMENT_SURFACE := "SURFACE_LIKELY"
+const DEPTH_ASSESSMENT_UPPER := "UPPER_LIKELY"
+const DEPTH_ASSESSMENT_LOWER := "LOWER_LIKELY"
+
 var track_id: String = ""  # 如 "S01"、"M01"
 var source_type: String = "S"  # S/E/R/V/M
 var measurement_history: Array = []  # 按时间排序的 Measurement 数组
@@ -45,6 +53,42 @@ var association_confidence: float = 0.0
 var last_association_mode: String = "bearing_only"
 ## 最近一次关联的归一化评分 d²（越小越紧；无关联时保持大值）。
 var last_association_score: float = 1.0e9
+
+var depth_assessment: String = DEPTH_ASSESSMENT_UNKNOWN
+var depth_assessment_source: String = ""  # 观测模型/来源标签（如 "PITCH_ANGLE"）
+var depth_assessment_confidence: float = 0.0  # 0..1
+var depth_assessment_updated_s: float = -1.0
+
+
+## 更新深度评估。仅接受四个合法状态；来源/置信度必填，供 UI 展示假设依据。
+func update_depth_assessment(
+	state: String, source: String, confidence: float, now_s: float
+) -> bool:
+	if (
+		state
+		not in [
+			DEPTH_ASSESSMENT_UNKNOWN,
+			DEPTH_ASSESSMENT_SURFACE,
+			DEPTH_ASSESSMENT_UPPER,
+			DEPTH_ASSESSMENT_LOWER,
+		]
+	):
+		return false
+	depth_assessment = state
+	depth_assessment_source = source
+	depth_assessment_confidence = clampf(confidence, 0.0, 1.0)
+	depth_assessment_updated_s = now_s
+	return true
+
+
+## UI/预填建议用摘要（假设 + 依据；不含任何精确深度数值）。
+func depth_assessment_summary() -> Dictionary:
+	return {
+		"state": depth_assessment,
+		"source": depth_assessment_source,
+		"confidence": depth_assessment_confidence,
+		"updated_s": depth_assessment_updated_s,
+	}
 
 
 ## 创建一个新接触。source_type 取 "S"/"E"/"R"/"V"/"M"。
