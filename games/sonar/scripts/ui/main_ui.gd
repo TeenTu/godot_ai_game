@@ -76,6 +76,9 @@ func _ready() -> void:
 	# P0-08：场景解析（默认旧被动教程；SONAR_SCENARIO 可选 s1_combat）。
 	_scenario_name = UiContract.resolve_scenario_name()
 	var scenario: Dictionary = ConfigLoader.load_scenario(_scenario_name)
+	var seed_ov: int = UiContract.resolve_seed_override()
+	if seed_ov >= 0:
+		scenario["seed"] = seed_ov  # REQ-AI-01：StartMenu 指定 seed 优先于 JSON
 	world.load_scenario(scenario)
 	world.set_time_scale(_time_scale)
 
@@ -992,8 +995,7 @@ func _update_status(msg: String) -> void:
 func _op_step() -> void:
 	if op == null or _op_panel == null:
 		return
-	# P0-06：UI 路径同一声场——targets + 统一声场注册表（双方鱼雷影子/诱饵），
-	# 经同一 OperatorSonar 概率采样出峰/测量候选/告警派生。
+	# P0-06：UI 路径同一声场——targets + 统一声场注册表（双方鱼雷影子/诱饵）， 经同一 OperatorSonar 概率采样出峰/测量候选/告警派生。
 	var scene: Array = world._acoustic_scene_emitters()
 	var scene_acs: Dictionary = world.world["target_acs"].duplicate()
 	scene_acs.merge(world._acoustic_scene_acs())
@@ -1002,8 +1004,7 @@ func _op_step() -> void:
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
-		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个
-		# 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
+		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
 		var auto_ms: Array = op.autocrew_step(world.sim_time)
 		var i2: int = 0
 		while i2 < auto_ms.size():
@@ -1152,8 +1153,7 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
-## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）；
-## Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
+## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）； Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
 	var brg: float = x_value
 	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
@@ -1170,8 +1170,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 			_update_status("Mark ignored: inconsistent with %s" % selected_track_id)
 			return
 	else:
-		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中；
-		# 无匹配才由本次 Mark 新建 Contact 并选中。
+		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中； 无匹配才由本次 Mark 新建 Contact 并选中。
 		t = tracker.feed_evidence_group(group, "", 8.0)
 		if t == null:
 			t = tracker.mark(pm, "M")

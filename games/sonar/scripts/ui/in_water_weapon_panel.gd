@@ -247,7 +247,7 @@ func _refresh_section(tp: RefCounted) -> void:
 		# REQ-DEP-02：命令深度 + 来源（PLAYER/PROGRAM/AUTO）+ 垂向 ETA。
 		var vz: float = float(tp.max_vertical_speed_m_s)
 		var eta: float = absf(tp.commanded_depth_m - tp.actual_depth_m) / vz if vz > 0.0 else INF
-		var eta_txt: String = "N/A" if is_infinite(eta) else "%.0fs" % maxf(eta, 0.0)
+		var eta_txt: String = "N/A" if is_inf(eta) else "%.0fs" % maxf(eta, 0.0)
 		txt += (
 			" → D %.0fm (CMD %s ETA %s)"
 			% [tp.commanded_depth_m, str(tp.depth_command_source), eta_txt]

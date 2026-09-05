@@ -89,6 +89,11 @@ func launch(
 	return d
 
 
+## 已部署诱饵只读视图（World 组装敌方自有发射源过滤用；Truth 侧台账）。
+func deployed_decoys() -> Array:
+	return _deployed
+
+
 ## 画像深拷贝：RefCounted 无内建 duplicate——逐属性复制（tonal_lines 逐条
 ## 复制），保证同程序多枚诱饵的抖动/覆写互不干扰。
 func _dup_signature(ac: RefCounted) -> RefCounted:

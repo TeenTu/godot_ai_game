@@ -15,6 +15,9 @@ extends RefCounted
 ## 世界主 RNG——敌方存在与否绝不改变玩家测量流的随机消耗序列。
 
 var profile: Dictionary = {}
+## REQ-AI-01：最近一次出生失败原因（空 = 成功/未尝试）；fallback 非法时
+## 必须显式报告失败而非静默接受或无限重抽。
+var last_error: String = ""
 
 var _rng: RandomNumberGenerator = null
 
@@ -34,11 +37,19 @@ func spawn(own: TruthEntity, existing: Array, hold_depth_for_band: Callable) -> 
 	for i in range(attempts):
 		var t := _sample(own, hold_depth_for_band)
 		if _validate(t, own, existing):
+			last_error = ""
 			return t
 	var fb: Dictionary = profile.get("fallback_spawn", {})
 	if fb.is_empty():
+		last_error = "no fallback_spawn configured"
 		return null
-	return _from_fallback(fb)
+	var fbt := _from_fallback(fb)
+	# REQ-AI-01：fallback 同样校验；失败显式报告（不能带病出生）。
+	if not _validate(fbt, own, existing):
+		last_error = "fallback_spawn failed validation (bounds/depth/separation)"
+		return null
+	last_error = ""
+	return fbt
 
 
 func _sample(own: TruthEntity, hold_depth_for_band: Callable) -> TruthEntity:
@@ -101,6 +112,21 @@ func _triangular(a: float, c: float, b: float) -> float:
 
 func _validate(t: TruthEntity, own: TruthEntity, existing: Array) -> bool:
 	var min_sep: float = float(profile.get("min_separation_m", 1000.0))
+	# REQ-AI-01：深度合法性（非负、有限、不超过包线）与世界边界（距本艇
+	# 最大距离，默认 30 km；场景可经 max_range_from_own_m / max_depth_m 收紧）。
+	if (
+		not is_finite(t.depth_m)
+		or t.depth_m < 0.0
+		or t.depth_m > float(profile.get("max_depth_m", 400.0))
+	):
+		return false
+	if (
+		NavUtils.distance(
+			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
+		)
+		> float(profile.get("max_range_from_own_m", 30000.0))
+	):
+		return false
 	if (
 		NavUtils.distance(
 			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
