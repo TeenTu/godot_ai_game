@@ -31,6 +31,21 @@ extends SceneTree
 ##              4. 无目标不空挥：近战待机保持 NONE，不消耗挥斩
 ##              5. 选武器 UX（main 层）：选单默认泡泡、确认后开战/隐藏选单/
 ##                 max_hp 血条上限重建 7
+##   [m7-assets] M7 玩家帧条素材存在性（player_bubble/sword_* + player_hurt +
+##              weapon 图标，ResourceLoader.exists 走 .import remap）
+##   [m7-stats]  M7 属性系统（design_m7_progression.md §3）：零加成回归 M5 数值、
+##              hp/speed/dmg 升级落地、点数耗尽拒绝、重置清零
+##   [m7-exp]    M7 经验升级（§4）：曲线边界 5/9、跨级信号、满级封顶、
+##              击杀 +1 xp / 精英 +8 xp / 升级产属性点
+##   [m7-tree]   M7R 每武器技能树（§5）：全池 9 定义、双武器树 6 槽序列、跨树过滤、
+##              树内顺序价 60/120/200/300/420、跨局存档解锁扣币、装备上限 3、
+##              槽位手势重映射、ring 12 发 / twin 2 发 / heal 回复、跨局保留
+##   [m7-passive] M7R 武器专属被动（§5.1）：rapid 射速 ×0.8 / titan 弧斩 +1、
+##              被动不进施放管线、whirl 旋风斩命中与封顶
+##   [m7-save]   M7R 跨局存档（§8）：默认结构、roundtrip（写→清内存→读一致）、
+##              对局金币即时入档、restart 保留、结算落盘
+##   [m7-tree-ui] M7R 选单技能配置区（§5.5）：按当前武器切换 6 行、跨树技能不可见、
+##              价格标注、行点击解锁/勾选
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -42,10 +57,13 @@ var _step := 0
 var _smoke_done := false
 var _logic_done := false
 var _main: Node
+## M7/M7R 测试分册（tools/play_test_m7.gd，控制本文件行数门禁）。
+var _m7_tests: RefCounted
 
 
 func _initialize() -> void:
 	seed(20260902)
+	_m7_tests = preload("res://tools/play_test_m7.gd").new(self)
 	var ps := load("res://scenes/main.tscn") as PackedScene
 	if ps == null:
 		_check(false, "加载 scenes/main.tscn")
@@ -75,6 +93,7 @@ func _process(_delta: float) -> bool:
 		_test_m3_settlement()
 		_test_m4_waves()
 		_test_m5_weapons()
+		_m7_tests.run_all()
 		_finish()
 	return false
 
@@ -88,6 +107,8 @@ func _check(cond: bool, msg: String) -> void:
 
 
 func _finish() -> void:
+	# M7R 无残留保证：测试全程可能写过 user://boom_save.json，收尾清档。
+	BoomSave.test_reset()
 	if _failures == 0:
 		print("PLAY_TEST result=PASS")
 		quit(0)
@@ -383,10 +404,15 @@ func _test_skill_float_text() -> void:
 
 func _test_skill_system_cd() -> void:
 	print("[skillcd]")
+	BoomSave.test_reset()
 	var g := _new_game()
 	var sys := BoomSkillSystem.new()
 	sys.game = g
 	g.add_child(sys)
+	# M7R：新档仅树首 fan 解锁；先补齐 chain/nuke 解锁并装备满 3 槽，再验证冷却语义。
+	sys.debug_grant("chain")
+	sys.debug_grant("nuke")
+	_check(sys.equip("chain") and sys.equip("nuke"), "解锁 chain/nuke 后装备满 3 槽")
 	# GDScript lambda 按值捕获局部 int；用容器承载计数才能跨信号累加。
 	var fired_box: Array = [0]
 	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
@@ -414,6 +440,8 @@ func _test_skill_system_cd() -> void:
 	_check(fired_count == 4, "CD 归零后 tap 再触发 fan (fired=%d)" % fired_count)
 	g.remove_child(sys)
 	sys.free()
+	g.free()
+	BoomSave.test_reset()
 
 
 # ------------------------------------------------------------------ M3 纯逻辑 + 结算状态机

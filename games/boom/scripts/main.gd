@@ -126,6 +126,7 @@ func _build_weapon_select() -> void:
 	_select = BoomWeaponSelect.new()
 	_hud.add_child(_select)
 	_select.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_select.skill_sys = skill_sys  # M7R：技能配置区按当前武器树解锁/装备。
 	_select.confirmed.connect(_on_weapon_confirmed)
 	_select.visible = false
 
@@ -145,7 +146,8 @@ func _on_weapon_confirmed(weapon_id: String) -> void:
 	_start_match_with(weapon_id)
 
 
-## 测试路径与选单确认共用：先落武器数值，再开战（design §3.3 关键工程点 1/2）。
+## 测试路径与选单确认共用：先落武器数值 + 切技能树（M7R 每武器独立树），
+## 再开战（design §3.3 关键工程点 1/2）。
 func _start_match_with(weapon_id: String) -> void:
 	_in_select = false
 	if _select != null:
@@ -153,6 +155,8 @@ func _start_match_with(weapon_id: String) -> void:
 	if sim == null:
 		return
 	sim.set_weapon(weapon_id)
+	if skill_sys != null:
+		skill_sys.set_weapon_tree(weapon_id)
 	_rebuild_hp()
 	sim.begin_match()
 
@@ -263,6 +267,9 @@ func _test_hook_get_state() -> Dictionary:
 		"over": sim.is_over,
 		"weapon": sim.player.weapon_id,
 		"match_started": sim.match_started,
+		"level": sim.exp_sys.level,
+		"xp": sim.exp_sys.xp,
+		"pending_upgrades": sim.pending_upgrades,
 		"x": sim.player.position.x,
 		"z": sim.player.position.z,
 		"joy_pressed": jg["pressed"],
@@ -302,6 +309,8 @@ func _connect_signals() -> void:
 	sim.game_over.connect(_on_game_over)
 	sim.prop_broken.connect(_on_prop_broken)
 	sim.skill_bullet_hit.connect(_on_skill_bullet_hit)
+	sim.level_up.connect(_on_level_up)
+	sim.player_healed.connect(_on_player_healed)
 	skill_sys.skill_fired.connect(_on_skill_fired)
 
 
@@ -404,6 +413,19 @@ func _on_prop_broken(pos: Vector3, coin_value: int) -> void:
 func _on_skill_bullet_hit(pos: Vector3, skill_id: String) -> void:
 	# §4.2 爆裂弹幕：每个命中点 1 个 "嘭!" 黄色小字（弹道归属由 BoomBullet.variant 判定）。
 	_spawn_skill_float(pos, skill_id)
+
+
+## M7 升级播报（design_m7_progression.md §6）：toast + 提示音，属性点进 pending 由玩家消费。
+func _on_level_up(new_level: int) -> void:
+	audio.play("wave_clear", -8.0)
+	_show_toast("LEVEL UP!  LV %d" % new_level)
+
+
+## M7 heal 应急维修反馈：金色 "+N HP" 飘字 + 拾取音。
+func _on_player_healed(amount: int) -> void:
+	audio.play("pickup", -6.0)
+	if hitnum != null:
+		hitnum.spawn(sim.player.position + Vector3(0.0, 1.0, 0.0), "+%d HP" % amount, COL_GOLD, 1.2)
 
 
 func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:
@@ -842,6 +864,8 @@ func _on_retry() -> void:
 
 ## M3 结算状态机入口（design_boom.md §7.2）：表现细节收进 BoomResultPanel。
 func _on_game_over(score: int) -> void:
+	# M7R 货币语义：结算时把本局累积的跨局金币落盘（对局中已即时入账内存）。
+	BoomSave.save()
 	audio.play("over", -4.0)
 	cam.add_trauma(0.8)
 	if _hint_label != null:

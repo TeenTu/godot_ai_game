@@ -37,4 +37,6 @@ enum AttackKind { RANGED, MELEE }
 @export var skill_mods: Dictionary = {}  # 未来逐技能微调，本期全空
 # ---- 外观与技能树 ----
 @export var anim_set_id: String = ""  # "bubble_captain" / "greatsword_captain"
-@export var tree: Dictionary = {}  # 技能树节点定义（§5.1，本期空）
+## M7R 每武器独立技能树：{"skills": [6 个技能 id 按树序]}——
+## 加新武器 = 定义一棵树（见 design_m7_progression.md §5.1）。
+@export var tree: Dictionary = {}
