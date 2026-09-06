@@ -31,6 +31,8 @@ static func _bubble_def() -> BoomWeaponDef:
 	def.max_hp_bonus = 0
 	def.skill_kit_id = "core"
 	def.anim_set_id = "bubble_captain"
+	# M7R 泡泡树：共用 4（fan/chain/nuke/ring）+ bubble 专属 twin/rapid。
+	def.tree = {"skills": ["fan", "chain", "nuke", "ring", "twin", "rapid"]}
 	return def
 
 
@@ -54,6 +56,8 @@ static func _greatsword_def() -> BoomWeaponDef:
 	def.max_hp_bonus = 2
 	def.skill_kit_id = "core"
 	def.anim_set_id = "greatsword_captain"
+	# M7R 大剑树：共用 4（fan/chain/nuke/heal）+ sword 专属 whirl/titan。
+	def.tree = {"skills": ["fan", "chain", "nuke", "heal", "whirl", "titan"]}
 	return def
 
 

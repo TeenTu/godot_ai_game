@@ -7,6 +7,8 @@ var skill_id: String = ""
 var display_name: String = ""
 var cooldown: float = 0.0
 var icon_color: Color = Color.WHITE
+## M7R 被动技能（titan 等）：占装备槽提供常驻加成，不进施放/冷却管线。
+var is_passive: bool = false
 
 # 运行时状态
 var cooldown_left: float = 0.0
