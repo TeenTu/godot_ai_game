@@ -1,8 +1,8 @@
 class_name BoomPlayer
 extends Node3D
-## 玩家：可换武器（泡泡枪/大剑）。移动由 BoomGame 驱动（读摇杆向量），本类只管
-## 视觉与朝向、受击无敌闪烁状态、武器形态（2D 雪碧图动画 vs 程序化回退）。
-## M5（design_m5_weapons.md §6/§7）：形态 = 泡泡队长·远程/近战双形态，同一角色。
+## 玩家：夜巡灯使可换武器。移动由 BoomGame 驱动（读摇杆向量），本类只管
+## 视觉与朝向、受击无敌闪烁状态、武器动作语义（2D 雪碧图动画 vs 程序化回退）。
+## 远程/近战共用同一位无武器女灯使；武器会作为独立图层在后续美术批次接入。
 
 const BASE_MAX_HP: int = 5
 const RADIUS: float = 0.55
@@ -11,31 +11,37 @@ const INVULN_TIME: float = 0.9
 
 ## 2D 帧条规格（design §6.0）：单帧 256×256、横向无缝拼接、透明底。
 const FRAME_PX: int = 256
-const STRIP_DIR: String = "res://assets/images/characters/"
+const STRIP_DIR: String = "res://assets/images/characters/night_patrol/"
 const _ANIM_FPS: Dictionary = {
 	"idle": 6.0,  # ≈6fps 呼吸起伏
 	"move": 12.0,  # ≈12fps 小步快挪
-	"recoil": 24.0,  # 3 帧单次 ≈0.125s
-	"swing": 30.0,  # 8 帧单次 ≈0.27s 攻帧
-	"hurt": 12.0,  # 2 帧受击
+	"recoil": 14.0,  # 3 帧远程施法身姿
+	"swing": 16.0,  # 5 帧近战挥击身姿
+	"hurt": 12.0,  # 3 帧受击
+	"skill_cast": 12.0,
+	"knockdown": 10.0,
 }
 ## 每形态可用的帧条（前缀→文件名；帧数见 design §6.1）。
 const FORM_STRIPS: Dictionary = {
 	"bubble":
 	{
-		"idle": ["player_bubble_idle", 4],
-		"move": ["player_bubble_move", 6],
-		"recoil": ["player_bubble_recoil", 3],
+		"idle": ["hero_idle_unarmed", 4],
+		"move": ["hero_move_unarmed", 6],
+		"recoil": ["hero_ranged_cast_body", 3],
+		"skill_cast": ["hero_skill_cast_body", 4],
+		"knockdown": ["hero_knockdown_unarmed", 4],
 	},
 	"sword":
 	{
-		"idle": ["player_sword_idle", 4],
-		"move": ["player_sword_move", 6],
-		"swing": ["player_sword_swing", 8],
+		"idle": ["hero_idle_unarmed", 4],
+		"move": ["hero_move_unarmed", 6],
+		"swing": ["hero_melee_swing_body", 5],
+		"skill_cast": ["hero_skill_cast_body", 4],
+		"knockdown": ["hero_knockdown_unarmed", 4],
 	},
 }
-const HURT_STRIP: String = "player_hurt"
-const HURT_FRAMES: int = 2
+const HURT_STRIP: String = "hero_hurt_unarmed"
+const HURT_FRAMES: int = 3
 
 ## 有效机体数值（由 BoomGame.apply_weapon 注入当前武器 def，见 design §3.3）。
 var max_hp: int = BASE_MAX_HP
@@ -43,7 +49,7 @@ var hp: int = BASE_MAX_HP
 var radius: float = RADIUS
 var move_speed: float = MOVE_SPEED
 var weapon_id: String = ""
-var anim_form: String = "bubble"  # 当前形态：bubble / sword
+var anim_form: String = "bubble"  # 当前武器动作语义：bubble / sword
 
 var invuln_left: float = 0.0
 var move_vec: Vector2 = Vector2.ZERO

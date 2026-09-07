@@ -31,8 +31,8 @@ extends SceneTree
 ##              4. 无目标不空挥：近战待机保持 NONE，不消耗挥斩
 ##              5. 选武器 UX（main 层）：选单默认泡泡、确认后开战/隐藏选单/
 ##                 max_hp 血条上限重建 7
-##   [m7-assets] M7 玩家帧条素材存在性（player_bubble/sword_* + player_hurt +
-##              weapon 图标，ResourceLoader.exists 走 .import remap）
+##   [m7-assets] 夜巡灯使帧条素材存在性（无武器身体动作条 + 暂存 weapon 图标，
+##              ResourceLoader.exists 走 .import remap）
 ##   [m7-stats]  M7 属性系统（design_m7_progression.md §3）：零加成回归 M5 数值、
 ##              hp/speed/dmg 升级落地、点数耗尽拒绝、重置清零
 ##   [m7-exp]    M7 经验升级（§4）：曲线边界 5/9、跨级信号、满级封顶、
@@ -154,14 +154,14 @@ func _test_smoke() -> void:
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
 	for asset_path in [
-		"res://assets/images/characters/jelly_scout.png",
-		"res://assets/images/characters/water_gunner.png",
-		"res://assets/images/floors/carnival_tiles.png",
-		"res://assets/images/icons/skill_nuke.png",
 		"res://assets/images/icons/weapon_bubble.png",
 		"res://assets/images/icons/weapon_sword.png",
 	]:
 		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
+	for retired_path in [
+		"res://assets/images/characters/bubble_captain.png",
+	]:
+		_check(not ResourceLoader.exists(retired_path), "已替换素材已退出运行目录: %s" % retired_path)
 
 
 # ------------------------------------------------------------------ 玩家移动
