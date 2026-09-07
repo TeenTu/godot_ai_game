@@ -30,13 +30,13 @@ func run_all() -> void:
 func test_assets() -> void:
 	print("[m7-assets]")
 	for asset_path in [
-		"res://assets/images/characters/player_bubble_idle.png",
-		"res://assets/images/characters/player_bubble_move.png",
-		"res://assets/images/characters/player_bubble_recoil.png",
-		"res://assets/images/characters/player_sword_idle.png",
-		"res://assets/images/characters/player_sword_move.png",
-		"res://assets/images/characters/player_sword_swing.png",
-		"res://assets/images/characters/player_hurt.png",
+		"res://assets/images/characters/night_patrol/hero_idle_unarmed.png",
+		"res://assets/images/characters/night_patrol/hero_move_unarmed.png",
+		"res://assets/images/characters/night_patrol/hero_hurt_unarmed.png",
+		"res://assets/images/characters/night_patrol/hero_ranged_cast_body.png",
+		"res://assets/images/characters/night_patrol/hero_melee_swing_body.png",
+		"res://assets/images/characters/night_patrol/hero_skill_cast_body.png",
+		"res://assets/images/characters/night_patrol/hero_knockdown_unarmed.png",
 		"res://assets/images/icons/weapon_bubble.png",
 		"res://assets/images/icons/weapon_sword.png",
 	]:
