@@ -20,6 +20,11 @@ var estimated_position_east_m: float = 0.0
 var estimated_position_north_m: float = 0.0
 var confidence: float = 0.0
 
+# REQ-B1-04：来源绑定——解只属于一个 Track/一次 Fit/一个证据修订。
+var source_track_id: String = ""
+var source_fit_version: int = -1
+var source_evidence_revision: int = -1
+
 ## 该解已经过多少秒（用于"解随时间变旧"）。
 var age: float = 0.0
 
@@ -39,5 +44,8 @@ func to_dict() -> Dictionary:
 		"east_m": estimated_position_east_m,
 		"north_m": estimated_position_north_m,
 		"confidence": confidence,
+		"source_track_id": source_track_id,
+		"source_fit_version": source_fit_version,
+		"source_evidence_revision": source_evidence_revision,
 		"age": age,
 	}

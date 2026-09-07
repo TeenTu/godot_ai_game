@@ -62,6 +62,18 @@ func set_auto_interval(interval_s: float) -> void:
 
 ## 用一条测量执行 Mark：创建新接触并返回 Track。
 ## source_type 取 "S"/"E"/"R"/"V"/"M"（默认 S=声呐）。
+## REQ-B1-01：显式新建空 Mark 组（Track），不携带任何证据。
+func create_empty_track() -> Track:
+	var n: int = int(_next_number.get("M", 1))
+	_next_number["M"] = n + 1
+	var t := Track.new()
+	t.source_type = "M"
+	t.track_id = "M%02d" % n
+	t.state = Track.TrackState.ACTIVE
+	_tracks.append(t)
+	return t
+
+
 func mark(m: Measurement, source_type: String = "S") -> Track:
 	var n: int = _next_number.get(source_type, 1)
 	_next_number[source_type] = n + 1
@@ -253,6 +265,37 @@ func _append_group(track: Track, group: Array) -> void:
 	for m in group:
 		if m is Measurement:
 			track.add_measurement(m)
+
+
+## 公开按 id 查找（UI/控制器用；REQ-B1-03 后台 REFIT 不改选中时需要）。
+func track_by_id(track_id: String) -> Track:
+	return _find_track(track_id)
+
+
+## 找到持有该 Measurement 的 Track（重复点击选中既有 Mark 用）。
+func track_of_measurement(m: Measurement) -> Track:
+	for track in _tracks:
+		if (track as Track).measurement_history.has(m):
+			return track
+	return null
+
+
+## REQ-B1-05：改绑单条 Measurement 到另一 Track，保持同一物理 evidence_id。
+func reassign_measurement(m: Measurement, to_track: Track) -> bool:
+	var from_t: Track = track_of_measurement(m)
+	if from_t == null or to_track == null or from_t == to_track:
+		return false
+	if not from_t.remove_measurement(m):
+		return false
+	to_track.add_measurement(m)
+	return true
+
+
+## REQ-B1-05：从指定 Track 删除一条 Measurement（可撤销由调用方负责）。
+func remove_measurement_from(track: Track, m: Measurement) -> bool:
+	if track == null or not track.measurement_history.has(m):
+		return false
+	return track.remove_measurement(m)
 
 
 ## 证据组关联（见上）。group 为同一物理证据的 Measurement 列表（单条亦可）。

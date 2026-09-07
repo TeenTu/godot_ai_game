@@ -7,6 +7,7 @@ extends VBoxContainer
 ## Truth own、不直接调用 weapons.fire，只负责「展示 + 触发 + 模式提示」。
 
 signal fire_requested
+signal fire_mode_changed(mode: String)  # REQ-B1-04：显式发射模式选择
 signal status(msg: String)
 
 const MAX_LOG: int = 5
@@ -18,6 +19,7 @@ var chart: ChartView = null
 var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰减用）
 
 var _btn_fire: Button = null
+var _opt_fire_mode: OptionButton = null  # REQ-B1-04
 var _chk_shallow: CheckBox = null
 var _sel_preset: OptionButton = null
 var _lbl_fire_hint: Label = null
@@ -36,6 +38,21 @@ func _build() -> void:
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
+	# REQ-B1-04：FIRE MODE 显式选择——SOLUTION 只用选中 Contact 的解。
+	var fm_row := HBoxContainer.new()
+	var fm_lbl := Label.new()
+	fm_lbl.text = "FIRE MODE"
+	fm_lbl.add_theme_font_size_override("font_size", 12)
+	fm_row.add_child(fm_lbl)
+	_opt_fire_mode = OptionButton.new()
+	for m in ["SOLUTION", "BEARING_ONLY", "MANUAL"]:
+		_opt_fire_mode.add_item(m)
+	_opt_fire_mode.select(0)
+	_opt_fire_mode.item_selected.connect(
+		func(i: int): fire_mode_changed.emit(_opt_fire_mode.get_item_text(i))
+	)
+	fm_row.add_child(_opt_fire_mode)
+	add_child(fm_row)
 	# REQ-01：浅水攻击定深开关（水面/浅深目标；有限升降速率逼近，非瞬移）。
 	_chk_shallow = CheckBox.new()
 	_chk_shallow.text = "Shallow attack depth 12m"

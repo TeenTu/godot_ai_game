@@ -16,7 +16,12 @@ var tracker: Tracker = null
 var trial: TrialSolution = null
 var system_sol: SystemSolution = null
 var dot_stack: DotStack = null
-var last_fit: Dictionary = {}  # 最近一次 TmaFitResult（含 track_id）
+var last_fit: Dictionary = {}  # 视图别名：当前选中 Contact 的 Fit（REQ-B1-03）
+# REQ-B1-01/03/04：per-Track 上下文控制器 + 显式 Mark 组/发射模式状态。
+var fcc := FireControlContext.new()
+var mark_flow := MarkFlow.new()
+var fire_exec := FireExecutor.new()
+var mark_panel: MarkGroupPanel = null
 var selected_track_id: String = ""
 var op: OperatorSonar = null  # Sonar Operator Layer（Truth 只进这里）
 var _op_panel: OperatorPanel = null
@@ -61,7 +66,8 @@ var _track_colors: Dictionary = {}  # track_id -> Color
 # 脏标记：只有这些变化才重建 LOB/BT/残差数组
 var _dirty: bool = true
 var _last_meas_count: int = -1
-var _fit_version: int = 0
+var _fire_mode: String = "SOLUTION"
+var _lowq_confirmed: bool = false
 var _own_track_pts: Array = []
 var _scenario_name: String = ""  # P0-08 实际加载的场景名
 
@@ -107,6 +113,11 @@ func _ready() -> void:
 	world.auto_measurements = false
 	op = OperatorSonar.new()
 	op.setup(world.world)
+	mark_flow.tracker = tracker
+	mark_flow.op = op
+	mark_flow.world = world
+	fire_exec.fcc = fcc
+	fire_exec.tracker = tracker
 	# S1-01：本艇无拖曳阵硬件时禁用 TOWED 选项（不提供虚构回退）
 	if _op_panel != null:
 		_op_panel.set_towed_available(op.towed_available())
@@ -242,6 +253,23 @@ func _build_panel() -> void:
 	auto_panel.bind(tracker, _auto_refit_track)
 	_section_body(_make_section("Automation")).add_child(auto_panel)
 
+	# REQ-B1-01/05：显式 Mark 组选择 + Remove/Reassign/Undo（编辑记审计）。
+	mark_panel = MarkGroupPanel.new()
+	mark_panel.association_changed.connect(
+		func(m: String):
+			mark_flow.association_mode = m
+			_update_status("Mark association -> " + m)
+	)
+	mark_panel.active_group_changed.connect(
+		func(g: String):
+			mark_flow.active_group_id = g
+			_update_status("Add Mark to -> " + (g if g != "" else "(auto)"))
+	)
+	mark_panel.flow = mark_flow
+	mark_panel.selected_provider = func() -> String: return selected_track_id
+	mark_panel.operation_result.connect(_on_mark_operation)
+	_section_body(_make_section("Mark Groups")).add_child(mark_panel)
+
 	# 关键信息区（验收：1280x720 无需滚动可见）
 	_lbl_status = Label.new()
 	_lbl_status.text = ""
@@ -278,6 +306,7 @@ func _build_panel() -> void:
 	_weapon_panel = WeaponPanelUI.new()
 	_panel.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
+	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
 
 	# §11.2 在水武器控制台（每枚鱼雷状态 + 线控按钮）。
 	_in_water_panel = InWaterWeaponPanel.new()
@@ -764,10 +793,20 @@ func _update_contact_rows() -> void:
 		btn.set_pressed_no_signal(t.track_id == selected_track_id)
 
 
+## REQ-B1-03：切换/清除 Contact 只刷新视图别名，不动 Fit/Trial/Sol。
+func _refresh_fit_view() -> void:
+	var tid := selected_track_id
+	last_fit = fcc.fit_by_track_id.get(tid, {}) if tid != "" else {}
+	var tr: TrialSolution = fcc.trial_by_track_id.get(tid, null) if tid != "" else null
+	trial = tr if tr != null else TrialSolution.new()
+	system_sol = fcc.system_solution_by_track_id.get(tid, null) if tid != "" else null
+
+
 func _on_contact_selected(track_id: String) -> void:
 	if selected_track_id == track_id:
 		# REQ-09：再次点击同一接触 = 取消选择。
 		selected_track_id = ""
+		_refresh_fit_view()
 		if _ping_ctrl != null:
 			_ping_ctrl.preferred_track_id = ""
 		_lbl_selected.text = "Selected: none"
@@ -776,6 +815,7 @@ func _on_contact_selected(track_id: String) -> void:
 		_update_status("Selection cleared")
 		return
 	selected_track_id = track_id
+	_refresh_fit_view()
 	# REQ-02 多回波优先级：命中当前选中 Track 的回波排最前。
 	if _ping_ctrl != null:
 		_ping_ctrl.preferred_track_id = track_id
@@ -841,131 +881,92 @@ func _on_fit_tma() -> void:
 	if sel == null:
 		_update_status("No contact selected — click a contact first")
 		return
-	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据），不再用原始 Measurement 行数。
+	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据）。
 	if sel.evidence_count() < 4:
 		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
 		return
-
-	var meas: Array = []
-	for m in sel.measurement_history:
-		meas.append(TmaUiData.fit_meas_dict(m))
-
-	var opts: Dictionary = {"now_time": world.sim_time}
-	# DEMON 航速仅作为带 sigma 的软约束，不替代 bearing-only 拟合
-	if op != null and not op.demon_estimate.is_empty():
-		var de: Dictionary = op.demon_estimate
-		if float(de.get("confidence", 0.0)) > 0.3 and float(de.get("speed_sigma_kn", 99.0)) < 6.0:
-			opts["demon_speed_kn"] = float(de["speed_kn"])
-			opts["demon_sigma_kn"] = float(de["speed_sigma_kn"])
-	var r: Dictionary = TmaSolver.solve_auto(meas, opts)
-	r["track_id"] = sel.track_id
-	if not bool(r.get("success", false)):
-		last_fit = r
-		_fit_version += 1
-		_dirty = true
-		_update_status("TMA %s: %s" % [sel.track_id, str(r.get("status", "unknown"))])
-		return
-
-	last_fit = r
-	_fit_version += 1
-	var best: Dictionary = r.get("best", {})
-
-	trial.bearing_deg = float(best.get("bearing_deg", 0.0))
-	trial.range_m = float(best.get("range_m", 0.0))
-	trial.course_deg = float(best.get("course_deg", 0.0))
-	trial.speed_kn = float(best.get("speed_kn", 0.0))
-	trial.solution_time = world.sim_time
-	var dt_now: float = world.sim_time - float(best.get("t_ref", world.sim_time))
-	var v := best.get("v_ms", Vector2.ZERO) as Vector2
-	trial.estimated_position_east_m = (best["p_ref"] as Vector2).x + v.x * dt_now
-	trial.estimated_position_north_m = (best["p_ref"] as Vector2).y + v.y * dt_now
-
-	TmaUiData.dot_stack_compute(dot_stack, r, sel)
-	_lbl_tma.text = TmaUiData.summary(r, sel)
+	fcc.solve_and_store(sel, op, world.sim_time)
+	_present_fit(sel.track_id, true)
 	_dirty = true
 	_rebuild_display_data()
-	_update_status(
-		(
-			"TMA %s %s | B%.0f° R%.0fm C%.0f° S%.1fkn"
-			% [
-				sel.track_id,
-				str(r.get("status", "?")),
-				trial.bearing_deg,
-				trial.range_m,
-				trial.course_deg,
-				trial.speed_kn,
-			]
-		)
-	)
 
 
-## S1-05：FULL_AUTO REFIT 动作执行（选中航迹并走既有 Auto Fit 链）。
+## REQ-B1-03：把某 Track 的 Fit/Trial/Solution 视图别名刷到前台。
+func _present_fit(tid: String, announce: bool) -> void:
+	var r: Dictionary = fcc.fit_by_track_id.get(tid, {})
+	last_fit = r
+	var tr: TrialSolution = fcc.trial_by_track_id.get(tid, null)
+	trial = tr if tr != null else TrialSolution.new()
+	system_sol = fcc.system_solution_by_track_id.get(tid, null)
+	var sel: Track = tracker.track_by_id(tid)
+	if bool(r.get("success", false)) and sel != null:
+		TmaUiData.dot_stack_compute(dot_stack, r, sel)
+		_lbl_tma.text = TmaUiData.summary(r, sel)
+	if announce and not r.is_empty():
+		var st_txt: String = str(r.get("status", "?"))
+		if fcc.is_stale(tid):
+			st_txt = "STALE " + st_txt
+		if bool(r.get("success", false)):
+			_update_status(
+				(
+					"TMA %s %s | B%.0f R%.0fm C%.0f S%.1fkn"
+					% [
+						tid,
+						st_txt,
+						trial.bearing_deg,
+						trial.range_m,
+						trial.course_deg,
+						trial.speed_kn
+					]
+				)
+			)
+		else:
+			_update_status("TMA %s: %s" % [tid, st_txt])
+
+
+## S1-05/REQ-B1-03：FULL_AUTO 后台 REFIT——绝不改 selected_contact_id；
+## 只更新 fit_by_track_id[tid]，玩家正在查看 tid 时才刷新前台显示。
 func _auto_refit_track(tid: String) -> void:
-	selected_track_id = tid
-	_on_fit_tma()
+	var t: Track = tracker.track_by_id(tid)
+	if t == null or t.evidence_count() < 4:
+		return
+	fcc.solve_and_store(t, op, world.sim_time)
+	if tid == selected_track_id:
+		_present_fit(tid, false)
 
 
+## REQ-B1-04：Enter Solution 校验来源绑定；低质量解需显式二次确认。
 func _on_enter_solution() -> void:
-	if trial.range_m <= 0.0:
+	var tid := selected_track_id
+	if tid == "" or trial.range_m <= 0.0:
 		_update_status("Auto Fit TMA first, then submit")
 		return
 	var st: String = str(last_fit.get("status", "CONVERGED")) if not last_fit.is_empty() else "NONE"
-	system_sol = trial.commit(world.sim_time)
+	var res: Dictionary = fcc.commit_solution_checked(tid, world.sim_time, st, _lowq_confirmed)
+	if bool(res.get("lowq_pending", false)):
+		_lowq_confirmed = true
+		_update_status("LOW quality (%s) — press Enter Solution again to confirm" % st)
+		return
+	_lowq_confirmed = false
+	if not bool(res.get("ok", false)):
+		_update_status("Submit rejected: %s" % str(res.get("reason", "?")))
+		return
+	system_sol = res["solution"]
 	if _weapon_panel != null:
-		_weapon_panel.set_fire_context("SOLUTION ready — %s" % st)
-	if st in ["INSUFFICIENT_GEOMETRY", "MULTIMODAL", "STALE"]:
-		_update_status("Submitted (%s - LOW confidence, maneuver and refit!)" % st)
-	else:
-		_update_status("System Solution submitted (%s)" % st)
+		_weapon_panel.set_fire_context("SOLUTION ready — %s (src %s)" % [st, tid])
+	_update_status("System Solution submitted for %s (%s)" % [tid, st])
 
 
-## 任意条件发射：有解 → SOLUTION；有选中接触 → BEARING_ONLY；否则 MANUAL。
+## REQ-B1-04：发射模式玩家显式选择（FIRE MODE），执行/联锁在 FireExecutor。
 func _on_fire_torpedo() -> void:
 	if world == null or world.weapons == null:
 		return
-	var own: RefCounted = world.world["own"]
-	var ws: WeaponSystem = world.weapons
-	var tp: Torpedo = null
-	var mode: String = ""
-	if system_sol != null:
-		tp = (
-			ws
-			. fire(
-				system_sol,
-				float(own.position_east_m),
-				float(own.position_north_m),
-				world.sim_time,
-				float(own.depth_m),
-			)
-		)
-		mode = "SOLUTION"
-	else:
-		var track: Track = _selected_track()
-		var lm: Measurement = track.latest_measurement() if track != null else null
-		if lm != null:
-			tp = (
-				ws
-				. fire_bearing_only(
-					lm.measured_bearing_deg,
-					float(own.position_east_m),
-					float(own.position_north_m),
-					world.sim_time,
-					float(own.depth_m),
-				)
-			)
-			mode = "BEARING_ONLY"
-		else:
-			tp = (
-				ws
-				. fire_manual(
-					own.course_deg,
-					float(own.position_east_m),
-					float(own.position_north_m),
-					world.sim_time,
-					float(own.depth_m),
-				)
-			)
-			mode = "MANUAL"
+	var res: Dictionary = fire_exec.execute(world.weapons, world, _fire_mode, selected_track_id)
+	if not bool(res.get("ok", false)):
+		_update_status("Fire rejected [%s]: %s" % [_fire_mode, str(res.get("reason", "?"))])
+		return
+	var tp: Torpedo = res["tp"]
+	var mode: String = str(res["mode"])
 	if tp != null:
 		_update_status("Torpedo away (%s / %s)" % [tp.torpedo_id, mode])
 		_dirty = true
@@ -995,6 +996,9 @@ func _op_step() -> void:
 	scene_acs.merge(world._acoustic_scene_acs())
 	# REQ-AC-01：按仿真节拍追帧（倍速不跳行）；UI 切换不改变物理 RNG 消耗。
 	op.catch_up_rows(world.sim_time, world.world["targets"] + scene, scene_acs)
+	# REQ-B1-03：镜像证据修订（autocrew/主动回波等改动证据时自动置 stale）。
+	for t in tracker.all_tracks():
+		fcc.sync_revision(t)
 	_refresh_towed_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
@@ -1125,6 +1129,7 @@ func _on_ping_echo_hits(fed: Array) -> void:
 	if tr == null:
 		return
 	selected_track_id = tr.track_id
+	_refresh_fit_view()
 	_ping_ctrl.preferred_track_id = tr.track_id
 	_dirty = true
 	_update_status("Selected %s — active range on contact" % tr.track_id)
@@ -1141,38 +1146,46 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
 
 
-## BB 瀑布点击 → 玩家 Mark。REQ-09：普通左键=全局关联（可切换/新建）； Shift+左键=锁定关联（只追加选中 Track，失败提示保留选择）。
+## REQ-B1-01/02：Mark 关联流移入 MarkFlow（LOCKED/SUGGEST/AUTO + 同峰去重）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
-	var brg: float = x_value
-	# S1-01/03：携带被点瀑布行上下文；S1-03A：镜像峰生成 A/B 共享证据候选
-	var group: Array = op.create_mark_group(brg, world.sim_time, "", as_true, row)
-	if group.is_empty():
+	var res: Dictionary = mark_flow.handle_mark(x_value, as_true, row, selected_track_id)
+	var sel_id: String = str(res.get("select", ""))
+	if sel_id != "":
+		selected_track_id = sel_id
+		if _ping_ctrl != null:
+			_ping_ctrl.preferred_track_id = sel_id
+		_lbl_selected.text = "Selected: " + sel_id
+	_apply_mark_result(res, false)
+
+
+func _refresh_mark_panel() -> void:
+	if mark_panel == null:
 		return
-	var pm: Measurement = group[0] as Measurement
-	var t: Track = null
-	var locked: bool = bool(row.get("shift", false))
-	if locked and selected_track_id != "":
-		# 锁定关联：只对选中 Track 门控；失败不污染（不新建、不切换）。
-		t = tracker.feed_evidence_group(group, selected_track_id, 8.0)
-		if t == null:
-			_update_status("Mark ignored: inconsistent with %s" % selected_track_id)
-			return
-	else:
-		# REQ-09 普通左键：全局最近邻关联；匹配到其他 Track 则切换选中； 无匹配才由本次 Mark 新建 Contact 并选中。
-		t = tracker.feed_evidence_group(group, "", 8.0)
-		if t == null:
-			t = tracker.mark(pm, "M")
-			for j in range(1, group.size()):
-				t.add_measurement(group[j] as Measurement)
-	# 关联/新建成功后才把整组写入世界测量流（失败不污染，_feed 不重喂）
-	for gm in group:
-		world.measurements.append(gm)
-		_processed_meas += 1  # S1-03B：手动 Mark 已直接喂 Tracker，跳过 _feed 重喂
-	selected_track_id = t.track_id
-	_dirty = true
-	_last_meas_count = world.measurements.size()
-	var amb_txt: String = " (LR mirror pair)" if group.size() > 1 else ""
-	_update_status("Marked %.1f deg -> %s%s" % [brg, t.track_id, amb_txt])
+	var ids: Array = []
+	for t in tracker.all_tracks():
+		ids.append((t as Track).track_id)
+	mark_panel.set_groups(ids)
+	mark_panel.show_suggestion(mark_flow.pending_suggestion_track_id())
+	mark_panel.set_audit(str(mark_flow.audit[-1]) if not mark_flow.audit.is_empty() else "")
+
+
+## 统一应用 Mark 操作结果：修订镜像/置脏/刷新/状态行。
+func _apply_mark_result(res: Dictionary, rebuild: bool) -> void:
+	var trk: Track = res.get("track", null)
+	if trk != null:
+		fcc.sync_revision(trk)
+	if bool(res.get("dirty", false)):
+		_dirty = true
+		_last_meas_count = world.measurements.size()
+		if rebuild:
+			_rebuild_display_data()
+			_refresh_mark_panel()
+	_update_status(str(res.get("status", "")))
+
+
+func _on_mark_operation(res: Dictionary) -> void:
+	_apply_mark_result(res, true)
+	_refresh_mark_panel()
 
 
 ## AlertPanel 用：当前在跟航迹的最新方位集合（战果评估）。

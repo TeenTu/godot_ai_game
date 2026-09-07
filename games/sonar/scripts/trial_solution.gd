@@ -20,6 +20,11 @@ var estimated_position_east_m: float = 0.0
 var estimated_position_north_m: float = 0.0
 var confidence: float = 0.0  # 0..1 玩家/系统对解的置信（分类/拟合相关，非真实度）
 
+# REQ-B1-04：Trial 绑定来源 Track/Fit 版本/证据修订（Enter Solution 时校验）。
+var source_track_id: String = ""
+var source_fit_version: int = -1
+var source_evidence_revision: int = -1
+
 # 锁定标志：锁定的参数不被重新拟合覆盖
 var lock_bearing: bool = false
 var lock_range: bool = false
@@ -76,6 +81,9 @@ func commit(solution_time: float) -> SystemSolution:
 	sys.estimated_position_east_m = estimated_position_east_m
 	sys.estimated_position_north_m = estimated_position_north_m
 	sys.confidence = confidence
+	sys.source_track_id = source_track_id
+	sys.source_fit_version = source_fit_version
+	sys.source_evidence_revision = source_evidence_revision
 	return sys
 
 
