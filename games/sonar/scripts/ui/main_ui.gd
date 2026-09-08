@@ -126,7 +126,6 @@ func _ready() -> void:
 	system_sol = null
 	dot_stack = DotStack.new()
 
-	# 武器面板依赖 world.weapons（此时已就绪），补绑定；无解也可 MANUAL 发射
 	if _weapon_panel != null and world.weapons != null:
 		_weapon_panel.bind(world.weapons, _chart, func(): _dirty = true)
 		_weapon_panel.set_fire_context("No FC solution — MANUAL / BEARING_ONLY allowed")
@@ -270,7 +269,6 @@ func _build_panel() -> void:
 	mark_panel.operation_result.connect(_on_mark_operation)
 	_section_body(_make_section("Mark Groups")).add_child(mark_panel)
 
-	# 关键信息区（验收：1280x720 无需滚动可见）
 	_lbl_status = Label.new()
 	_lbl_status.text = ""
 	_lbl_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -351,6 +349,11 @@ func _build_panel() -> void:
 	chk_all_lob.text = "All LOB History"
 	chk_all_lob.toggled.connect(func(on: bool): _chart.show_all_lobs = on)
 	_panel.add_child(chk_all_lob)
+	# REQ-B3-03：Selected Track only / All Tracks 切换（默认突出当前 Track）。
+	var chk_sel_only := CheckButton.new()
+	chk_sel_only.text = "Selected Track Only"
+	chk_sel_only.toggled.connect(func(on: bool): _chart.show_selected_only = on)
+	_panel.add_child(chk_sel_only)
 
 	_panel.add_child(HSeparator.new())
 	var tma_title := Label.new()
@@ -385,7 +388,7 @@ func _build_layer_toggles() -> void:
 	lt.text = "Layers"
 	lt.add_theme_font_size_override("font_size", 15)
 	_panel.add_child(lt)
-	for key in ["lob", "sigma", "fit", "alt", "trial", "system", "truth"]:
+	for key in ["lob", "sigma", "fit", "alt", "trial", "system", "truth", "threat"]:
 		var cb := CheckButton.new()
 		cb.text = key.capitalize() if key != "alt" else "Alternatives"
 		cb.button_pressed = bool(_chart.layers.get(key, true))
@@ -402,7 +405,6 @@ func _build_layer_toggles() -> void:
 	)
 	_panel.add_child(ob)
 
-	# 诊断区显示模式（需求§一.1）：CLOSED / BT(默认) / RESIDUAL / SPLIT
 	var diag_lbl := Label.new()
 	diag_lbl.text = "Diagnostics:"
 	diag_lbl.add_theme_font_size_override("font_size", 15)
@@ -546,7 +548,6 @@ func _rebuild_display_data() -> void:
 	var now: float = world.sim_time
 	var sel: Track = _selected_track()
 	var outlier_times: Dictionary = TmaUiData.outlier_times(last_fit, selected_track_id)
-	# 1) LOB（选中接触高亮着色，其他接触降到 alpha 由 chart 处理色弱化标记）
 	var all_lobs: Array = []
 	var meas_index: Array = []
 	var leg_bounds: Array = TmaUiData.leg_boundary_times(world.measurements)
@@ -555,7 +556,6 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		# 未消歧 A/B 候选组同权弱化，不因 branch 泄露侧别。
 		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))

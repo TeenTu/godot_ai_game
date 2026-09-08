@@ -20,16 +20,19 @@ static func build_entries(
 	for t in targets:
 		if str(t.id) == own_id or not target_acs.has(str(t.id)):
 			continue
-		entries.append(
-			{
-				"token": str(t.id),
-				"kind": "target",
-				"ac": target_acs[str(t.id)],
-				"e": float(t.position_east_m),
-				"n": float(t.position_north_m),
-				"dep": float(t.depth_m),
-				"spd": float(t.speed_kn),
-			}
+		(
+			entries
+			. append(
+				{
+					"token": str(t.id),
+					"kind": "target",
+					"ac": target_acs[str(t.id)],
+					"e": float(t.position_east_m),
+					"n": float(t.position_north_m),
+					"dep": float(t.depth_m),
+					"spd": float(t.speed_kn),
+				}
+			)
 		)
 	if enemy_weapons != null:
 		for tp in enemy_weapons.torpedoes:
@@ -38,16 +41,19 @@ static func build_entries(
 			var ac: RefCounted = shadow_ac.call(tp)
 			# REQ-B2-03：覆盖潜艇默认 TS，使用鱼雷标定主动目标强度。
 			ac.active_target_strength_db = tp.acoustic_profile.active_target_strength_db
-			entries.append(
-				{
-					"token": str(tp.torpedo_id),
-					"kind": "torpedo",
-					"ac": ac,
-					"e": float(tp.pos_east_m),
-					"n": float(tp.pos_north_m),
-					"dep": float(tp.actual_depth_m),
-					"spd": float(tp.speed_kn),
-				}
+			(
+				entries
+				. append(
+					{
+						"token": str(tp.torpedo_id),
+						"kind": "torpedo",
+						"ac": ac,
+						"e": float(tp.pos_east_m),
+						"n": float(tp.pos_north_m),
+						"dep": float(tp.actual_depth_m),
+						"spd": float(tp.speed_kn),
+					}
+				)
 			)
 	for d in decoys:
 		if not d.activated or d.expired:
@@ -57,15 +63,18 @@ static func build_entries(
 			var np := AcousticProfile.new()
 			np.active_target_strength_db = 10.0
 			dac = np
-		entries.append(
-			{
-				"token": str(d.id),
-				"kind": "decoy",
-				"ac": dac,
-				"e": float(d.position_east_m),
-				"n": float(d.position_north_m),
-				"dep": float(d.depth_m),
-				"spd": float(d.speed_kn),
-			}
+		(
+			entries
+			. append(
+				{
+					"token": str(d.id),
+					"kind": "decoy",
+					"ac": dac,
+					"e": float(d.position_east_m),
+					"n": float(d.position_north_m),
+					"dep": float(d.depth_m),
+					"spd": float(d.speed_kn),
+				}
+			)
 		)
 	return entries

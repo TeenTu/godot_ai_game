@@ -16,9 +16,14 @@ func _initialize() -> void:
 	# 敌方（固定 2000m/正东）向本艇发射直航鱼雷（HIGH 速度、TIME 开主动、
 	# 自治授权，保证无导线也直航碰撞）。几何固定 → 自然制导命中。
 	var e: TruthEntity = w.enemy_ai.entity
-	var brg_e2own: float = NavUtils.bearing_to_true(
-		float(e.position_east_m), float(e.position_north_m),
-		float(w.world["own"].position_east_m), float(w.world["own"].position_north_m),
+	var brg_e2own: float = (
+		NavUtils
+		. bearing_to_true(
+			float(e.position_east_m),
+			float(e.position_north_m),
+			float(w.world["own"].position_east_m),
+			float(w.world["own"].position_north_m),
+		)
 	)
 	var prog := WeaponProgram.make_bearing_only(brg_e2own)
 	prog.speed_mode = WeaponProgram.SpeedMode.HIGH
@@ -89,7 +94,8 @@ func _mk_world() -> World:
 		"speed_max_kn": 6.0,
 		"min_separation_m": 1000.0,
 		"max_generation_attempts": 10,
-		"fallback_spawn": {
+		"fallback_spawn":
+		{
 			"position_east_m": sin(b) * 2000.0,
 			"position_north_m": cos(b) * 2000.0,
 			"course_deg": 270.0,

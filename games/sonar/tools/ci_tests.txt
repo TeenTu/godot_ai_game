@@ -85,3 +85,4 @@ au_test
 ui2_test
 mark_fit_context_test
 ping_enemy_torpedo_test
+chart_bearing_contract_test

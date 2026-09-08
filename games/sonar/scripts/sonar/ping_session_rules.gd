@@ -4,6 +4,7 @@ extends RefCounted
 ## REQ-B2 抽取：主动 Ping 监听窗/丢弃规则（World._ping_session 纯函数部分）。
 ## 无状态——session dict 与 sim_time 由调用方传入，便于无头测试。
 
+
 ## 监听是否结束（REQ-04 固定监听窗）： - 窗口（configured_listen_window_s）
 ## 到期即结束——与登记了多少/多远回波无关，绝不因最远目标 τ 拉长 LISTENING；
 ## - 窗口内若全部登记回波已提前结算（无超窗残留）也可提前结束。

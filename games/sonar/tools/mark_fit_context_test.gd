@@ -26,8 +26,10 @@ func _initialize() -> void:
 	_assert(
 		fails,
 		absf(NavUtils.angle_diff(m1.measured_bearing_deg, m2.measured_bearing_deg)) < 1e-9,
-		"repeat free-click keeps identical bearing (%.4f vs %.4f)"
-		% [m1.measured_bearing_deg, m2.measured_bearing_deg],
+		(
+			"repeat free-click keeps identical bearing (%.4f vs %.4f)"
+			% [m1.measured_bearing_deg, m2.measured_bearing_deg]
+		),
 	)
 
 	# ---- 验收 4：同一 row_id+peak_id 点击 10 次，返回同一 Measurement ----
@@ -82,7 +84,9 @@ func _initialize() -> void:
 	)
 	_assert(fails, ui_src.find("fit_by_track_id") >= 0, "main_ui has per-track fit context")
 	_assert(
-		fails, ui_src.find("system_solution_by_track_id") >= 0, "main_ui has per-track system solution"
+		fails,
+		ui_src.find("system_solution_by_track_id") >= 0,
+		"main_ui has per-track system solution"
 	)
 
 	# ---- 验收 8：选中 M02 时，M01 的解不能用于 SOLUTION 发射 ----

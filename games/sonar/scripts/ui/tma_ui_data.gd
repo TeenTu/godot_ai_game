@@ -516,16 +516,19 @@ static func lob_entries(t: Track, col: Color, is_sel: bool, outlier_times: Dicti
 	var out: Array = []
 	for m in t.measurement_history:
 		var inlier: bool = not outlier_times.has(m.timestamp)
-		var a: float = 1.0 if is_sel else 0.12
+		# REQ-B3-04：不再把 selection alpha 烘进颜色；显式 is_track_selected
+		# 字段交给 ChartView 做 alpha = track × age × state 合成。
 		(
 			out
 			. append(
 				{
 					"origin": Vector2(m.observer_east_m, m.observer_north_m),
 					"bearing_deg": m.measured_bearing_deg,
-					"color": Color(col.r, col.g, col.b, a),
+					"color": Color(col.r, col.g, col.b, 1.0),
 					"id": t.track_id,
 					"track_id": t.track_id,
+					"is_track_selected": is_sel,
+					"sensor_id": m.sensor_id,
 					"time": m.timestamp,
 					"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
 					"inlier": inlier,
