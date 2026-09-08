@@ -90,3 +90,4 @@ fire_programming_test
 mc_hit_rate_test
 enemy_hit_gameover_test
 waterfall_display_test
+at_e2e_test
