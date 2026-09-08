@@ -10,11 +10,40 @@ extends RefCounted
 
 var fcc: FireControlContext = null
 var tracker: Tracker = null
+## REQ-B4-01/02：发射前编程控制器（可为 null = 旧默认路径）。
+var programmer: LaunchProgrammer = null
 
 
 func execute(ws: WeaponSystem, world: World, mode: String, selected_id: String) -> Dictionary:
 	var out: Dictionary = {"ok": false, "tp": null, "mode": mode, "reason": ""}
+	# REQ-B5-05：任务终局后一切发射命令拒绝（统一命令门）。
+	var mission_gate: String = world.command_reject_reason()
+	if mission_gate != "":
+		out["reason"] = mission_gate
+		return out
 	var own: RefCounted = world.world["own"]
+	# REQ-B4-01：编程控制器路径——程序由面板编辑项 + 推荐默认构建，
+	# SOLUTION 解绑定/stale 联锁在 build_program 内经 fcc 把关。
+	if programmer != null:
+		var pr: Dictionary = programmer.build_program(mode, ws, world, fcc, tracker, selected_id)
+		if not bool(pr.get("ok", false)):
+			out["reason"] = str(pr.get("reason", "?"))
+			return out
+		out["tp"] = (
+			ws
+			. fire_program(
+				pr["program"],
+				float(own.position_east_m),
+				float(own.position_north_m),
+				world.sim_time,
+				float(own.depth_m),
+			)
+		)
+		if out["tp"] == null:
+			out["reason"] = "program rejected by weapon system"
+			return out
+		out["ok"] = true
+		return out
 	if mode == "SOLUTION":
 		var gate: Dictionary = fcc.solution_for_fire(selected_id, world.sim_time)
 		if not bool(gate.get("ok", false)):

@@ -220,7 +220,6 @@ func _build_panel() -> void:
 	opt_speed.item_selected.connect(_on_speed)
 	row0.add_child(opt_speed)
 
-	# ---- Sonar Operator Layer（核心操作区，置于面板顶部）----
 	var op_sec := _make_section("Sonar Operator")
 	_op_panel = OperatorPanel.new()
 	_section_body(op_sec).add_child(_op_panel)
@@ -305,6 +304,7 @@ func _build_panel() -> void:
 	_panel.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
 	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
+	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
 
 	# §11.2 在水武器控制台（每枚鱼雷状态 + 线控按钮）。
 	_in_water_panel = InWaterWeaponPanel.new()

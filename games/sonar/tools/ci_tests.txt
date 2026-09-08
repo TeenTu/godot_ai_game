@@ -86,3 +86,5 @@ ui2_test
 mark_fit_context_test
 ping_enemy_torpedo_test
 chart_bearing_contract_test
+fire_programming_test
+mc_hit_rate_test
