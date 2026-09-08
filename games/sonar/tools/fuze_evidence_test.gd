@@ -9,8 +9,8 @@ extends SceneTree
 ##   FUZE-03  引信与制导/主动/自主解耦（Seeker 无锁定也能靠直航线引爆）。
 ##   FUZE-04  战果反馈层级：classify_detonation 纯函数（DETONATION_HEARD →
 ##            PROBABLE_HIT → PROBABLE_KILL），只吃净化证据+玩家航迹方位。
-##   FUZE-05  敌方鱼雷命中本艇 → own damage_state=damaged（Truth 侧），玩家
-##            收到 DETONATION_HEARD（INTERCEPT）净化证据。
+##   FUZE-05  敌方鱼雷命中本艇 → own damage_state=sunk + Game Over（REQ-B5），
+##            玩家收到 DETONATION_HEARD（INTERCEPT）净化证据（终局结算）。
 ##   FUZE-06  净化：player_evidence / 鱼雷事件 detail 无 target_id/位置/damage。
 ##   FUZE-07  未命中（燃料耗尽）不产 Debrief 台账、不产爆炸事件。
 ##
@@ -161,9 +161,9 @@ func _fuze_05_enemy_torpedo_hits_own(fails: Array) -> void:
 	# REQ 批：爆炸证据按 t_emit + R/c 到达——命中后留出传播窗口再收证据。
 	for i in range(20):
 		w.run_steps(1)
-	# Truth 侧：本艇 damaged（普通 UI 只会收到净化证据）。
+	# Truth 侧：REQ-B5（验收3）——本艇最终为 sunk（不再是可继续游玩的 damaged）。
 	_assert_bool(
-		fails, "FUZE-05b own damaged in Truth", str(w.world["own"].damage_state) == "damaged", true
+		fails, "FUZE-05b own sunk in Truth", str(w.world["own"].damage_state) == "sunk", true
 	)
 	# 净化证据：DETONATION_HEARD（INTERCEPT，无任何 target 身份）。
 	for e in w.player_evidence:

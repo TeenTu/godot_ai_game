@@ -5,7 +5,6 @@ const PANEL_W: float = 280.0
 const BT_H: float = 240.0
 const RES_H: float = 150.0
 
-# 底部诊断区显示模式（需求§一.1）：CLOSED / BT / RESIDUAL / SPLIT
 const DIAG_CLOSED: int = 0
 const DIAG_BT: int = 1
 const DIAG_RESIDUAL: int = 2
@@ -63,18 +62,17 @@ var _sim_accum: float = 0.0
 var _paused: bool = false
 var _processed_meas: int = 0
 var _track_colors: Dictionary = {}  # track_id -> Color
-# 脏标记：只有这些变化才重建 LOB/BT/残差数组
 var _dirty: bool = true
 var _last_meas_count: int = -1
 var _fire_mode: String = "SOLUTION"
 var _lowq_confirmed: bool = false
 var _own_track_pts: Array = []
 var _scenario_name: String = ""  # P0-08 实际加载的场景名
+var _game_over: GameOverOverlay = null  # REQ-B5-04 终局覆盖层
 
 
 func _ready() -> void:
 	var vp: Vector2 = get_viewport_rect().size
-	# Web 无系统 CJK 回退：主题继承到子集字体（见 start_menu 同步修复）。
 	theme = load("res://assets/fonts/ui_theme.tres")
 	set_size(vp)
 	resized.connect(_on_self_resized)
@@ -102,14 +100,12 @@ func _ready() -> void:
 	_ping_ctrl.tracker = tracker
 	_ping_ctrl.on_status = _update_status
 	_ping_ctrl.on_dirty = func(): _dirty = true
-	# 回波命中已喂 Tracker；是否 REFIT 由 REQ-02 fit_mode 裁决（不自动拟合）。
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
 	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
 	_ping_ctrl.on_assoc_undone = func(_tid: String):
 		_dirty = true
 		_update_status("Active echo association undone — REFIT REQUIRED")
 
-	# Operator Layer：关闭自动测量，Truth 只能经声场/阵列采样进入操作员视图
 	world.auto_measurements = false
 	op = OperatorSonar.new()
 	op.setup(world.world)
@@ -118,7 +114,6 @@ func _ready() -> void:
 	mark_flow.world = world
 	fire_exec.fcc = fcc
 	fire_exec.tracker = tracker
-	# S1-01：本艇无拖曳阵硬件时禁用 TOWED 选项（不提供虚构回退）
 	if _op_panel != null:
 		_op_panel.set_towed_available(op.towed_available())
 
@@ -141,7 +136,25 @@ func _ready() -> void:
 	if _depth_bar != null:
 		_depth_bar.bind(world)
 
+	# REQ-B5-04：Game Over 覆盖层（终局锁定 + 同 seed 重玩 / 回主菜单）。
+	_game_over = GameOverOverlay.new()
+	add_child(_game_over)
+	_game_over.restart_requested.connect(_on_game_restart)
+	_game_over.menu_requested.connect(_on_game_menu)
+	world.mission_ended.connect(
+		func(result: Dictionary):
+			_game_over.show_result(result, _scenario_name, UiContract.resolve_seed_override())
+	)
+
 	_update_status("ready: click a contact, then Auto Fit TMA")
+
+
+func _on_game_restart() -> void:
+	get_parent().call_deferred("_on_start", _scenario_name, UiContract.resolve_seed_override())
+
+
+func _on_game_menu() -> void:
+	get_parent().call_deferred("_show_menu")
 
 
 func _on_self_resized() -> void:
@@ -170,12 +183,10 @@ func _build_ui() -> void:
 	_chart.tick_selected.connect(_on_tick_selected)
 	_chart.threat_selected.connect(_on_threat_selected)
 	main_row.add_child(_chart)
-	# §11.4 侧边深度条（Surface/层带/Bot + OWN/TK/DCY 标记）。
 	_depth_bar = DepthBandDisplay.new()
 	main_row.add_child(_depth_bar)
 
 	var scroll := ScrollContainer.new()
-	# P1-03.1：侧栏宽度契约（min 300 / preferred 340 / max 420）。
 	scroll.custom_minimum_size = Vector2(UiContract.SIDEBAR_PREF_W, 0)
 	scroll.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -228,7 +239,6 @@ func _build_panel() -> void:
 		func(aid: String):
 			op.set_array(aid)
 			_update_status("Array -> " + aid)
-			# S1-03：不再自动布放——拖曳阵缆长完全由操作员命令控制
 	)
 	_op_panel.autocrew_toggled.connect(
 		func(on: bool): _update_status("Autocrew " + ("ON" if on else "OFF"))
@@ -240,13 +250,11 @@ func _build_panel() -> void:
 	_op_panel.ping_requested.connect(_on_ping_requested)
 	_op_panel.active_undo_requested.connect(_on_active_undo)
 	_op_panel.active_return_selected.connect(_on_active_return_selected)
-	# REQ-02：拟合模式 / Take Control / Apply 都是纯控制器状态机转发。
 	_op_panel.active_fit_mode_requested.connect(func(m: String): _ping_ctrl.set_fit_mode(m))
 	_op_panel.active_take_control_requested.connect(func(): _ping_ctrl.take_control())
 	_op_panel.active_apply_requested.connect(func(): _ping_ctrl.apply_pending())
 	_panel.add_child(op_sec)
 	_panel.add_child(HSeparator.new())
-	# S1-05：三态自动化最小控制（面板持有 AutomationController，自驱动 _process）。
 	var auto_panel := AutomationPanelUI.new()
 	auto_panel.bind(tracker, _auto_refit_track)
 	_section_body(_make_section("Automation")).add_child(auto_panel)
@@ -299,14 +307,12 @@ func _build_panel() -> void:
 	_btn_enter.pressed.connect(_on_enter_solution)
 	_panel.add_child(_btn_enter)
 
-	# ---- 武器面板（阶段四：只读 SystemSolution）----
 	_weapon_panel = WeaponPanelUI.new()
 	_panel.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
 	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
 	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
 
-	# §11.2 在水武器控制台（每枚鱼雷状态 + 线控按钮）。
 	_in_water_panel = InWaterWeaponPanel.new()
 	_panel.add_child(_in_water_panel)
 
@@ -317,12 +323,10 @@ func _build_panel() -> void:
 
 	_panel.add_child(HSeparator.new())
 
-	# 本艇机动/深度控制（航向/航速/深度 + 层带按钮，独立面板控行数）
 	_own_panel = OwnManeuverPanel.new()
 	_panel.add_child(_own_panel)
 
 	_panel.add_child(HSeparator.new())
-	# §8.5 诱饵发射面板 + §11.5 告警面板（净化证据）。
 	_cm_panel = CountermeasurePanel.new()
 	_cm_panel.status.connect(func(m: String): _update_status(m))
 	_panel.add_child(_cm_panel)
@@ -527,7 +531,6 @@ func _feed_new_measurements() -> void:
 	var ms: Array = world.measurements
 	while _processed_meas < ms.size():
 		var m: Measurement = ms[_processed_meas]
-		# 第三层过滤：miss 样本绝不吃进 Tracker/TMA。
 		if not m.detected:
 			_processed_meas += 1
 			continue
@@ -538,7 +541,6 @@ func _feed_new_measurements() -> void:
 				var t: Track = tracker.feed(m)
 				if t == null:
 					tracker.mark(m, "S")
-		# Operator 模式：测量已在 Mark/Autocrew 时喂 Tracker，这里只推游标。
 		_processed_meas += 1
 
 
@@ -574,13 +576,11 @@ func _rebuild_display_data() -> void:
 		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
 	)
 	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
-	# 选中 Track 最近有效测距 → 海图 range ring（同色）
 	if sel != null:
 		_chart.range_ring = TmaUiData.range_ring_data(sel, now, _color_for_track(sel.track_id))
 	else:
 		_chart.range_ring = {}
 
-	# 2) Bearing-Time（选中 track，标注 track_id）
 	var points: Array = []
 	var t_min: float = INF
 	var t_max: float = -INF
@@ -610,7 +610,6 @@ func _rebuild_display_data() -> void:
 		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
 	)
 
-	# 3) 残差图（REQ-06 单位分离：全量残差行，视图切换在 plot 内部）
 	var res: Array = []
 	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
 		res = last_fit.get("residuals", [])
@@ -728,7 +727,6 @@ func _update_panel() -> void:
 		% [world.sim_time, world.measurements.size(), int(_time_scale), " ⏸" if _paused else ""]
 	)
 	_lbl_status.text = status
-	# 选中接触标签始终同步（验收 10.1：无需滚动可见 selected contact + B/R/C/S）
 	var brcs: String = ""
 	if trial.range_m > 0.0:
 		brcs = (

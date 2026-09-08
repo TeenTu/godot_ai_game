@@ -21,29 +21,42 @@ func execute(ws: WeaponSystem, world: World, mode: String, selected_id: String) 
 	if mission_gate != "":
 		out["reason"] = mission_gate
 		return out
-	var own: RefCounted = world.world["own"]
 	# REQ-B4-01：编程控制器路径——程序由面板编辑项 + 推荐默认构建，
 	# SOLUTION 解绑定/stale 联锁在 build_program 内经 fcc 把关。
 	if programmer != null:
-		var pr: Dictionary = programmer.build_program(mode, ws, world, fcc, tracker, selected_id)
-		if not bool(pr.get("ok", false)):
-			out["reason"] = str(pr.get("reason", "?"))
-			return out
-		out["tp"] = (
-			ws
-			. fire_program(
-				pr["program"],
-				float(own.position_east_m),
-				float(own.position_north_m),
-				world.sim_time,
-				float(own.depth_m),
-			)
-		)
-		if out["tp"] == null:
-			out["reason"] = "program rejected by weapon system"
-			return out
-		out["ok"] = true
+		return _execute_programmed(ws, world, mode, selected_id, out)
+	return _execute_legacy(ws, world, mode, selected_id, out)
+
+
+func _execute_programmed(
+	ws: WeaponSystem, world: World, mode: String, selected_id: String, out: Dictionary
+) -> Dictionary:
+	var own: RefCounted = world.world["own"]
+	var pr: Dictionary = programmer.build_program(mode, ws, world, fcc, tracker, selected_id)
+	if not bool(pr.get("ok", false)):
+		out["reason"] = str(pr.get("reason", "?"))
 		return out
+	out["tp"] = (
+		ws
+		. fire_program(
+			pr["program"],
+			float(own.position_east_m),
+			float(own.position_north_m),
+			world.sim_time,
+			float(own.depth_m),
+		)
+	)
+	if out["tp"] == null:
+		out["reason"] = "program rejected by weapon system"
+		return out
+	out["ok"] = true
+	return out
+
+
+func _execute_legacy(
+	ws: WeaponSystem, world: World, mode: String, selected_id: String, out: Dictionary
+) -> Dictionary:
+	var own: RefCounted = world.world["own"]
 	if mode == "SOLUTION":
 		var gate: Dictionary = fcc.solution_for_fire(selected_id, world.sim_time)
 		if not bool(gate.get("ok", false)):
