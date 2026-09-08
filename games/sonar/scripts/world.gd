@@ -759,33 +759,24 @@ func issue_ping() -> bool:
 	var own: TruthEntity = world["own"]
 	var sensor: SensorArray = _ping_sensor()
 	var echoes: Array = []
-	for t in world["targets"]:
-		# S1-03C-P1-03/REQ-08：发射扇区——发射时刻固化方位，仅登记扇区内目标回波。
-		# 与被动链同源（SensorArray.in_coverage，覆盖/挡板盲区相对本艇艏向）；
-		# 扇区外目标不登记回波（窗口到期 NO_RETURN，绝不在到达时刻补判）。 未声明覆盖 = 全向 (0..360)，行为与旧实现一致。
-		var tgt_b: float = (
-			NavUtils
-			. bearing_to_true(
-				own.position_east_m,
-				own.position_north_m,
-				t.position_east_m,
-				t.position_north_m,
-			)
-		)
-		var rel_b: float = NavUtils.wrap360(tgt_b - own.course_deg)
-		if not sensor.in_coverage(rel_b):
-			continue
-		var rng_m: float = NavUtils.distance(
-			own.position_east_m, own.position_north_m, t.position_east_m, t.position_north_m
-		)
-		var tau_s: float = AcousticService.echo_travel_time_s(rng_m, ping_sound_speed_m_s)
+	# REQ-B2-01：统一反射体快照回波登记（排除规则见 collector/静态采集）。
+	for snap in _collect_active_reflectors(sensor):
+		snap.emitted_ping_id = _next_ping_id
+		snap.reflection_reference_time = sim_time
 		(
 			echoes
 			. append(
 				{
-					"target_id": str(t.id),
-					"arrive_t": sim_time + tau_s,
-					"range_ref_m": rng_m,  # 发射时刻登记距离（测距同源基准）
+					"target_id": snap.internal_token,  # 内部结算用，不进玩家信息流
+					"snapshot": snap,
+					"arrive_t":
+					(  # REQ-B2-02：发射时刻固化，结算只读快照
+						sim_time
+						+ AcousticService.echo_travel_time_s(
+							snap.reflection_range_ref_m, ping_sound_speed_m_s
+						)
+					),
+					"range_ref_m": snap.reflection_range_ref_m,  # 测距同源基准
 					"range_ref_time_s": sim_time,
 					"settled": false,
 					"dropped": false,  # 超出监听窗被丢弃（REQ-04，不可接收）
@@ -824,6 +815,23 @@ func issue_ping() -> bool:
 		)
 	)
 	return true
+
+
+## REQ-B2-01：统一主动反射体条目集（发射时刻）——来源/排除规则与覆盖/监听窗
+## 裁决见 ActiveReflectorCollector / ActiveReflectorSnapshot.collect。
+func _collect_active_reflectors(sensor: SensorArray) -> Array:
+	var entries: Array = (
+		ActiveReflectorCollector
+		. build_entries(
+			world["targets"],
+			world["target_acs"],
+			enemy_weapons,
+			decoys,
+			str(world["own"].id),
+			_torpedo_shadow_ac,
+		)
+	)
+	return ActiveReflectorSnapshot.collect(world["own"], sensor, ping_max_range_m(), entries)
 
 
 ## 未返回（未结算）回波数。Truth 钩子：仅供无头测试/统计， 禁止 UI 据此显示目标存在或回波倒计时（Truth 隔离，ISSUE-06）。
@@ -868,10 +876,10 @@ func _advance_ping_session() -> void:
 	_settle_due_echoes()
 	var st: String = str(_ping_session["state"])
 	if st == "LISTENING":
-		if _ping_listen_done():
+		if PingSessionRules.listen_done(_ping_session, sim_time):
 			# 监听窗结束：丢弃仍未到达/超出窗口的回波（REQ-04，不可接收），
 			# 再按已返回 detected 数判 RETURN/NO_RETURN。窗口不因远目标延长。
-			_drop_unsettled_echoes()
+			PingSessionRules.drop_unsettled(_ping_session)
 			_ping_session["state"] = (
 				"RETURN" if int(_ping_session["returned_count"]) > 0 else "NO_RETURN"
 			)
@@ -879,31 +887,6 @@ func _advance_ping_session() -> void:
 		# 冷却结束 → 回到 READY（会话清空，单在途释放）
 		if sim_time >= float(_ping_session["cooldown_until"]) - 1e-9:
 			_ping_session = {}
-
-
-## 监听是否结束（REQ-04 固定监听窗）： - 窗口（configured_listen_window_s）到期即结束——与登记了多少/多远回波
-##     无关，绝不因最远 Truth 目标 τ 拉长 LISTENING； - 窗口内若全部登记回波已提前结算（无超窗残留）也可提前结束。
-func _ping_listen_done() -> bool:
-	var echoes: Array = _ping_session["echoes"]
-	if sim_time >= float(_ping_session["listen_end_t"]) - 1e-9:
-		return true
-	if echoes.is_empty():
-		return false
-	for e in echoes:
-		if not bool(e["settled"]):
-			return false
-	return true
-
-
-## 监听窗到期：把仍未结算（未到达/超窗）的回波标记为 dropped（不可接收）。 它们不得再被结算（settled=true 拦截），也不进入 returned_count/测量流。
-func _drop_unsettled_echoes() -> void:
-	var echoes: Array = _ping_session["echoes"]
-	for e in echoes:
-		if bool(e["settled"]):
-			continue
-		e["settled"] = true
-		e["dropped"] = true
-		e["detected"] = false
 
 
 ## 结算已到点（sim_time >= arrive_t）的登记回波。测距以发射时刻登记的 range_ref_m 为基准（REQ-19 往返测距同源），到达时刻只做检测/测距噪声
@@ -927,14 +910,13 @@ func _settle_due_echoes() -> void:
 		if sim_time < float(e["arrive_t"]) - 1e-9:
 			continue
 		e["settled"] = true
-		var target: TruthEntity = null
-		for t in world["targets"]:
-			if str(t.id) == str(e["target_id"]):
-				target = t
-				break
-		if target == null:
+		# REQ-B2-02：结算只读发射时刻快照——不再遍历 world["targets"]，
+		# 绝不用当前 Truth 距离/方位回填；回波在途实体死亡仍按快照到达。
+		var snap = e.get("snapshot", null)
+		if snap == null:
 			continue
-		var ac: AcousticProfile = world["target_acs"][target.id]
+		var target: RefCounted = snap
+		var ac: RefCounted = snap.acoustic_profile
 		var m: Measurement = (
 			gen
 			. generate_active(

@@ -39,6 +39,11 @@ var active_ping_interval_s: float = 8.0
 
 ## ---- 接收机参数（Commit 6 被动/主动 Seeker 方程消费）
 var receiver_array_gain_db: float = 12.0
+
+# REQ-B2-03：鱼雷主动目标强度（第一版按频段常量 TS 标定）。鱼雷体积小于
+#潜艇，主动回波通常更弱（场景潜艇 TS 12–14 dB）；探测仍走主动声呐方程
+# + Pd 抽样，绝不"距离内必现"。
+var active_target_strength_db: float = 8.0
 var detection_threshold_db: float = 0.0
 var detection_k_d: float = AcousticService.DEFAULT_K_D
 var horizontal_beamwidth_deg: float = 120.0

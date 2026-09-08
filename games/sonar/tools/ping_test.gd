@@ -223,7 +223,8 @@ func _p3_far_no_echo(fails: Array) -> void:
 	var w := World.new()
 	w.load_scenario(sc)
 	_assert_bool(fails, "P3 ping transmitted", w.issue_ping(), true)
-	_assert_bool(fails, "P3 one echo registered", w.pending_echo_count() == 1, true)
+	# REQ-B2-01 契约演变：超窗实体发射时刻即不登记（旧实现登记后到期丢弃）。
+	_assert_bool(fails, "P3 far target excluded at registration", w.pending_echo_count() == 0, true)
 	# 窗口到期（t=15s）→ 超窗回波丢弃 → NO_RETURN；无 echo entry、无 pending
 	w.run_steps(_steps_until(16.0))  # t=16.0
 	_assert_eq(fails, "P3 NO_RETURN at window expiry", w.ping_state_name(), "NO_RETURN")
