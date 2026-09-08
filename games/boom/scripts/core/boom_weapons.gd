@@ -10,7 +10,7 @@ static var _cache: Array[BoomWeaponDef] = []
 static func _ensure_built() -> void:
 	if not _cache.is_empty():
 		return
-	# 泡泡枪：参数逐字等于现常量（FIRE_CD=0.22/BULLET_DMG=1/HP5/移速1.0）。
+	# 泡泡枪：M8 数值制（base_attack=10 / HP50 / 移速1.0，design_m8_attributes.md §5.1）。
 	_cache.append(_bubble_def())
 	_cache.append(_greatsword_def())
 
@@ -18,20 +18,21 @@ static func _ensure_built() -> void:
 static func _bubble_def() -> BoomWeaponDef:
 	var def := BoomWeaponDef.new()
 	def.id = "bubble"
-	def.display_name = "BUBBLE BLASTER"
-	def.icon_path = "res://assets/images/icons/weapon_bubble.png"
-	def.blurb = "Auto fire, easy to learn"
+	def.display_name = "镇夜灯·镇尺"
+	def.icon_path = "res://assets/images/icons/weapon_night_ruler.png"
+	def.blurb = "灵印连射，稳定易上手"
 	def.kind = BoomWeaponDef.AttackKind.RANGED
 	def.fire_cd = 0.22
 	def.proj_speed = 15.0
 	def.proj_life = 1.6
-	def.proj_dmg = 1
+	def.base_attack = 10  # M8 基础攻击力：每发普通子弹 10 点（≈3 发杀 W1 30HP）
+	def.proj_dmg = def.base_attack  # 与统一结算入口同源（M8 §5.2）
 	def.proj_color = Color("8ce6ff")
 	def.move_mult = 1.0
 	def.max_hp_bonus = 0
 	def.skill_kit_id = "core"
-	def.anim_set_id = "bubble_captain"
-	# M7R 泡泡树：共用 4（fan/chain/nuke/ring）+ bubble 专属 twin/rapid。
+	def.anim_set_id = "night_ruler"
+	# M7R 镇夜灯树：共用 4（fan/chain/nuke/ring）+ 远程专属 twin/rapid。
 	def.tree = {"skills": ["fan", "chain", "nuke", "ring", "twin", "rapid"]}
 	return def
 
@@ -39,9 +40,9 @@ static func _bubble_def() -> BoomWeaponDef:
 static func _greatsword_def() -> BoomWeaponDef:
 	var def := BoomWeaponDef.new()
 	def.id = "greatsword"
-	def.display_name = "GREATSWORD"
-	def.icon_path = "res://assets/images/icons/weapon_sword.png"
-	def.blurb = "Heavy swings hit hard"
+	def.display_name = "墨线判笔"
+	def.icon_path = "res://assets/images/icons/weapon_ink_judge_brush.png"
+	def.blurb = "挥墨成弧，势大力沉"
 	def.kind = BoomWeaponDef.AttackKind.MELEE
 	def.swing_windup = 0.24
 	def.swing_active = 0.12
@@ -49,14 +50,15 @@ static func _greatsword_def() -> BoomWeaponDef:
 	def.swing_arc_deg = 150.0
 	def.swing_range = 2.9
 	def.swing_max_targets = 6
-	def.swing_dmg = 3
+	def.base_attack = 30  # M8 基础攻击力：每个弧斩命中 30 点（一刀杀 W1 30HP）
+	def.swing_dmg = def.base_attack  # 与统一结算入口同源（M8 §5.2）
 	def.swing_knock = 6.0
 	def.swing_freeze = 0.05
 	def.move_mult = 0.85
-	def.max_hp_bonus = 2
+	def.max_hp_bonus = 20  # M8 近战生存补偿：50 + 20 = 70（§4.1）
 	def.skill_kit_id = "core"
-	def.anim_set_id = "greatsword_captain"
-	# M7R 大剑树：共用 4（fan/chain/nuke/heal）+ sword 专属 whirl/titan。
+	def.anim_set_id = "ink_judge_brush"
+	# M7R 判笔树：共用 4（fan/chain/nuke/heal）+ 近战专属 whirl/titan。
 	def.tree = {"skills": ["fan", "chain", "nuke", "heal", "whirl", "titan"]}
 	return def
 

@@ -1,6 +1,6 @@
 class_name BoomJelly
 extends Node3D
-## 果冻兵：最普通的追尾敌人。行为三段：
+## 百怪夜巡基础怪：纸偶与雾灵共用追尾行为。行为三段：
 ##   CHASE  —— 朝玩家直线慢走 + 随机停顿 + 相遇分离（由 BoomGame 处理外推），
 ##             移动带 sin 横摆与上下果冻颤，笨拙好笑。
 ##   WINDUP —— 距离足够后前摇 0.45s：身体胀大、冒红光、原地抖动（明示玩家躲）。
@@ -17,8 +17,12 @@ const LUNGE_TIME: float = 0.28
 const ATTACK_CD: float = 1.3
 const KNOCK_SPEED: float = 4.6
 const HIT_RADIUS: float = 0.95
-const MAX_HP: int = 3
+## M8（design_m8_attributes.md §9.1）：敌人生命 3 点制 → 30 点制；
+## 波次 HP = round(30 × WAVE_HP_MULTS[档位])，精英 ×3。
+const MAX_HP: int = 30
 const RADIUS: float = 0.6
+## M8（§10.1）：敌人基础攻击力；接触原始伤害 = base_attack + 波次攻击加成（§10.2）。
+const BASE_ATTACK: int = 8
 # ---- M5 表现时序常量（design_m5_weapons.md §6.2 / R3）----
 const SPAWN_POP_TIME: float = 0.18  # 出生弹出 0.18s（scale 0→1 TRANS_BACK 过冲）
 const FLASH_TIME: float = 0.10  # 受击白闪持续时间（_art.modulate 拉白）
@@ -48,7 +52,8 @@ var pause_t: float = 0.0
 var anim_t: float = 0.0
 var body_mat: StandardMaterial3D
 var _body: MeshInstance3D
-var _art: Sprite3D
+var _art: AnimatedSprite3D
+var _is_mist_spirit: bool = false
 var _telegraph: MeshInstance3D
 var _dead: bool = false
 ## M5 出生弹出 / 受击白闪 / R3 死亡窗 计时状态（时长常量见顶部 const 块）。
@@ -101,22 +106,68 @@ func _build_visuals(palette: Color) -> void:
 
 
 func _add_character_art() -> void:
-	var use_water_gunner := randi() % 4 == 0
-	var path := (
-		"res://assets/images/characters/water_gunner.png"
-		if use_water_gunner
-		else "res://assets/images/characters/jelly_scout.png"
+	_is_mist_spirit = randi() % 4 == 0
+	var idle_path := (
+		"res://assets/images/characters/mist_spirit_float.png"
+		if _is_mist_spirit
+		else "res://assets/images/characters/paper_doll_move_down.png"
 	)
-	if not ResourceLoader.exists(path):
+	if not ResourceLoader.exists(idle_path):
 		return
-	_art = Sprite3D.new()
-	_art.texture = load(path) as Texture2D
+	var frames := _build_enemy_frames()
+	if frames == null:
+		return
+	_art = AnimatedSprite3D.new()
+	_art.sprite_frames = frames
 	_art.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_art.pixel_size = 0.0031 if use_water_gunner else 0.00325
+	_art.pixel_size = 0.0032 if _is_mist_spirit else 0.00335
 	_art.position = Vector3(0.0, 0.72, 0.0)
 	_art.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 	_art.render_priority = 1
 	add_child(_art)
+	_art.play("float" if _is_mist_spirit else "move_down")
+
+
+func _build_enemy_frames() -> SpriteFrames:
+	var frames := SpriteFrames.new()
+	var strips: Dictionary = (
+		{"float": "mist_spirit_float"}
+		if _is_mist_spirit
+		else {
+			"move_down": "paper_doll_move_down",
+			"move_up": "paper_doll_move_up",
+			"move_left": "paper_doll_move_left",
+			"move_right": "paper_doll_move_right",
+		}
+	)
+	for action in strips:
+		var path := "res://assets/images/characters/%s.png" % (strips[action] as String)
+		if not ResourceLoader.exists(path):
+			return null
+		var texture := load(path) as Texture2D
+		if texture == null:
+			return null
+		frames.add_animation(action)
+		frames.set_animation_loop(action, true)
+		frames.set_animation_speed(action, 8.0 if _is_mist_spirit else 10.0)
+		for index in 4:
+			var atlas := AtlasTexture.new()
+			atlas.atlas = texture
+			atlas.region = Rect2(float(index) * 256.0, 0.0, 256.0, 256.0)
+			frames.add_frame(action, atlas)
+	return frames
+
+
+func _update_enemy_animation(toward: Vector3) -> void:
+	if _art == null or _is_mist_spirit or toward.length_squared() < 0.001:
+		return
+	var action := "move_down"
+	if absf(toward.x) > absf(toward.z):
+		action = "move_right" if toward.x > 0.0 else "move_left"
+	else:
+		action = "move_down" if toward.z > 0.0 else "move_up"
+	if _art.animation != action:
+		_art.play(action)
 
 
 func _build_telegraph() -> void:
@@ -334,6 +385,7 @@ func physics_update(
 	# 面向玩家（CHASE / WINDUP 都盯着人看）。
 	if toward.length_squared() > 0.001:
 		rotation.y = lerp_angle(rotation.y, atan2(toward.x, toward.z), minf(1.0, delta * 9.0))
+		_update_enemy_animation(toward)
 
 	position.x = clampf(position.x, -bounds_half_x, bounds_half_x)
 	position.z = clampf(position.z, -bounds_half_z, bounds_half_z)

@@ -13,7 +13,7 @@
 
 ## 2. 新游戏标准流程（SOP）
 
-1. **脚手架** `games/<name>/`：project.godot 复制 suika 模板（1280×720 横屏 / GL Compatibility / `TestHook` autoload / 字体 `assets/fonts/ui_subset.ttf` / emulate touch）；export_presets.cfg 直接复制 suika 的；.tscn 最小化（仅根节点挂 main.gd）
+1. **脚手架** `games/<name>/`：project.godot 复制 suika 模板（模板实际为 720×1280 竖屏 / GL Compatibility / `TestHook` autoload / 字体 `assets/fonts/ui_subset.ttf` / emulate touch）；export_presets.cfg 直接复制 suika 的；.tscn 最小化（仅根节点挂 main.gd）
 2. **逻辑先行**：`scripts/core/*.gd` 纯 GDScript 零 UI 依赖（可无头测试），数据在 `scripts/data/*.gd`；UI 全部 `main.gd` 的 `_ready()` 代码构建
 3. **无头自检** `tools/play_test.gd`：`extends SceneTree`，主场景冒烟 + 逻辑断言，输出 `PLAY_TEST result=PASS`
 4. **素材并行**（不阻塞开发）：写 `assets/ART_REQUEST.md` 规格清单 → 后台 `codex exec --approve-for-me "..."` 生成（Pillow 程序化绘制，指定隔离 venv python，禁止它装包/联网）→ 产出 `tools/gen_assets.py` + PNG + 拼图预览
@@ -24,7 +24,7 @@
 
 ## 3. CI/CD 流水线（.github/workflows/deploy.yml）
 
-- jobs：`lint`（gdlint+gdformat 全目录、素材 >512KB 门禁）→ `export-web`（遍历 `games/*/`，注入 shared/addons，`--import`，跑 play_test 冒烟，导出 `dist/<name>/`，生成索引页）→ `deploy`（GitHub Pages）
+- jobs：`lint`（gdlint+gdformat 全目录、分级素材门禁）→ `export-web`（遍历 `games/*/`，注入 shared/addons，`--import`，跑 play_test 冒烟，导出 `dist/<name>/`，生成索引页）→ `deploy`（GitHub Pages）。素材门禁默认 ≤512KB；`characters/` 与 `icons/` 可至 ≤1536KB，规则以 `.github/workflows/deploy.yml` 为准。
 - **新游戏零配置自动发布**：满足 project.godot + "Web" 导出预设 + tools/play_test.gd 即可
 - deploy 只依赖 export（不依赖 lint）；产物结构：CI=`dist/<name>/index.html`，本地=`build/web/index.html`
 - 体积门禁只查 `games/*/assets/images/`（注意此路径外不查）
@@ -76,6 +76,7 @@
 
 - **世界观**：灵印崩裂，百怪夜行；玩家是巡夜司的年轻女灯使，以背部灯匣收伏怪印、守住失序的人间夜路。不得再使用奶蛙、Bubble Captain、糖果嘉年华、果冻气球大战等已废弃设定。
 - **美术风格**：新国风轻 Q 原生 3D；实机角色为约 2.75–3 头身、俯视三分之四镜头、低面数可读剪影。设定图可以更精致，但不可把写实细节直接搬进实机模型。
-- **主角锚点**：黑发红绳、额间朱砂、深靛蓝短披风、米白短衣、朱红腰绳、背部暖黄方灯匣；武器必须独立于角色底图/模型，后续按独立视觉层制作。
+- **主角锚点**：黑发红绳、额间朱砂、深靛蓝短披风、米白短衣、朱红腰绳、背部暖黄方灯匣；武器必须独立于角色底图/模型，通过 `WeaponSocket` 与身体动作同帧绑定。
+- **首发武器**：逻辑 `bubble` 显示“镇夜灯·镇尺”并发射“灯火灵印”；逻辑 `greatsword` 显示“墨线判笔”，保留旧 id 仅为存档/技能树兼容。
 - **视觉语义**：冷靛夜景为底，暖灯黄标识玩家和安全，朱砂红用于封印/危险，青绿色用于灵异能量；材质以纸、布、木、旧铜为主，禁止糖果塑料、全屏暖橙和照片级写实。
 - **权威来源**：任何 Boom 的美术、角色、场景、UI 或素材任务，先读 `docs/art_bible_boom.md`；机器可读提示词读 `shared/assets/styles/boom-3d/contract.yaml`。

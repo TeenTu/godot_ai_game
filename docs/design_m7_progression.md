@@ -1,5 +1,7 @@
 # 《砰砰小队》M7 设计增量：局内成长三系统——属性 / 经验升级 / 技能树扩容（design_m7_progression.md）
 
+> **状态（2026-09-08）**：本文的属性与经验章节已由 `docs/design_m8_attributes.md` 统一重写；技能树、跨局金币和装备槽章节仍可参考。
+
 > 归属：`docs/design_boom.md` §9 里程碑 M7 · 前置：M4 波次系统（`design_m4_waves.md`）、
 > M5 多武器（`design_m5_weapons.md`）已上线 · 本文为设计与落地记录（代码已同步实现）。
 >
@@ -129,7 +131,7 @@ BoomStats
 | 5 | twin | TWIN CANNON | 主动·专属 | 6s | 300 | 双管重弹：平行 2 发（`cast_twin_shot`，错位 0.35 聚焦即重击） |
 | 6 | rapid | OVERDRIVE | 被动·专属 | - | 420 | 装备期普攻 CD ×0.8（射速 +25%，`skill_fire_cd_mult` 管线） |
 
-**sword 树（大剑）**
+**greatsword 树（大剑；`sword` 仅是动画/形态俗称）**
 
 | 树序 | id | 名称 | 类型 | CD | 解锁价 | 效果 |
 |---|---|---|---|---|---|---|
@@ -223,7 +225,7 @@ BoomStats
 - 选单注入 `skill_sys` 引用，技能配置区直接走逻辑层 API（解锁/装备零新管线）。
 - `_start_match_with` → `sim.set_weapon` + `skill_sys.set_weapon_tree`（同武器保留
   勾选）；`_on_game_over` → `BoomSave.save()` 落盘。
-- 技能 HUD（3 圆钮）布局不动，仍按 fan/chain/nuke 展示冷却（pool 全量可查）。
+- 技能 HUD（3 圆钮）布局不动，展示当前 `equipped` 槽位技能及其冷却；默认树首为 fan，装备 ring/twin/rapid/whirl 等技能时按装备结果重映射手势。
 
 ---
 

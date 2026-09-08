@@ -12,7 +12,7 @@ AI 生成的素材（或人工绘制/购买的）经本目录入库，游戏侧�
 shared/assets/
   styles/<style-id>/          # 风格契约库：每种美术风格一个目录
     contract.yaml             # 契约：风格描述 + prompt 模板 + 生成参数
-    anchor.png                # 风格锚点图（该风格的代表性成品，作图生图参考）
+    anchor.png                # 2D 风格锚点图（该风格的代表性成品，作图生图参考）
     _drafts/                  # 生成中的草稿（各渠道产出先丢这，筛选后入库，可不提交）
   images/<style-id>/<类别>/   # 共享素材（按风格 + 类别组织）
     characters/ items/ bg/ ui/ effects/
@@ -47,7 +47,7 @@ audio_packs=""                  # 可选：逗号分隔，注入 shared/assets/a
 ## 新增一种风格
 
 1. `mkdir shared/assets/styles/<style-id>`
-2. 写 `contract.yaml`（见下），放一张 `anchor.png` 锚点图
+2. 写 `contract.yaml`（见下），2D 风格放一张 `anchor.png` 锚点图；纯 3D/原生低模契约可在契约中声明 `anchor: null`，并改用 `references/` 下的多张视角锚点。
 3. 给目标游戏的 `project.godot` 加 `[game_kit] asset_style="<style-id>"`
 4. 跑 `bash tools/sync_shared.sh` 注入，游戏里用 `res://assets/_shared/...` 引用
 
@@ -59,7 +59,7 @@ name: 扁平卡通风
 description: >-
   类似割绳子/愤怒小鸟的扁平矢量卡通风。粗描边、高饱和纯色、
   无渐变滥用、无写实材质。适合休闲合成类游戏。
-anchor: anchor.png          # 锚点图路径（相对本目录）
+anchor: anchor.png          # 2D 锚点；纯 3D 契约可为 null，并在 description 说明替代锚点
 prompt_template: >-
   扁平卡通风游戏素材，{subject}，居中构图，粗黑色描边，
   高饱和纯色填充，简单几何形状，纯白背景，无文字无阴影，矢量风

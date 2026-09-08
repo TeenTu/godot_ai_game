@@ -14,7 +14,10 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 REFERENCE_DIR = ROOT / "assets" / "references" / "night_patrol_hero"
 OUTPUT_DIR = ROOT / "assets" / "images" / "characters" / "night_patrol"
+IMAGE_DIR = ROOT / "assets" / "images"
 REVIEW_DIR = ROOT / "assets" / "review"
+WEAPON_REFERENCE_DIR = ROOT / "assets" / "references" / "night_patrol_weapons"
+WEAPON_OUTPUT_DIR = IMAGE_DIR / "weapons" / "night_patrol"
 FRAME_PX = 256
 CONTENT_WIDTH = 224
 CONTENT_HEIGHT = 238
@@ -28,7 +31,53 @@ SPRITES = {
     "13_hero_melee_swing_body_source_strip.png": ("hero_melee_swing_body.png", 5, True),
     "14_hero_skill_cast_body_source_strip.png": ("hero_skill_cast_body.png", 4, False),
     "15_hero_knockdown_unarmed_source_strip.png": ("hero_knockdown_unarmed.png", 4, False),
+    "16_hero_move_up_source_strip.png": ("hero_move_up.png", 6, False),
+    "17_hero_move_left_source_strip.png": ("hero_move_left.png", 6, False),
+    "18_hero_move_right_source_strip.png": ("hero_move_right.png", 6, False),
 }
+
+STATIC_ASSETS = {
+    "19_paper_doll_enemy_source.png": ("characters/paper_doll.png", (512, 512), True),
+    "20_mist_spirit_enemy_source.png": ("characters/mist_spirit.png", (512, 512), True),
+    "21_spirit_seal_coin_source.png": ("icons/spirit_seal_coin.png", (256, 256), True),
+    "22_rainy_ancient_town_source.png": ("backgrounds/rainy_ancient_town.png", (512, 1080), False),
+    "23_wet_stone_tiles_source.png": ("floors/wet_stone_tiles.png", (512, 512), False),
+    "24_skill_fan_source.png": ("icons/skill_fan.png", (256, 256), True),
+    "25_skill_chain_source.png": ("icons/skill_chain.png", (256, 256), True),
+    "26_skill_nuke_source.png": ("icons/skill_nuke.png", (256, 256), True),
+}
+
+ENEMY_SPRITES = {
+    "27_paper_doll_move_down_source_strip.png": ("paper_doll_move_down.png", 4),
+    "28_paper_doll_move_up_source_strip.png": ("paper_doll_move_up.png", 4),
+    "29_paper_doll_move_left_source_strip.png": ("paper_doll_move_left.png", 4),
+    "30_paper_doll_move_right_source_strip.png": ("paper_doll_move_right.png", 4),
+    "31_mist_spirit_float_source_strip.png": ("mist_spirit_float.png", 4),
+}
+
+PROJECTILE_SPRITES = {
+    "05_projectile_lantern_seal_source_strip.png": ("candidates/projectile_lantern_seal.png", 5),
+    "06_projectile_paper_talisman_source_strip.png": (
+        "candidates/projectile_paper_talisman.png",
+        5,
+    ),
+    "07_projectile_ink_binding_source_strip.png": ("candidates/projectile_ink_binding.png", 5),
+}
+
+PROJECTILE_CONTENT_WIDTH = 220
+PROJECTILE_CONTENT_HEIGHT = 220
+
+WEAPON_SPRITES = {
+    "08_weapon_night_ruler_idle_source_strip.png": ("night_ruler_idle.png", 4, False),
+    "09_weapon_night_ruler_move_source_strip.png": ("night_ruler_move.png", 6, False),
+    "10_weapon_night_ruler_recoil_source_strip.png": ("night_ruler_recoil.png", 3, False),
+    "11_weapon_ink_brush_idle_source_strip.png": ("ink_brush_idle.png", 4, False),
+    "12_weapon_ink_brush_move_source_strip.png": ("ink_brush_move.png", 6, False),
+    "13_weapon_ink_brush_swing_source_strip.png": ("ink_brush_swing.png", 5, True),
+}
+
+WEAPON_CONTENT_WIDTH = 220
+WEAPON_CONTENT_HEIGHT = 220
 
 
 def remove_light_checker(image: Image.Image) -> Image.Image:
@@ -112,6 +161,102 @@ def build_strip(source: Path, destination: Path, frame_count: int, has_checker: 
     return strip
 
 
+def build_projectile_strip(source: Path, destination: Path, frame_count: int) -> Image.Image:
+    """Normalize a five-frame spirit-seal source row into a centered 256px strip."""
+    image = Image.open(source).convert("RGBA")
+    crops = frame_crops(image, frame_count)
+    max_width = max(crop.width for crop in crops)
+    max_height = max(crop.height for crop in crops)
+    scale = min(PROJECTILE_CONTENT_WIDTH / max_width, PROJECTILE_CONTENT_HEIGHT / max_height)
+    strip = Image.new("RGBA", (FRAME_PX * frame_count, FRAME_PX), (0, 0, 0, 0))
+    for index, crop in enumerate(crops):
+        resized = crop.resize(
+            (round(crop.width * scale), round(crop.height * scale)), Image.Resampling.LANCZOS
+        )
+        x = index * FRAME_PX + (FRAME_PX - resized.width) // 2
+        y = (FRAME_PX - resized.height) // 2
+        strip.alpha_composite(resized, (x, y))
+    palette = strip.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    palette.save(destination, optimize=True)
+    return strip
+
+
+def build_weapon_strip(
+    source: Path, destination: Path, frame_count: int, has_checker: bool
+) -> Image.Image:
+    """Normalize a weapon-only action row for the independent WeaponSocket layer."""
+    image = Image.open(source).convert("RGBA")
+    if has_checker:
+        image = remove_light_checker(image)
+    crops = frame_crops(image, frame_count)
+    max_width = max(crop.width for crop in crops)
+    max_height = max(crop.height for crop in crops)
+    scale = min(WEAPON_CONTENT_WIDTH / max_width, WEAPON_CONTENT_HEIGHT / max_height)
+    strip = Image.new("RGBA", (FRAME_PX * frame_count, FRAME_PX), (0, 0, 0, 0))
+    for index, crop in enumerate(crops):
+        resized = crop.resize(
+            (round(crop.width * scale), round(crop.height * scale)), Image.Resampling.LANCZOS
+        )
+        x = index * FRAME_PX + (FRAME_PX - resized.width) // 2
+        y = (FRAME_PX - resized.height) // 2
+        strip.alpha_composite(resized, (x, y))
+    palette = strip.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    palette.save(destination, optimize=True)
+    return strip
+
+
+def build_weapon_icon(source: Path, destination: Path) -> None:
+    """Extract the first idle frame for the weapon-selection card icon."""
+    frame = Image.open(source).convert("RGBA").crop((0, 0, FRAME_PX, FRAME_PX))
+    bounds = frame.getchannel("A").getbbox()
+    if bounds is None:
+        raise ValueError(f"Weapon idle frame is empty: {source}")
+    frame = frame.crop(bounds)
+    scale = min(224 / frame.width, 224 / frame.height)
+    resized = frame.resize(
+        (round(frame.width * scale), round(frame.height * scale)), Image.Resampling.LANCZOS
+    )
+    icon = Image.new("RGBA", (FRAME_PX, FRAME_PX), (0, 0, 0, 0))
+    icon.alpha_composite(resized, ((FRAME_PX - resized.width) // 2, (FRAME_PX - resized.height) // 2))
+    palette = icon.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    palette.save(destination, optimize=True)
+
+
+def build_static_asset(source: Path, destination: Path, target: tuple[int, int], transparent: bool) -> None:
+    """Crop a source image when appropriate, then fit/quantize for Web runtime."""
+    image = Image.open(source).convert("RGBA")
+    if transparent:
+        bounds = image.getchannel("A").getbbox()
+        if bounds is None:
+            raise ValueError(f"Transparent source has no visible pixels: {source}")
+        image = image.crop(bounds)
+        scale = min(target[0] / image.width, target[1] / image.height)
+        resized = image.resize(
+            (round(image.width * scale), round(image.height * scale)), Image.Resampling.LANCZOS
+        )
+        canvas = Image.new("RGBA", target, (0, 0, 0, 0))
+        canvas.alpha_composite(
+            resized, ((target[0] - resized.width) // 2, (target[1] - resized.height) // 2)
+        )
+        image = canvas
+    else:
+        image = image.resize(target, Image.Resampling.LANCZOS)
+    palette = image.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    palette.save(destination, optimize=True)
+
+
+def build_directional_idle(strip: Image.Image, output_name: str) -> None:
+    """Use the first planted running frame as a one-frame directional idle placeholder."""
+    frame = strip.crop((0, 0, FRAME_PX, FRAME_PX))
+    destination = OUTPUT_DIR / output_name
+    palette = frame.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
+    palette.save(destination, optimize=True)
+
+
 def build_review_preview(strips: list[tuple[str, Image.Image]]) -> None:
     """Create one dark contact sheet for a quick visual review of every action."""
     row_height = FRAME_PX + 16
@@ -132,6 +277,47 @@ def main() -> None:
             raise FileNotFoundError(f"Missing approved reference source: {source}")
         strip = build_strip(source, destination, frame_count, has_checker)
         generated.append((output_name, strip))
+        if output_name in {"hero_move_up.png", "hero_move_left.png", "hero_move_right.png"}:
+            idle_name = output_name.replace("move", "idle")
+            build_directional_idle(strip, idle_name)
+        print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
+    for source_name, (relative_output, target, transparent) in STATIC_ASSETS.items():
+        source = REFERENCE_DIR / source_name
+        destination = IMAGE_DIR / relative_output
+        if not source.exists():
+            raise FileNotFoundError(f"Missing approved reference source: {source}")
+        build_static_asset(source, destination, target, transparent)
+        print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
+    for source_name, (output_name, frame_count) in ENEMY_SPRITES.items():
+        source = REFERENCE_DIR / source_name
+        destination = IMAGE_DIR / "characters" / output_name
+        if not source.exists():
+            raise FileNotFoundError(f"Missing approved reference source: {source}")
+        build_strip(source, destination, frame_count, False)
+        print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
+    for source_name, (relative_output, frame_count) in PROJECTILE_SPRITES.items():
+        source = ROOT / "assets" / "references" / "night_patrol_weapons" / source_name
+        destination = IMAGE_DIR / "projectiles" / relative_output
+        if not source.exists():
+            raise FileNotFoundError(f"Missing approved reference source: {source}")
+        build_projectile_strip(source, destination, frame_count)
+        print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
+    weapon_outputs: dict[str, Path] = {}
+    for source_name, (output_name, frame_count, has_checker) in WEAPON_SPRITES.items():
+        source = WEAPON_REFERENCE_DIR / source_name
+        destination = WEAPON_OUTPUT_DIR / output_name
+        if not source.exists():
+            raise FileNotFoundError(f"Missing approved reference source: {source}")
+        build_weapon_strip(source, destination, frame_count, has_checker)
+        weapon_outputs[output_name] = destination
+        print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
+    for source_name, output_name in {
+        "night_ruler_idle.png": "weapon_night_ruler.png",
+        "ink_brush_idle.png": "weapon_ink_judge_brush.png",
+    }.items():
+        source = weapon_outputs[source_name]
+        destination = IMAGE_DIR / "icons" / output_name
+        build_weapon_icon(source, destination)
         print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
     build_review_preview(generated)
     print("generated assets/review/night_patrol_hero_animation_preview.png")

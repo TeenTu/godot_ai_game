@@ -233,10 +233,12 @@ func handle_slot(slot: int) -> void:
 
 
 ## 施放指定技能：CD 未就绪 / game 未注入 / 未知 id / 被动技能 静默忽略。
+## M8 技能急速（design_m8_attributes.md §3.1）：实际冷却 = 基础 CD ÷ haste_mult()。
 func cast_skill(skill_id: String) -> void:
 	var skill := get_skill(skill_id)
-	if skill == null or skill.is_passive or game == null or not skill.try_start():
+	if skill == null or skill.is_passive or game == null or not skill.is_ready():
 		return
+	skill.cooldown_left = skill.cooldown / maxf(0.01, game.stats.haste_mult())
 	var result: Variant = _dispatch_cast(skill_id)
 	skill_fired.emit(skill_id, result)
 

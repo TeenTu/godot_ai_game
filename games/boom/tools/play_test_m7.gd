@@ -16,7 +16,6 @@ func _init(p_host) -> void:
 
 func run_all() -> void:
 	test_assets()
-	test_stats()
 	test_experience()
 	test_skill_tree()
 	test_tree_passives()
@@ -37,36 +36,56 @@ func test_assets() -> void:
 		"res://assets/images/characters/night_patrol/hero_melee_swing_body.png",
 		"res://assets/images/characters/night_patrol/hero_skill_cast_body.png",
 		"res://assets/images/characters/night_patrol/hero_knockdown_unarmed.png",
-		"res://assets/images/icons/weapon_bubble.png",
-		"res://assets/images/icons/weapon_sword.png",
+		"res://assets/images/characters/night_patrol/hero_move_up.png",
+		"res://assets/images/characters/night_patrol/hero_move_left.png",
+		"res://assets/images/characters/night_patrol/hero_move_right.png",
+		"res://assets/images/characters/paper_doll.png",
+		"res://assets/images/characters/mist_spirit.png",
+		"res://assets/images/icons/spirit_seal_coin.png",
+		"res://assets/images/backgrounds/rainy_ancient_town.png",
+		"res://assets/images/floors/wet_stone_tiles.png",
+		"res://assets/images/projectiles/candidates/projectile_lantern_seal.png",
+		"res://assets/images/projectiles/candidates/projectile_paper_talisman.png",
+		"res://assets/images/projectiles/candidates/projectile_ink_binding.png",
+		"res://assets/images/icons/weapon_night_ruler.png",
+		"res://assets/images/icons/weapon_ink_judge_brush.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_idle.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_move.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_recoil.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_idle.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_move.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing.png",
 	]:
 		host._check(ResourceLoader.exists(asset_path), "M7 玩家素材可加载: %s" % asset_path)
+	var g: BoomGame = host._new_game()
+	var ranged_layer := g.player.get("_weapon_anim") as AnimatedSprite3D
+	host._check(ranged_layer != null, "镇夜灯·镇尺武器层已挂入 WeaponSocket")
+	g.player.play_anim_once("recoil")
+	g.player.physics_update(DT, 9.0, 5.0)
+	if ranged_layer != null:
+		host._check(ranged_layer.animation == "recoil", "远程身体/武器动作同帧切换 recoil")
+	g.set_weapon("greatsword")
+	var melee_layer := g.player.get("_weapon_anim") as AnimatedSprite3D
+	host._check(melee_layer != null, "墨线判笔武器层已挂入 WeaponSocket")
+	g.player.play_anim_once("swing")
+	g.player.physics_update(DT, 9.0, 5.0)
+	if melee_layer != null:
+		host._check(melee_layer.animation == "swing", "近战身体/武器动作同帧切换 swing")
+	g.free()
+	var seal_bullet := BoomBullet.new()
+	host._check(seal_bullet.get("_anim") != null, "灯火灵印雪碧层已接入投射物对象池")
+	seal_bullet.free()
 
 
 func test_stats() -> void:
 	print("[m7-stats]")
+	# M8 已重构属性系统（design_m8_attributes.md）：本节迁移至 play_test_m8.gd [m8-stats]。
+	var s := BoomStats.new()
+	host._check(s.move_mult() == 1.0 and s.dmg_mult() == 1.0, "初始属性零加成")
 	var g: BoomGame = host._new_game()
-	var s := g.stats
-	host._check(s.max_hp_bonus() == 0 and s.move_mult() == 1.0 and s.dmg_bonus() == 0, "初始属性零加成")
-	host._check(g.player.max_hp == 5 and absf(g.player.move_speed - 5.4) < 0.001, "零加成时机体与 M5 数值一致")
-	host._check(not g.apply_level_upgrade("hp"), "无升级点时拒绝应用")
-	g.pending_upgrades = 3
-	host._check(g.apply_level_upgrade("hp"), "消耗点数应用 hp 升级")
-	host._check(g.player.max_hp == 6 and g.player.hp == 6, "hp 升级 max_hp 5→6 并回复 1")
-	host._check(g.apply_level_upgrade("speed"), "消耗点数应用 speed 升级")
-	host._check(absf(g.player.move_speed - 5.4 * 1.08) < 0.001, "speed 升级移速 ×1.08")
-	host._check(g.apply_level_upgrade("dmg"), "消耗点数应用 dmg 升级")
-	host._check(g._bullet_dmg() == BoomGame.BULLET_DMG + 1, "dmg 升级单发伤害 +1")
-	host._check(not g.apply_level_upgrade("dmg"), "点数耗尽后拒绝应用")
-	host._check(g.stats.total_stacks() == 3, "总升级档数 = 3")
-	host._check(not g.stats.apply("nope"), "未知升级种类拒绝")
-	# 重置回归：成长状态随对局清零，机体回 M5 默认。
-	g.restart()
 	host._check(
-		g.stats.total_stacks() == 0 and g.exp_sys.level == 1 and g.pending_upgrades == 0,
-		"restart 清空成长状态"
+		g.player.max_hp == 50 and absf(g.player.move_speed - 5.4) < 0.001, "零加成时机体与 M8 数值一致"
 	)
-	host._check(g.player.max_hp == 5 and absf(g.player.move_speed - 5.4) < 0.001, "restart 机体回默认")
 	g.free()
 
 
@@ -203,14 +222,14 @@ func test_skill_tree() -> void:
 	host._check(sys.unlock_cost("whirl") == 300, "whirl（sword 专属）树序价 300")
 	host._check(sys.unlock_cost("titan") == 420, "titan（sword 专属被动）树序价 420")
 	host._check(sys.equipped == ["fan"], "切树后装备重置为该树已解锁")
-	# 9) heal 应急维修（sword 树）：解锁 → 缺 2 补 2；满血 0。
+	# 9) heal 应急维修（sword 树）：解锁 → 回复 min(REPAIR_HP=15, 缺口)；满血 0。
 	BoomSave.add_coins(200)
 	host._check(sys.try_unlock("heal"), "跨局金币解锁 heal")
 	host._check(sys.equip("heal"), "装备 heal")
-	g.player.hp = 2
+	g.player.hp = 40
 	var heal_slot: int = sys.equipped.find("heal")
 	sys.handle_slot(heal_slot)
-	host._check(g.player.hp == 4, "heal 回复 2 HP (hp=4)")
+	host._check(g.player.hp == 50, "heal 回复 min(15, 缺口10) → 满血 (hp=50)")
 	host._check(fired_box[0] == 3, "heal 触发 skill_fired（累计 twin+ring+heal）")
 	g.player.hp = g.player.max_hp
 	sys.reset()
@@ -278,7 +297,9 @@ func test_tree_passives() -> void:
 	g.blade_hit.connect(func(_pos: Vector3, dmg: int) -> void: blade_box[0] += dmg)
 	var hits: int = g.cast_whirl()
 	host._check(hits == 3, "whirl 命中斩距内 3 敌 (hits=%d)" % hits)
-	host._check(blade_box[0] == 12, "whirl 单体伤害 = swing_dmg+titan = 4 (总 %d)" % blade_box[0])
+	host._check(
+		blade_box[0] == 93, "whirl 单体伤害 = (base_attack 30 + titan 1)×1.0 = 31 (总 %d)" % blade_box[0]
+	)
 	# 4) whirl 命中封顶：WHIRL_MAX_TARGETS 截断。
 	g.restart()
 	g.set_weapon("greatsword")

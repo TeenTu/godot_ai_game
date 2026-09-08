@@ -6,21 +6,26 @@ extends Node
 const HUD_W: float = 720.0
 const HUD_H: float = 1280.0
 
+# 百怪夜巡场域：相对旧嘉年华场地（26×38）扩大到 52×76，面积约 4 倍。
+const ARENA_WIDTH: float = 52.0
+const ARENA_DEPTH: float = 76.0
+const ARENA_HALF_X: float = 26.0
+const ARENA_HALF_Z: float = 38.0
+
 # ---- M2 技能手势区 / 识别参数（design_m2_danmaku.md §2）----
 const SKILL_ZONE_X: float = 0.65  # 触点 x 归一 > 0.65 = 右侧技能手势区
 const TAP_MAX_TIME: float = 0.20
 const TAP_MAX_DIST: float = 14.0
 const SWIPE_MIN_DIST: float = 110.0
 
-const COL_ORANGE: Color = Color("ff8a3d")
-const COL_CYAN: Color = Color("2bd9ff")
 const COL_CREAM: Color = Color("fff6e8")
 const COL_GOLD: Color = Color("ffc93c")
-const COL_CORAL: Color = Color("ff7a5c")
-const COL_BUBBLE: Color = COL_CYAN
+const COL_SPIRIT_SEAL: Color = Color("f2b84b")
 const COL_ENEMY: Color = Color("57c84d")
 const COL_ACCENT: Color = COL_GOLD
 const COL_DANGER: Color = Color("ff3b4e")
+# M8 连续血条（design_m8_attributes.md §4.3）：米纸白→朱砂红渐变填充 + HP 文本。
+const HP_BAR_W: float = 460.0
 
 var sim: BoomGame
 var world: Node3D
@@ -41,8 +46,11 @@ var _score_label: Label
 var _wave_label: Label
 var _kills_label: Label
 var _coin_label: Label
-var _hp_blocks: Array = []
-var _hp_box: HBoxContainer
+var _hp_bar_fill: ColorRect
+var _hp_text: Label
+var _stats_btn: Button
+var _stats_panel: BoomStatsPanel
+var _level_panel: BoomLevelUpPanel
 var _vignette: ColorRect
 var _kill_white: ColorRect = null  # 击杀全屏泛白 overlay（峰值≤0.15，≤50ms 淡出）
 var _kill_white_a: float = 0.0
@@ -60,7 +68,6 @@ var _dmg_flash := 0.0
 var _hud: Control
 var _select: BoomWeaponSelect = null
 var _in_select := false
-var _hp_slot: ColorRect = null
 
 
 func _ready() -> void:
@@ -152,12 +159,13 @@ func _start_match_with(weapon_id: String) -> void:
 	_in_select = false
 	if _select != null:
 		_select.hide()
+	if _stats_btn != null:
+		_stats_btn.visible = true
 	if sim == null:
 		return
 	sim.set_weapon(weapon_id)
 	if skill_sys != null:
 		skill_sys.set_weapon_tree(weapon_id)
-	_rebuild_hp()
 	sim.begin_match()
 
 
@@ -277,7 +285,12 @@ func _test_hook_get_state() -> Dictionary:
 		"joy_by": jg["base_y"],
 		"joy_kx": jg["knob_x"],
 		"joy_ky": jg["knob_y"],
+		"paused": get_tree().paused,
 	}
+	# M8（§13.2）：完整属性快照——面板显示值与战斗结算同源。
+	var snap: Dictionary = sim.stats_snapshot()
+	for key in snap:
+		state["stat_" + key] = snap[key]
 	if skill_sys == null:
 		return state
 	var sk: Dictionary = skill_sys.get_state()
@@ -302,8 +315,10 @@ func _active_bullet_count() -> int:
 func _connect_signals() -> void:
 	sim.shot_fired.connect(_on_shot_fired)
 	sim.enemy_damaged.connect(_on_enemy_damaged)
+	sim.enemy_hit.connect(_on_enemy_hit)
 	sim.enemy_died.connect(_on_enemy_died)
 	sim.player_damaged.connect(_on_player_damaged)
+	sim.player_dodged.connect(_on_player_dodged)
 	sim.wave_started.connect(_on_wave_started)
 	sim.wave_cleared.connect(_on_wave_cleared)
 	sim.game_over.connect(_on_game_over)
@@ -371,16 +386,27 @@ func _spawn_skill_float(pos: Vector3, skill_id: String) -> void:
 
 
 func _on_shot_fired(pos: Vector3) -> void:
-	fx.puff(pos, COL_BUBBLE, 5)
+	fx.puff(pos, COL_SPIRIT_SEAL, 5)
 	audio.play("shoot", -14.0)
 
 
 func _on_enemy_damaged(pos: Vector3, _dir: Vector3) -> void:
-	fx.puff(pos, COL_BUBBLE, 6)
+	fx.puff(pos, COL_SPIRIT_SEAL, 6)
 	audio.play("hit", -9.0)
 	cam.add_trauma(0.05)
-	if hitnum != null:
-		hitnum.spawn(pos, str(BoomGame.BULLET_DMG), BoomHitNum.COLOR_DAMAGE)
+
+
+## M8（§6.3）：伤害数字走统一结算广播——暴击数字放大并用朱砂红高亮，
+## 普通伤害维持白色；不额外触发屏幕闪白（只增加轻微打击反馈）。
+func _on_enemy_hit(pos: Vector3, dmg: int, crit: bool) -> void:
+	if hitnum == null:
+		return
+	var color := BoomHitNum.COLOR_DAMAGE
+	var scale_p := 1.0
+	if crit:
+		color = Color("b84235")
+		scale_p = 1.35
+	hitnum.spawn(pos, str(dmg), color, scale_p)
 
 
 func _on_enemy_died(pos: Vector3) -> void:
@@ -415,10 +441,26 @@ func _on_skill_bullet_hit(pos: Vector3, skill_id: String) -> void:
 	_spawn_skill_float(pos, skill_id)
 
 
-## M7 升级播报（design_m7_progression.md §6）：toast + 提示音，属性点进 pending 由玩家消费。
+## M8 升级流程（design_m8_attributes.md §11.3）：获得升级 → 暂停战斗 →
+## 弹 3 张随机卡 → 选择后立即应用 → 恢复战斗。
 func _on_level_up(new_level: int) -> void:
 	audio.play("wave_clear", -8.0)
 	_show_toast("LEVEL UP!  LV %d" % new_level)
+	if sim == null or sim.pending_upgrades <= 0:
+		return
+	# headless（CI）与 web ?test=1 自动消费"伤害"卡，避免暂停阻塞测试管线。
+	if _is_test_mode() or DisplayServer.get_name() == "headless":
+		while sim.pending_upgrades > 0:
+			sim.apply_level_upgrade(BoomStats.KIND_DMG)
+		return
+	_level_panel.open_for(sim)
+
+
+## M8 闪避成功反馈（§8）：不扣血/不受击红屏/不受击音效，仅短暂 "DODGE" 提示。
+func _on_player_dodged(_from_pos: Vector3) -> void:
+	if hitnum != null:
+		var pos := sim.player.position + Vector3(0.0, 1.2, 0.0)
+		hitnum.spawn(pos, "DODGE", Color("5fc5ad"), 1.1)
 
 
 ## M7 heal 应急维修反馈：金色 "+N HP" 飘字 + 拾取音。
@@ -460,160 +502,9 @@ func _build_world() -> Node3D:
 	var w := Node3D.new()
 	w.name = "World"
 	add_child(w)
-
-	var floor_mesh := PlaneMesh.new()
-	floor_mesh.size = Vector2(26.0, 38.0)
-	var floor_mat := StandardMaterial3D.new()
-	floor_mat.albedo_color = Color("ffe9b8")
-	var floor_path := "res://assets/images/floors/carnival_tiles.png"
-	if ResourceLoader.exists(floor_path):
-		floor_mat.albedo_texture = load(floor_path) as Texture2D
-		floor_mat.uv1_scale = Vector3(3.0, 5.0, 1.0)
-	floor_mat.roughness = 0.95
-	var floor := MeshInstance3D.new()
-	floor.mesh = floor_mesh
-	floor.material_override = floor_mat
-	floor.rotation_degrees.x = -90.0
-	w.add_child(floor)
-
-	_add_environment(w)
-	_add_grid_accents(w)
-	_add_court_rails(w)
-	_add_exit_gate(w)
-	_add_carnival_decor(w)
-	_add_lights(w)
+	# M8 拆分：场地构建移至 BoomArena（scripts/core/boom_arena.gd）。
+	BoomArena.build(w)
 	return w
-
-
-func _add_environment(w: Node3D) -> void:
-	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("ffd9a3")
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("fff0d2")
-	env.ambient_light_energy = 0.72
-	env.reflected_light_source = Environment.REFLECTION_SOURCE_DISABLED
-	var world_env := WorldEnvironment.new()
-	world_env.environment = env
-	w.add_child(world_env)
-
-
-func _add_grid_accents(w: Node3D) -> void:
-	var line_mat := StandardMaterial3D.new()
-	line_mat.albedo_color = Color("ffb26b")
-	line_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	var thick := 0.035
-	for x in range(-12, 13, 4):
-		_add_box(w, Vector3(float(x), 0.012, 0.0), Vector3(thick, 0.01, 38.0), line_mat)
-	for z in range(-18, 19, 4):
-		_add_box(w, Vector3(0.0, 0.012, float(z)), Vector3(26.0, 0.01, thick), line_mat)
-
-
-func _add_court_rails(w: Node3D) -> void:
-	var rail_mat := _make_mat(COL_CORAL, 0.72)
-	var cap_mat := _make_mat(COL_CREAM, 0.55)
-	var hx := 5.0
-	var hz := 13.5
-	_add_box(w, Vector3(0.0, 0.32, -hz), Vector3(hx * 2.0 + 0.4, 0.64, 0.35), rail_mat)
-	_add_box(w, Vector3(0.0, 0.32, hz), Vector3(hx * 2.0 + 0.4, 0.64, 0.35), rail_mat)
-	_add_box(w, Vector3(-hx, 0.32, 0.0), Vector3(0.35, 0.64, hz * 2.0 + 0.4), rail_mat)
-	_add_box(w, Vector3(hx, 0.32, 0.0), Vector3(0.35, 0.64, hz * 2.0 + 0.4), rail_mat)
-	_add_box(w, Vector3(0.0, 0.67, -hz), Vector3(hx * 2.0 + 0.5, 0.10, 0.42), cap_mat)
-	_add_box(w, Vector3(0.0, 0.67, hz), Vector3(hx * 2.0 + 0.5, 0.10, 0.42), cap_mat)
-	_add_box(w, Vector3(-hx, 0.67, 0.0), Vector3(0.42, 0.10, hz * 2.0 + 0.5), cap_mat)
-	_add_box(w, Vector3(hx, 0.67, 0.0), Vector3(0.42, 0.10, hz * 2.0 + 0.5), cap_mat)
-
-
-func _add_exit_gate(w: Node3D) -> void:
-	var gold := _make_mat(COL_GOLD, 0.32, COL_GOLD)
-	var cream := _make_mat(COL_CREAM, 0.42)
-	_add_box(w, Vector3(-1.25, 1.15, -13.15), Vector3(0.38, 2.3, 0.55), gold)
-	_add_box(w, Vector3(1.25, 1.15, -13.15), Vector3(0.38, 2.3, 0.55), gold)
-	_add_box(w, Vector3(0.0, 2.2, -13.15), Vector3(2.9, 0.38, 0.55), cream)
-	_add_box(w, Vector3(0.0, 0.035, -12.75), Vector3(2.2, 0.04, 1.0), gold)
-
-
-func _add_carnival_decor(w: Node3D) -> void:
-	var colors: Array[Color] = [COL_ORANGE, COL_CYAN, COL_GOLD, COL_CORAL]
-	var spots: Array[Vector3] = [
-		Vector3(-5.45, 1.2, -9.0),
-		Vector3(5.45, 1.2, -5.0),
-		Vector3(-5.45, 1.2, 4.0),
-		Vector3(5.45, 1.2, 9.0),
-	]
-	for i in spots.size():
-		var p: Vector3 = spots[i]
-		_add_cylinder(w, p - Vector3(0.0, 0.72, 0.0), 0.05, 1.45, _make_mat(COL_CREAM, 0.7))
-		_add_sphere(w, p, 0.42, _make_mat(colors[i], 0.2, colors[i]))
-		_add_sphere(
-			w, p + Vector3(0.32, 0.18, 0.0), 0.28, _make_mat(colors[(i + 1) % colors.size()], 0.2)
-		)
-
-
-func _add_lights(w: Node3D) -> void:
-	var key := DirectionalLight3D.new()
-	key.light_color = Color("fff0d2")
-	key.light_energy = 1.0
-	key.rotation_degrees = Vector3(-52.0, -28.0, 0.0)
-	key.shadow_enabled = true
-	key.directional_shadow_max_distance = 30.0
-	w.add_child(key)
-	var fill := DirectionalLight3D.new()
-	fill.light_energy = 0.45
-	fill.rotation_degrees = Vector3(-60.0, 130.0, 0.0)
-	fill.shadow_enabled = false
-	w.add_child(fill)
-
-
-func _make_mat(
-	color: Color, roughness: float, emission: Color = Color.TRANSPARENT
-) -> StandardMaterial3D:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.roughness = roughness
-	if emission.a > 0.0:
-		mat.emission_enabled = true
-		mat.emission = emission
-		mat.emission_energy_multiplier = 0.45
-	return mat
-
-
-func _add_sphere(w: Node3D, pos: Vector3, radius: float, mat: StandardMaterial3D) -> void:
-	var m := MeshInstance3D.new()
-	var sphere := SphereMesh.new()
-	sphere.radius = radius
-	sphere.height = radius * 2.0
-	sphere.radial_segments = 12
-	sphere.rings = 6
-	m.mesh = sphere
-	m.material_override = mat
-	m.position = pos
-	w.add_child(m)
-
-
-func _add_cylinder(
-	w: Node3D, pos: Vector3, radius: float, height: float, mat: StandardMaterial3D
-) -> void:
-	var m := MeshInstance3D.new()
-	var cylinder := CylinderMesh.new()
-	cylinder.top_radius = radius
-	cylinder.bottom_radius = radius
-	cylinder.height = height
-	cylinder.radial_segments = 10
-	m.mesh = cylinder
-	m.material_override = mat
-	m.position = pos
-	w.add_child(m)
-
-
-func _add_box(w: Node3D, pos: Vector3, size: Vector3, mat: StandardMaterial3D) -> void:
-	var m := MeshInstance3D.new()
-	var box := BoxMesh.new()
-	box.size = size
-	m.mesh = box
-	m.material_override = mat
-	m.position = pos
-	w.add_child(m)
 
 
 # ------------------------------------------------------------------ HUD
@@ -685,10 +576,41 @@ func _build_hud() -> void:
 	_build_skill_hud(hud)
 	_build_waypoints(hud)
 	_build_game_over(hud)
+	_build_stats_ui(hud)
+
+
+## M8 属性面板入口 + 升级三选一卡面板（§12.2/§11.3）：隐藏态构建。
+func _build_stats_ui(hud: Control) -> void:
+	_stats_btn = Button.new()
+	_stats_btn.text = "STATS"
+	_stats_btn.position = Vector2(626, 112)
+	_stats_btn.size = Vector2(80, 64)
+	_stats_btn.add_theme_font_size_override("font_size", 22)
+	_stats_btn.focus_mode = Control.FOCUS_NONE
+	_stats_btn.pressed.connect(_open_stats_panel)
+	hud.add_child(_stats_btn)
+	_stats_panel = BoomStatsPanel.new()
+	_stats_panel.provider = sim.stats_snapshot
+	_stats_panel.closed.connect(_on_stats_panel_closed)
+	hud.add_child(_stats_panel)
+	_level_panel = BoomLevelUpPanel.new()
+	hud.add_child(_level_panel)
+
+
+## M8：打开属性面板并暂停（§12.2）。结算后/未开战不允许打开。
+func _open_stats_panel() -> void:
+	if sim == null or not sim.match_started or sim.is_over:
+		return
+	get_tree().paused = true
+	_stats_panel.open()
+
+
+func _on_stats_panel_closed() -> void:
+	get_tree().paused = false
 
 
 func _build_battle_frame(hud: Control) -> void:
-	var path := "res://assets/images/backgrounds/carnival_arena.png"
+	var path := "res://assets/images/backgrounds/rainy_ancient_town.png"
 	if not ResourceLoader.exists(path):
 		return
 	var frame := TextureRect.new()
@@ -696,7 +618,7 @@ func _build_battle_frame(hud: Control) -> void:
 	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
 	frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	frame.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	frame.modulate = Color(1.0, 1.0, 1.0, 0.16)
+	frame.modulate = Color(0.86, 0.91, 1.0, 0.30)
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(frame)
 
@@ -725,7 +647,7 @@ func _build_coin_hud(hud: Control) -> void:
 	coin.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	coin.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var coin_path := "res://assets/images/icons/coin.png"
+	var coin_path := "res://assets/images/icons/spirit_seal_coin.png"
 	if ResourceLoader.exists(coin_path):
 		coin.texture = load(coin_path) as Texture2D
 	hud.add_child(coin)
@@ -770,35 +692,21 @@ func _build_skill_hud(hud: Control) -> void:
 
 
 func _build_hp(hud: Control) -> void:
-	# 先垫暗色插槽，再叠亮块：段间自然留缝形成分段血条。
+	# M8 连续血条（§4.3）：暗槽 + 渐变填充 + "当前/最大"文本，替换旧分段方块。
 	var slot := ColorRect.new()
 	slot.color = Color(0.52, 0.20, 0.12, 0.72)
-	slot.size = Vector2(24 + float(sim.player.max_hp - 1) * 62.0 + 48.0, 34)
+	slot.size = Vector2(HP_BAR_W, 34)
 	slot.position = Vector2(14, 111)
 	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hud.add_child(slot)
-	_hp_slot = slot
-	for i in sim.player.max_hp:
-		var block := ColorRect.new()
-		block.color = COL_CREAM
-		block.size = Vector2(52, 24)
-		block.position = Vector2(24.0 + float(i) * 62.0, 116.0)
-		block.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		hud.add_child(block)
-		_hp_blocks.append(block)
-
-
-## M5：换武器后 max_hp 变化，按新上限重建血条（design §3.3 工程点 2，开波前重建一次）。
-func _rebuild_hp() -> void:
-	if _hp_slot != null and is_instance_valid(_hp_slot):
-		_hp_slot.free()
-		_hp_slot = null
-	for block in _hp_blocks:
-		if is_instance_valid(block):
-			block.free()
-	_hp_blocks.clear()
-	if _hud != null:
-		_build_hp(_hud)
+	_hp_bar_fill = ColorRect.new()
+	_hp_bar_fill.position = Vector2(18, 115)
+	_hp_bar_fill.size = Vector2(HP_BAR_W - 8.0, 26)
+	_hp_bar_fill.color = Color("f4e8d0")
+	_hp_bar_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hud.add_child(_hp_bar_fill)
+	_hp_text = _make_label(hud, "", 20, COL_CREAM, Vector2(14 + HP_BAR_W + 12.0, 113))
+	_hp_text.size = Vector2(130, 30)
 
 
 func _build_joystick(hud: Control) -> void:
@@ -858,7 +766,6 @@ func _on_retry() -> void:
 	if sim == null:
 		return
 	sim.restart()
-	_rebuild_hp()
 	_open_weapon_select()
 
 
@@ -972,11 +879,14 @@ func _hud_refresh() -> void:
 		var skill_state := skill_sys.get_state()
 		for skill_id in skill_btns:
 			(skill_btns[skill_id] as BoomSkillButton).set_cooldown(float(skill_state[skill_id]))
-	for i in _hp_blocks.size():
-		var block := _hp_blocks[i] as ColorRect
-		if block == null:
-			continue
-		block.color = COL_CREAM if i < sim.player.hp else Color(0.52, 0.20, 0.12, 0.20)
+	# M8 连续血条（§4.3）：宽度按 HP 比例填充，颜色米纸白→朱砂红渐变。
+	if _hp_bar_fill != null:
+		var max_hp: float = maxf(1.0, float(sim.player.max_hp))
+		var ratio: float = clampf(float(sim.player.hp) / max_hp, 0.0, 1.0)
+		_hp_bar_fill.size.x = (HP_BAR_W - 8.0) * ratio
+		_hp_bar_fill.color = Color("b84235").lerp(Color("f4e8d0"), ratio)
+	if _hp_text != null:
+		_hp_text.text = "%d / %d" % [sim.player.hp, sim.player.max_hp]
 
 # ------------------------------------------------------------------ 程序化控件
 

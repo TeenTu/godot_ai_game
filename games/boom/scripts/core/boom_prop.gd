@@ -1,6 +1,6 @@
 class_name BoomProp
 extends Node3D
-## 嘉年华场内可破坏物：木箱/泡泡桶。逻辑轻量，视觉完全程序化并遵循 boom-3d 色板。
+## 夜巡场内可破坏物：封印木匣/旧铜水缸。逻辑轻量，视觉完全程序化并遵循夜巡色板。
 
 const HIT_RADIUS: float = 0.72
 
@@ -51,14 +51,14 @@ func _build_crate() -> void:
 	box.size = Vector3(1.0, 0.9, 1.0)
 	body.mesh = box
 	body.position.y = 0.45
-	body.material_override = _mat(Color("c98a4e"), 0.78)
+	body.material_override = _mat(Color("604b46"), 0.78)
 	_visual.add_child(body)
 	var tape := MeshInstance3D.new()
 	var tape_box := BoxMesh.new()
 	tape_box.size = Vector3(1.04, 0.16, 1.04)
 	tape.mesh = tape_box
 	tape.position.y = 0.48
-	tape.material_override = _mat(Color("2bd9ff"), 0.25, true)
+	tape.material_override = _mat(Color("c59b55"), 0.25, true)
 	_visual.add_child(tape)
 
 
@@ -71,7 +71,7 @@ func _build_barrel() -> void:
 	cylinder.radial_segments = 16
 	body.mesh = cylinder
 	body.position.y = 0.5
-	body.material_override = _mat(Color("35a9e0"), 0.32)
+	body.material_override = _mat(Color("59677b"), 0.32)
 	_visual.add_child(body)
 	for y in [0.18, 0.82]:
 		var band := MeshInstance3D.new()
@@ -82,7 +82,7 @@ func _build_barrel() -> void:
 		ring.ring_segments = 8
 		band.mesh = ring
 		band.position.y = y
-		band.material_override = _mat(Color("fff6e8"), 0.45)
+		band.material_override = _mat(Color("d7c7a7"), 0.45)
 		_visual.add_child(band)
 
 
