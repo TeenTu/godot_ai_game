@@ -1,9 +1,8 @@
 extends SceneTree
-## REQ-0908 Batch 0 — P1-02 失败回归：瀑布 AGC 把普通噪声映射成黄/白。
-## 根因：WaterfallView 用滚动 P10/P99 全跨度映射热色表——平稳 AR(1) 噪声的
-## 高分位稳定进入橙/黄/白区，背景大面积暖色，可读性崩坏。
-## 契约（Batch 6）：噪声底跟踪 + 固定动态范围（默认 24dB）后，空场景
-## 暖色（黄/白）像素比例 ≤1%；显示参数不得改变任何物理数据。
+## REQ-0908 Batch 6 — 瀑布显示动态范围/AGC/调色板验收（REQ-B6-01..04）。
+## 契约：噪声底跟踪 + 固定动态范围（默认 24dB）后，空场景 300 行
+## 暖色（黄/白）像素比例 ≤1%；显示参数（palette/AGC/动态范围）只改显示，
+## 不得改变 rows/峰值/证据；BB/NB/DEMON 与阵列键独立 AGC 状态。
 ## Batch 6 落地时本测试加入 ci_tests.txt。
 
 const WF_SCRIPT := "res://scripts/ui/waterfall_view.gd"
@@ -17,7 +16,7 @@ func _initialize() -> void:
 	rng.seed = 90805
 	var rows: Array = []
 	var prev: float = 0.0
-	for r in range(120):
+	for r in range(300):
 		var vals := PackedFloat32Array()
 		vals.resize(180)
 		for c in range(180):
@@ -46,12 +45,111 @@ func _initialize() -> void:
 			"empty-scene warm pixel ratio <= 1%% (got %.2f%%)" % (ratio * 100.0),
 		)
 
-	# ---- 契约：AGC 模式与调色板控件（Batch 6 新增 API）----
-	_assert(fails, wf.has_method("set_agc_mode"), "WaterfallView.set_agc_mode exists")
-	_assert(fails, wf.has_method("set_palette"), "WaterfallView.set_palette exists")
+	# ---- REQ-B6-01：显示参数只改显示，绝不触碰 rows（物理数据逐位不变）----
+	var rows_snapshot: Array = rows.duplicate()
+	wf.set_palette("GRAYSCALE")
+	wf._rebuild_image()
+	var img_gray: Image = wf._img
+	wf.set_palette("BLUE")
+	wf._rebuild_image()
+	var img_blue: Image = wf._img
+	_assert(
+		fails,
+		not img_gray.get_pixel(10, 5).is_equal_approx(img_blue.get_pixel(10, 5)),
+		"palette switch changes pixels",
+	)
+	_assert(fails, _rows_equal(rows_snapshot, rows), "palette switch leaves rows untouched")
+
+	wf.set_agc_mode("OFF")
+	wf._rebuild_image()
+	var img_off: Image = wf._img
+	wf.set_agc_mode("SLOW")
+	wf._rebuild_image()
+	_assert(fails, _rows_equal(rows_snapshot, rows), "AGC mode switch leaves rows untouched")
+	_assert(
+		fails,
+		not img_off.get_pixel(10, 5).is_equal_approx(img_gray.get_pixel(10, 5)),
+		"AGC OFF vs SLOW remap display differently",
+	)
+
+	# ---- REQ-B6-04-3：弱目标（背景 +10dB）跨行连续可追踪且不发白 ----
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 90806
+	var rows2: Array = []
+	var prev2: float = 0.0
+	for r2 in range(300):
+		var vals2 := PackedFloat32Array()
+		vals2.resize(180)
+		for c2 in range(180):
+			prev2 = 0.6 * prev2 + 3.0 * rng2.randfn(0.0, 1.0)
+			vals2[c2] = prev2
+		# 弱目标固定在 90° 列（+10dB），跨多行连续。
+		vals2[135] = prev2 + 0.0 + 10.0
+		rows2.append({"t": float(r2), "values": vals2})
+	var wf2: Control = load(WF_SCRIPT).new()
+	wf2.set_rows(rows2)
+	wf2._rebuild_image()
+	var img2: Image = wf2._img
+	var tgt_lum: float = 0.0
+	var bg_lum: float = 0.0
+	var last_row_y: int = img2.get_height() - 1
+	for y2 in range(last_row_y - 100, last_row_y):
+		var pt: Color = img2.get_pixel(135, y2)
+		var pb: Color = img2.get_pixel(40, y2)
+		tgt_lum += 0.3 * pt.r + 0.6 * pt.g + 0.1 * pt.b
+		bg_lum += 0.3 * pb.r + 0.6 * pb.g + 0.1 * pb.b
+	var n_rows: float = 100.0
+	_assert(fails, tgt_lum > bg_lum * 1.5, "weak target track clearly brighter than background")
+	_assert(
+		fails,
+		tgt_lum / n_rows < 0.9,
+		"weak target does not saturate to white (avg lum %.2f)" % (tgt_lum / n_rows),
+	)
+
+	# ---- REQ-B6-02：display_key 隔离——BOW→TOWED→BOW 同行像素完全一致 ----
+	var wf3: Control = load(WF_SCRIPT).new()
+	wf3.set_display_key("bb_BOW")
+	wf3.set_rows(rows)
+	wf3._rebuild_image()
+	var img_bow1: Image = wf3._img
+	wf3.set_display_key("bb_TOWED")
+	wf3.set_rows(rows)
+	wf3._rebuild_image()
+	wf3.set_display_key("bb_BOW")
+	wf3.set_rows(rows)
+	wf3._rebuild_image()
+	var img_bow2: Image = wf3._img
+	var same: bool = img_bow1.get_size() == img_bow2.get_size()
+	if same:
+		for y3 in range(0, img_bow1.get_height(), 7):
+			for x3 in range(0, img_bow1.get_width(), 13):
+				if not img_bow1.get_pixel(x3, y3).is_equal_approx(img_bow2.get_pixel(x3, y3)):
+					same = false
+					break
+			if not same:
+				break
+	_assert(fails, same, "BOW->TOWED->BOW rebuild reproduces identical pixels")
 
 	wf.free()
+	wf2.free()
+	wf3.free()
 	_finish(fails)
+
+
+func _rows_equal(a: Array, b: Array) -> bool:
+	if a.size() != b.size():
+		return false
+	for i in range(a.size()):
+		var va: PackedFloat32Array = a[i]["values"]
+		var vb: PackedFloat32Array = b[i]["values"]
+		if va.size() != vb.size():
+			return false
+		for c in range(va.size()):
+			if not is_equal_approx(va[c], vb[c]):
+				return false
+		if not is_equal_approx(float(a[i]["t"]), float(b[i]["t"])):
+			return false
+	return true
 
 
 func _assert(fails: Array, cond: bool, name: String) -> void:

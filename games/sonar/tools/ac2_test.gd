@@ -223,7 +223,7 @@ func _ac6_display_isolation(fails: Array) -> void:
 		true
 	)
 	var v3 := WaterfallView.new()
-	v3.agc_enabled = false
+	v3.agc_mode = "OFF"  # REQ-B6-02：AGC 模式化后等价固定量程
 	v3.rows = [row]
 	v3._img_dirty = true
 	v3._rebuild_image()
