@@ -49,7 +49,7 @@ jobs:
           gdformat --check games/ shared/
       - name: Asset size gate (docs/asset_pipeline.md)
         run: |
-          # 素材体积红线（分级，design_m5_weapons.md §6/§7 横条动画放宽）：
+          # 素材体积红线（仓库 CI 规范，分级；不是某个里程碑文档的规则）：
           #   默认：shared/assets 与 games/*/assets/images 单张 PNG >512KB 不合格；
           #   放宽：games/*/assets/images/characters|icons 下允许至 1536KB（1.5MB），
           #        因为 2048×256 透明底 256 色横条压后可能到 800KB-1.2MB。

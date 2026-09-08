@@ -38,7 +38,7 @@ func _build() -> void:
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(dim)
-	var backdrop_path := "res://assets/images/backgrounds/carnival_arena.png"
+	var backdrop_path := "res://assets/images/backgrounds/rainy_ancient_town.png"
 	if ResourceLoader.exists(backdrop_path):
 		var backdrop := TextureRect.new()
 		backdrop.texture = load(backdrop_path) as Texture2D
@@ -50,7 +50,7 @@ func _build() -> void:
 		add_child(backdrop)
 		move_child(backdrop, 0)
 
-	var title := _make_label("BUBBLE BREAK!", 52, Color("ff8a3d"), Vector2(100, 360))
+	var title := _make_label("夜巡结界告破!", 52, Color("f2b84b"), Vector2(100, 360))
 	title.size = Vector2(520, 70)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 

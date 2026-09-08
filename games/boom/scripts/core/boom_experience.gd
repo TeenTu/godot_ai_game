@@ -8,7 +8,7 @@ extends RefCounted
 signal leveled_up(new_level: int)
 
 const KILL_XP: int = 1  # 普通击杀经验
-const ELITE_XP: int = 8  # 精英击杀经验（design §4.2）
+const ELITE_XP: int = 6  # 精英击杀经验（M8 review 后由 8 下调，design_m8_attributes.md §11.2）
 const LEVEL_BASE: int = 5  # 升到 2 级所需经验
 const LEVEL_STEP: int = 4  # 每级递增（线性曲线）
 const LEVEL_CAP: int = 20  # 等级封顶（单局 30 配额波内自然到不了，防刷红线）

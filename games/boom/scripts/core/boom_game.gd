@@ -2,23 +2,26 @@ class_name BoomGame
 extends Node3D
 ## 《B-Boom》核心对局（零 UI 依赖，可无头逻辑测试）。
 ##   - 玩家：摇杆输入驱动（input_move），自动瞄准最近敌人、自动开火。
-##   - 敌人：果冻兵（BoomJelly），波次刷怪，前摇 + 冲撞。
-##   - 子弹：对象池，命中扣血 + 击退；击杀计分连击。
+##   - 敌人：纸偶/雾灵（BoomJelly），波次刷怪，前摇 + 冲撞。
+##   - 灵印投射物：对象池，命中扣血 + 击退；击杀计分连击。
 ##   - 手感：击杀顿帧（0.5s 内最多一次全停）、击退、squash 由敌人自身做。
 ## 本类只发信号 + 暴露数据；视觉表现（粒子/震屏/音效/HUD）由 main.gd 订阅。
 
 signal enemy_damaged(pos: Vector3, dir: Vector3)
+## M8 统一输出结算广播（§5/§6）：dmg=最终结算伤害，crit=是否暴击。
+signal enemy_hit(pos: Vector3, dmg: int, crit: bool)
 signal enemy_died(pos: Vector3)
 signal shot_fired(pos: Vector3)
 signal player_damaged(amount: int, from_pos: Vector3)
+## M8 闪避成功（§8）：不扣血/不无敌帧/不受击反馈，仅消耗敌人攻击冷却。
+signal player_dodged(from_pos: Vector3)
 signal wave_cleared(wave: int, bonus: int)
 signal wave_started(wave: int)
 signal game_over(final_score: int)
 signal prop_broken(pos: Vector3, coin_value: int)
 ## 技能弹道命中（非普通弹）：pos=命中点，skill_id=弹道归属（§4.2 fan 每命中飘字）。
 signal skill_bullet_hit(pos: Vector3, skill_id: String)
-## M5 大剑弧斩命中（§4.2/§4.3）：pos=命中点，dmg=单目标伤害（=swing_dmg）。
-## 大剑伤害不走 enemy_damaged 弹道飘字管线，表现层按此信号做重击反馈。
+## M5 大剑弧斩命中（§4.2/§4.3）：pos=命中点，dmg=单目标伤害（=swing_dmg）；不走 enemy_damaged 飘字管线，表现层按此信号做重击反馈。
 signal blade_hit(pos: Vector3, dmg: int)
 ## M7 经验入账（击杀后广播，amount 为本次获得经验）。
 signal exp_gained(amount: int)
@@ -32,12 +35,12 @@ signal player_healed(amount: int)
 ## M5 挥斩 FSM（design_m5_weapons.md §4.2：蓄 → 抡 → 收，纯逻辑可无头断言）。
 enum SwingState { NONE, WINDUP, ACTIVE, RECOVER }
 
-const PLAYER_BOUND_X: float = 3.6
-const PLAYER_BOUND_Z: float = 9.5
-const ENEMY_BOUND_X: float = 4.4
-const ENEMY_BOUND_Z: float = 11.5
+# 百怪夜巡扩展场域：玩家/敌人边界与 20×54 内场栏杆保持约 0.6m 安全边距。
+const PLAYER_BOUND_X: float = 8.8
+const PLAYER_BOUND_Z: float = 25.8
+const ENEMY_BOUND_X: float = 9.4
+const ENEMY_BOUND_Z: float = 26.4
 const KILL_SCORE: int = 10
-const BULLET_DMG: int = 1
 const FIRE_CD: float = 0.22
 const BULLET_POOL_SIZE: int = 24
 const COMBO_WINDOW: float = 2.0
@@ -97,10 +100,13 @@ const MAX_ALIVE_CAP: int = 12  # 同屏上限封顶 9→12（§6 联动）
 
 # ---- M7 成长系统（design_m7_progression.md）----
 const RING_COUNT: int = 12  # ring 环形弹幕发数
-const REPAIR_HP: int = 2  # heal 应急维修单次回复量
 const TWIN_COUNT: int = 2  # M7R twin 双管重弹发数（平行弹，落点聚合即重击）
 const TWIN_SPACING: float = 0.35  # twin 双弹横向间距（世界单位）
 const WHIRL_MAX_TARGETS: int = 8  # M7R whirl 旋风斩单次命中上限
+
+# ---- M8 属性与战斗数值（design_m8_attributes.md）----
+const REPAIR_HP: int = 15  # heal 单次回复量（§4.2）
+const ENEMY_ATTACK_BONUS_CAP: int = 4  # 波次攻击加成封顶（§10.2）
 
 var player: BoomPlayer
 var enemies: Array = []
@@ -125,8 +131,8 @@ var match_started: bool = false
 var stats: BoomStats
 var exp_sys: BoomExperience
 var pending_upgrades: int = 0
-## M7R 被动技能加成（BoomSkillSystem._refresh_passives 写入；restart 归零）：
-## rapid → 普攻 CD ×skill_fire_cd_mult；titan → 弧斩/旋风斩伤害 +skill_swing_dmg_bonus。
+## M7R 被动加成（_refresh_passives 写入；restart 归零）：
+## rapid → 普攻 CD ×skill_fire_cd_mult；titan → 弧斩/旋风斩 +skill_swing_dmg_bonus。
 var skill_fire_cd_mult: float = 1.0
 var skill_swing_dmg_bonus: int = 0
 
@@ -250,25 +256,31 @@ func set_weapon(id: String) -> void:
 	player.apply_weapon(weapon_cfg)
 	_apply_stats_to_player()
 	player.hp = player.max_hp
-	_fire_cd = weapon_cfg.fire_cd
+	_fire_cd = _fire_interval()
 	_swing_state = SwingState.NONE
 	_swing_t = 0.0
 
 
-# ------------------------------------------------------------------ M7 成长
+# ------------------------------------------------------------------ M8 属性/结算
 
 
-## 升级回调：每级累积 1 个待消费升级点（消费走 apply_level_upgrade）。
+## 升级回调：每级累积 1 个待消费升级点（apply_level_upgrade 消费）。
 func _on_leveled_up(new_level: int) -> void:
 	pending_upgrades += 1
 	level_up.emit(new_level)
 
 
-## 消费 1 个升级点应用属性（kind: "hp"/"speed"/"dmg"）；无点数/未知 kind 拒绝。
+## 消费 1 个升级点应用升级卡（kind 见 BoomStats.KINDS）。
+## KIND_HEAL 为一次性效果：回满当前生命、不进堆叠（§4.2）；未知 kind / 无点数拒绝。
 func apply_level_upgrade(kind: String) -> bool:
 	if pending_upgrades <= 0:
 		return false
-	if not stats.apply(kind):
+	if kind == BoomStats.KIND_HEAL:
+		var healed: int = player.max_hp - player.hp
+		player.hp = player.max_hp
+		if healed > 0:
+			player_healed.emit(healed)
+	elif not stats.apply(kind):
 		return false
 	pending_upgrades -= 1
 	_apply_stats_to_player()
@@ -276,22 +288,42 @@ func apply_level_upgrade(kind: String) -> bool:
 	return true
 
 
-## 把 stats 加成落到玩家机体（武器基础值之上；零加成时与 M5 数值逐字一致）。
+## 把 stats 加成落到玩家机体；M8 §3.2：最大生命仅由武器决定，不随等级成长。
 func _apply_stats_to_player() -> void:
 	player.move_speed = BoomPlayer.MOVE_SPEED * weapon_cfg.move_mult * stats.move_mult()
-	var new_max: int = maxi(
-		1, BoomPlayer.BASE_MAX_HP + weapon_cfg.max_hp_bonus + stats.max_hp_bonus()
+	player.max_hp = maxi(1, BoomPlayer.BASE_MAX_HP + weapon_cfg.max_hp_bonus)
+
+
+## M8 基础攻击力（§5.1）：当前武器决定的初始攻击参数。
+func _base_attack() -> int:
+	return weapon_cfg.base_attack
+
+
+## M8 最终攻击力（§5.2）：floor(基础攻击力 × (1 + 伤害加成倍率))。
+func _final_attack() -> int:
+	return BoomCombatMath.final_attack(_base_attack(), stats.dmg_mult())
+
+
+## 当前普攻间隔（秒）：武器 CD ×rapid 被动 ÷攻速倍率（§3.1）；修复 M7R rapid 只写不读未生效的缺口。
+func _fire_interval() -> float:
+	return weapon_cfg.fire_cd * skill_fire_cd_mult / stats.aspd_mult()
+
+
+## M8 暴击判定（§6.3）：逐目标独立掷一次暴击。返回 [dmg, crit]。
+func _roll_crit(final_dmg: int) -> Array:
+	return BoomCombatMath.roll_crit(final_dmg, stats.crit_rate(), stats.crit_dmg_mult())
+
+
+## M8 统一输出结算入口（§5.2/§6）：所有输出经这里得最终伤害与暴击。返回 [dmg, crit]。
+func _roll_attack(p_base: int) -> Array:
+	return BoomCombatMath.roll_attack(
+		p_base, stats.dmg_mult(), stats.crit_rate(), stats.crit_dmg_mult()
 	)
-	if new_max != player.max_hp:
-		var gain: int = new_max - player.max_hp
-		player.max_hp = new_max
-		if gain > 0:
-			player.hp = mini(player.hp + gain, player.max_hp)
 
 
-## 当前单发伤害（BULLET_DMG + dmg 升级加成；默认零加成 = 存量数值）。
-func _bullet_dmg() -> int:
-	return BULLET_DMG + stats.dmg_bonus()
+## M8 属性快照（§12.3）：面板与 test_hook 共用，数值来自实际结算函数。
+func stats_snapshot() -> Dictionary:
+	return BoomCombatMath.build_snapshot(stats, player, exp_sys, _base_attack(), _fire_interval())
 
 
 ## M5：开战（= 原 restart 后半段 _spawn_props + _begin_wave；R9 与构造解耦）。
@@ -329,7 +361,7 @@ func _tick_ranged(delta: float) -> void:
 		var aim_dir := _aim_dir(muzzle_pos, target)
 		player.face_toward(aim_dir)
 		if _fire_cd <= 0.0:
-			_fire_cd = weapon_cfg.fire_cd
+			_fire_cd = _fire_interval()
 			_spawn_bullet(muzzle_pos, aim_dir)
 			player.play_anim_once("recoil")
 	elif player.move_vec.length_squared() > 0.01:
@@ -337,13 +369,12 @@ func _tick_ranged(delta: float) -> void:
 		var mv := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
 		player.face_toward(mv)
 		if _fire_cd <= 0.0:
-			_fire_cd = weapon_cfg.fire_cd
+			_fire_cd = _fire_interval()
 			_spawn_bullet(muzzle_pos, mv.normalized())
 			player.play_anim_once("recoil")
 
 
-## 大剑挥斩 FSM（§4.2：蓄 0.24 → 抡 0.12 锁移动 → 收 0.34）。前摇可走但转向冻结；
-## 无目标不空挥（扛剑待机）；判定在挥出瞬间按当前朝向快照算一次，宽容不挫败。
+## 挥击 FSM（§4.2：蓄 0.24 → 抡 0.12 锁移动 → 收 0.34）。前摇可走但转向冻结；无目标不空挥；判定按挥出瞬间朝向快照算一次。
 func _tick_melee(delta: float) -> void:
 	match _swing_state:
 		SwingState.WINDUP:
@@ -361,7 +392,6 @@ func _tick_melee(delta: float) -> void:
 			if _swing_t <= 0.0:
 				_swing_state = SwingState.RECOVER
 				_swing_t = weapon_cfg.swing_recover
-				player.play_anim_once("swing")
 		SwingState.RECOVER:
 			_swing_t -= delta
 			# 后摇可走可转向。
@@ -383,13 +413,14 @@ func _tick_melee(delta: float) -> void:
 				player.face_toward(to_enemy)
 				if to_enemy.length() <= weapon_cfg.swing_range:
 					_swing_state = SwingState.WINDUP
-					_swing_t = weapon_cfg.swing_windup
+					_swing_t = weapon_cfg.swing_windup / stats.aspd_mult()
 					_swing_facing = player.facing
+					# 动作在前摇起帧启动；ACTIVE 边界执行命中，正好落在第 3~4 帧墨弧。
+					player.play_anim_once("swing")
 	player.physics_update(delta, PLAYER_BOUND_X, PLAYER_BOUND_Z)
 
 
-## 挥出瞬间结算一次：150°×2.9m 扇形内 ≤6 名（§4.2），逐敌 3 伤 + 强击退，
-## 致死复用既有 _finalize_kill 管线；斩中 ≥1 触发顿帧（0.5s 门控）与 blade_hit。
+## 挥出瞬间结算一次：150°×2.9m 扇形内 ≤6 名（§4.2），逐敌 3 伤 + 强击退；致死复用 _finalize_kill；斩中 ≥1 触发顿帧与 blade_hit。
 func _execute_swing() -> void:
 	var half_rad: float = deg_to_rad(weapon_cfg.swing_arc_deg * 0.5)
 	var fwd := _swing_facing
@@ -410,8 +441,9 @@ func _execute_swing() -> void:
 		if ang <= half_rad:
 			candidates.append([dist, jelly])
 	candidates.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
-	# M7R titan 被动：弧斩伤害 +skill_swing_dmg_bonus（默认 0 = 存量数值）。
-	var swing_dmg := weapon_cfg.swing_dmg + skill_swing_dmg_bonus
+	# M7R titan 被动：弧斩基础伤害 +skill_swing_dmg_bonus；M8 统一结算入口
+	# （§5.2）：逐目标 floor(base×伤害倍率) + 独立暴击判定。
+	var swing_base: int = _base_attack() + skill_swing_dmg_bonus
 	var hit_any := false
 	var hit_count: int = mini(weapon_cfg.swing_max_targets, candidates.size())
 	for i in hit_count:
@@ -420,8 +452,10 @@ func _execute_swing() -> void:
 		hit_dir.y = 0.0
 		if hit_dir.length_squared() < 0.001:
 			hit_dir = _swing_facing
-		blade_hit.emit(jelly.position, swing_dmg)
-		if jelly.take_damage(swing_dmg, hit_dir, weapon_cfg.swing_knock):
+		var roll: Array = _roll_attack(swing_base)
+		blade_hit.emit(jelly.position, roll[0])
+		enemy_hit.emit(jelly.position, roll[0], roll[1])
+		if jelly.take_damage(roll[0], hit_dir, weapon_cfg.swing_knock):
 			_finalize_kill(jelly)
 		hit_any = true
 	if hit_any and game_time - _last_swing_freeze >= 0.5:
@@ -429,8 +463,7 @@ func _execute_swing() -> void:
 		_freeze_left = maxf(_freeze_left, weapon_cfg.swing_freeze)
 
 
-## 目标决议：加权最优为候选；锁定窗口内不换目标（防抖），
-## 窗口结束后新目标与旧锁夹角 ≤±8° 时吸附续锁，避免扫描枪口抖动。
+## 目标决议：加权最优为候选；锁定窗口内不换目标（防抖），窗口结束后新目标与旧锁夹角 ≤±8° 时吸附续锁。
 func _resolve_target() -> BoomJelly:
 	var best := _nearest_enemy()
 	if best == null or _locked == null:
@@ -520,8 +553,7 @@ func trigger_freeze(dur: float) -> void:
 	_freeze_left = maxf(_freeze_left, dur)
 
 
-## M3 击杀播报：按当前连杀数给出播报文案（空串 = 不播报）。
-## 阈值 2/3/5（design_boom.md §7.2）；4 连杀维持 TRIPLE 档继续弹播报。
+## M3 击杀播报：按当前连杀数给出播报文案（空串 = 不播报）；阈值 2/3/5，4 连杀维持 TRIPLE 档。
 static func announce_for_combo(combo: int) -> String:
 	if combo >= ANNOUNCE_RAMPAGE:
 		return "RAMPAGE"
@@ -563,12 +595,12 @@ func cast_fan_shot() -> int:
 	return count
 
 
-## 闪电链：以最近敌人为起点，向其它敌人链式弹跳 CHAIN_MAX_TARGETS 次，每次伤害衰减 CHAIN_DECAY。
-## 返回被命中的敌人数组（含存活者，供上层画电弧/飘字/顿帧）。起点 null 返回空数组。
+## 闪电链：以最近敌人为起点链式弹跳 CHAIN_MAX_TARGETS 次，每次衰减 CHAIN_DECAY；返回被命中敌人数组（含存活者）。起点 null 返回空数组。
 func cast_chain_arc() -> Array:
 	var hits: Array = []
 	var from := player.position
-	var dmg := float(_bullet_dmg())
+	# M8：链起点伤害 = 最终攻击力，每跳衰减后独立暴击判定（§6.3 chain 每跳独立）。
+	var dmg := float(_final_attack())
 	var start := _nearest_enemy()
 	if start == null:
 		return hits
@@ -586,8 +618,7 @@ func cast_chain_arc() -> Array:
 	return hits
 
 
-## 核爆：以玩家为中心 NUKE_RADIUS 半径内所有敌人受 BULLET_DMG*NUKE_DMG_MULT 伤害。
-## 返回被命中的敌人数组。命中触发一次击杀顿帧（大事件感）。
+## 核爆：以玩家为中心 NUKE_RADIUS 半径内所有敌人受伤害；返回被命中敌人数组，命中触发一次击杀顿帧。
 func cast_aoe_nuke() -> Array:
 	var hits: Array = []
 	var targets: Array = []
@@ -598,7 +629,8 @@ func cast_aoe_nuke() -> Array:
 		if player.position.distance_to(jelly.position) <= NUKE_RADIUS:
 			targets.append(jelly)
 	for jelly in targets:
-		_apply_skill_hit(jelly, _bullet_dmg() * NUKE_DMG_MULT, hits)
+		# M8：每个受击目标独立结算最终攻击力 ×4 并独立暴击判定（§6.3）。
+		_apply_skill_hit(jelly, _final_attack() * NUKE_DMG_MULT, hits)
 	if not targets.is_empty():
 		# 核爆：一次大顿帧（0.14s，事件型一次性，压防晕铁律事件上限内）。
 		var dur := 0.14
@@ -644,16 +676,17 @@ func _nearest_jelly_from(from: Vector3, exclude: Array) -> BoomJelly:
 	return best
 
 
-## 对单个敌人结算一次技能伤害：扣血 + 发 damaged 信号。
-## 命中即把敌人放入 out_hits（含存活者——衰减伤害是常态，上层需要为每个
-## 被命中的目标画电弧/提示，而不是只画被击杀的）；致死则最终结算击杀。
+## 对单个敌人结算一次技能伤害：暴击判定 + 扣血 + 发信号；dmg 为最终攻击力口径，暴击逐目标独立判定（§6.3）。
+## 命中即放入 out_hits（含存活者，衰减伤害是常态）；致死则最终结算击杀。
 func _apply_skill_hit(jelly: BoomJelly, dmg: int, out_hits: Array) -> void:
 	if jelly.is_dead() or jelly.hp <= 0:
 		return
 	var hit_dir := (jelly.position - player.position).normalized()
 	enemy_damaged.emit(jelly.position, hit_dir)
 	out_hits.append(jelly)
-	if jelly.take_damage(dmg, hit_dir):
+	var roll: Array = _roll_crit(dmg)
+	enemy_hit.emit(jelly.position, roll[0], roll[1])
+	if jelly.take_damage(roll[0], hit_dir):
 		_finalize_kill(jelly)
 
 
@@ -688,7 +721,10 @@ func _tick_bullets(delta: float) -> void:
 				# 技能弹道命中广播（§4.2）：fan 每命中 1 个飘字，普通弹不发。
 				if bullet.variant != "straight":
 					skill_bullet_hit.emit(bullet.position, bullet.variant)
-				if jelly.take_damage(_bullet_dmg(), hit_dir):
+				# M8 统一输出结算入口（§5.2）：普攻逐发独立暴击判定。
+				var roll: Array = _roll_attack(_base_attack())
+				enemy_hit.emit(bullet.position, roll[0], roll[1])
+				if jelly.take_damage(roll[0], hit_dir):
 					dead_this_tick.append(jelly)
 				break
 		if bullet.active:
@@ -824,11 +860,11 @@ func spawn_enemy_at(pos: Vector3, elite: bool = false) -> BoomJelly:
 	return jelly
 
 
-## §3.3/§4：按当波阶梯缩放敌人属性（hp = round(3*mult)，速度乘系数）；
+## §3.3/§4：按当波阶梯缩放敌人属性（hp = round(30*mult)，M8 §9.1；速度乘系数）；
 ## elite 追加参数放大（血 ×3 / 体型 ×1.4 / 速度 ×0.85），不加新 AI 行为。
 func _apply_wave_scaling(jelly: BoomJelly, elite: bool) -> void:
-	var hp := int(round(float(BoomJelly.MAX_HP) * WAVE_HP_MULTS[_hp_tier(wave)]))
-	var sp_mult: float = WAVE_SPEED_MULTS[_speed_tier(wave)]
+	var hp := int(round(float(BoomJelly.MAX_HP) * WAVE_HP_MULTS[BoomCombatMath.hp_tier(wave)]))
+	var sp_mult: float = WAVE_SPEED_MULTS[BoomCombatMath.speed_tier(wave)]
 	if elite:
 		hp = int(round(float(hp) * ELITE_HP_MULT))
 		sp_mult *= ELITE_SPEED_MULT
@@ -863,47 +899,7 @@ func _spawn_edge_enemy(elite: bool = false) -> void:
 
 # ------------------------------------------------------------------ 波次
 
-
-func _wave_quota(n: int) -> int:
-	# §3.2 配额分段：教学段 2+n → 中段每波 +2 → W10 台阶 18 起，封顶 30。
-	if n <= WAVE_QUOTA_EARLY_END:
-		return WAVE_QUOTA_EARLY_BASE + n
-	if n <= WAVE_QUOTA_MID_END:
-		return WAVE_QUOTA_MID_BASE + WAVE_QUOTA_STEP * (n - WAVE_QUOTA_EARLY_END - 1)
-	return mini(
-		WAVE_QUOTA_LATE_BASE + WAVE_QUOTA_STEP * (n - WAVE_QUOTA_MID_END - 1), WAVE_QUOTA_CAP
-	)
-
-
-@warning_ignore("integer_division")
-func _hp_tier(n: int) -> int:
-	# W1-4→0 / W5-9→1 / W10-14→2 / W15-19→3 / W20-24→4 / W25+→5。
-	return mini(n / 5, WAVE_HP_MULTS.size() - 1)
-
-
-@warning_ignore("integer_division")
-func _speed_tier(n: int) -> int:
-	# W1-9→1.0 / W10-14→1.1 / W15-19→1.2 / W20+→1.3（封顶硬红线）。
-	return mini(n / 5, WAVE_SPEED_MULTS.size() - 1)
-
-
-func _wave_rest(n: int) -> float:
-	# §3.4 波间歇阶梯：2.5s 起、每 5 波降 0.5s、下限 1.0s。
-	if n <= WAVE_REST_EARLY_END:
-		return WAVE_REST_EARLY
-	if n <= WAVE_REST_MID_END:
-		return WAVE_REST_MID
-	if n <= WAVE_REST_LATE_END:
-		return WAVE_REST_LATE
-	return WAVE_REST_MIN
-
-
-func _wave_bonus(n: int) -> int:
-	# §3.5 波结算奖励查表；W10/20 台阶波 ×2（台阶仪式感）。
-	var bonus := WAVE_BONUS_BASE + n * WAVE_BONUS_PER_WAVE
-	if n % WAVE_STAGE_EVERY == 0:
-		bonus *= WAVE_STAGE_BONUS_MULT
-	return bonus
+# 波次纯数学（配额/档位/间歇/奖励查表）已拆至 BoomCombatMath（M8 行数门禁拆分）。
 
 
 func _max_alive() -> int:
@@ -915,7 +911,7 @@ func _spawn_interval() -> float:
 
 
 func _begin_wave() -> void:
-	_quota_current = _wave_quota(wave)
+	_quota_current = BoomCombatMath.wave_quota(wave)
 	_spawned_total = 0
 	# W1 首刷前留开局准备时长（§3.4），其后每波 0.6s 内开刷。
 	_spawn_cd = WAVE_REST_READY if wave == 1 else 0.6
@@ -937,11 +933,11 @@ func _tick_spawns(delta: float) -> void:
 		return
 	if _spawned_total >= _quota_current:
 		if enemies.is_empty():
-			var bonus := _wave_bonus(wave)
+			var bonus := BoomCombatMath.wave_bonus(wave)
 			score += bonus
 			wave_cleared.emit(wave, bonus)
 			_between_waves = true
-			_next_wave_cd = _wave_rest(wave)
+			_next_wave_cd = BoomCombatMath.wave_rest(wave)
 		return
 	if not auto_spawn:
 		return
@@ -982,11 +978,17 @@ func _tick_player_contact() -> void:
 			_damage_player(jelly.position)
 
 
+## M8 统一受伤结算入口（§8/§10.3）：闪避判定 → 防御减伤 → 扣最终伤害；闪避成功不扣血/不进无敌帧。
 func _damage_player(from_pos: Vector3) -> void:
-	player.take_damage()
+	var raw := BoomCombatMath.enemy_raw_attack(wave)
+	var result: Array = BoomCombatMath.resolve_player_damage(raw, stats.dodge_rate(), stats.defense)
+	if result[1]:
+		player_dodged.emit(from_pos)
+		return
+	player.take_damage(result[0])
 	# 规格：顿帧仅击杀/爆炸触发，玩家受击不停帧（避免紧张而非爽）。
 	if player.hp <= 0:
 		is_over = true
 		game_over.emit(score)
 	else:
-		player_damaged.emit(player.hp, from_pos)
+		player_damaged.emit(result[0], from_pos)

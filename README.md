@@ -9,6 +9,8 @@
 | 合成大西瓜 | <https://teentu.github.io/godot_ai_game/suika/> | 可玩 |
 | 太空闪避 | <https://teentu.github.io/godot_ai_game/dodge/> | 可玩（v2：护盾/擦身奖励/特效） |
 | 潜艇声呐模拟 | <https://teentu.github.io/godot_ai_game/sonar/> | 🚧 Stage 1 仿真内核，UI 开发中 |
+| 百怪夜巡 | <https://teentu.github.io/godot_ai_game/boom/> | 🚧 无尽波次 / M7 成长系统 |
+| 背包工厂 | <https://teentu.github.io/godot_ai_game/foundry/> | 🚧 竖屏原型 |
 | 总索引页 | <https://teentu.github.io/godot_ai_game/> | — |
 
 仓库结构参考 [godotengine/godot-demo-projects](https://github.com/godotengine/godot-demo-projects)：
@@ -44,7 +46,7 @@ Godot 4.5 + GDScript 写的合成大西瓜：同级水果相撞就合体，一�
 2. 添加导出预设：名称必须叫 **`Web`**，Thread Support 关闭
    （可直接复制 `games/suika/export_presets.cfg` 改）。
 3. 需要共享套件就跑 `bash tools/sync_shared.sh`（CI 也会自动注入）。
-4. 推送到 main，自动发布到 `/godot_ai_game/<新游戏名>/` 并出现在索引页。
+4. 推送到自己的 dev 分支；由集成者合入 `main` 后，自动发布到 `/godot_ai_game/<新游戏名>/` 并出现在索引页。详见 `CONTRIBUTING.md`。
 
 ## 共享支持套件 shared/addons/game_kit
 
@@ -68,7 +70,7 @@ Godot 4.5 + GDScript 写的合成大西瓜：同级水果相撞就合体，一�
 - **多渠道**：ImageGen（WorkBuddy 内置）/ Codex CLI（本机）/ 未来模型统一产出规格
 - **质量门禁**：`tools/check_sprite_sheet.py` 校验雪碧图（网格/透明/空帧/贴边/居中/粘连），
   不合格输出返工清单；`tools/postprocess_image.py` 去白成透明 + 调色板量化压缩
-- 当前风格契约：`flat-cartoon`（扁平卡通风，suika 水果 + dodge 飞船/陨石/道具）
+- 当前风格契约：`flat-cartoon`（suika/dodge）；Boom 使用 `boom-3d`（百怪夜巡新国风轻 Q 原生 3D）。
 
 ## Project layout
 

@@ -1,5 +1,7 @@
 # 《砰砰小队》M2 设计 — 弹幕与技能系统（接 M1 自动瞄准地基）
 
+> **文档状态（2026-09-07）**：输入与技能机制仍有效；“60–90 秒一关”是历史目标，当前单局采用 M4 无尽波次。视觉与世界观以 `docs/art_bible_boom.md` 为准。
+
 > 接 `docs/design_boom.md` M1 已落地的"自动瞄准 + 自动开火"垂直切片，本文档落地 M2：
 > 给玩家**手动技能**（屏幕点选 + swipe 触发），让战斗从"全自动炮台"升级到"节奏型弹幕
 > 解压"。所有设计继续服务**竖屏单手**和**移动端 60~90 秒一关**的总目标。
@@ -25,8 +27,8 @@ M1 的"自动开火"是 60% 输出，M2 的"手动技能"补到 100%——既保
 | 走位 | 左手 DYNAMIC 虚拟摇杆（M1 已修） | 不变 |
 | 自动开火 | `_physics_process` 按当前目标 + 攻速定时发射（M1） | 不变 |
 | **主技能** | 右手屏幕**点击**（tap ≤200ms 抬手） | M2 新增 |
-| **备用技能 A** | 右手屏幕**向左 swipe**（dx < -120px 且 |dx| > 2|dy|） | M2 新增 |
-| **备用技能 B** | 右手屏幕**向右 swipe**（dx > +120px 且 |dx| > 2|dy|） | M2 新增 |
+| **备用技能 A** | 右手屏幕**向左 swipe**（dx ≤ -110px 且 |dx| > 2|dy|） | M2 新增 |
+| **备用技能 B** | 右手屏幕**向右 swipe**（dx ≥ +110px 且 |dx| > 2|dy|） | M2 新增 |
 
 ### 2.2 与 DYNAMIC 摇杆的输入冲突解决
 
@@ -196,8 +198,8 @@ on touchstart: 记录 start_pos, start_time
 on touchmove:   累积 max_dx/dy
 on touchend:    elapsed = now - start_time
   if elapsed < 200ms and max_dx < 12px: try_tap()
-  elif max_dx < -120 and abs(max_dx) > 2*abs(max_dy): try_swipe_left()
-  elif max_dx > +120 and abs(max_dx) > 2*abs(max_dy): try_swipe_right()
+  elif max_dx <= -110 and abs(max_dx) > 2*abs(max_dy): try_swipe_left()
+  elif max_dx >= +110 and abs(max_dx) > 2*abs(max_dy): try_swipe_right()
   else: 取消（视为无效手势）
 ```
 

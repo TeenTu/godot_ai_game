@@ -1,23 +1,33 @@
 # Boom art request — 百怪夜巡（新国风轻 Q 原生 3D）
 
 Raster assets are resized for Web and kept below the repository's 512 KB per-image gate
-(default; character strip sheets & icons may reach 1536 KB per design_m5_weapons.md §6/§7).
+(default; character strip sheets & icons may reach 1536 KB under the repository CI rule documented in `.github/workflows/deploy.yml`).
 Most assets use the built-in ImageGen workflow. The current canonical direction is
 `docs/art_bible_boom.md`; all candy-carnival entries below are archival records only.
 
-## Delivered assets
+## Delivered runtime replacements
+
+The old candy-carnival runtime set is no longer referenced. The live scene uses
+the following 百怪夜巡 replacements:
 
 | File | Runtime use |
 |---|---|
-| `images/characters/player_bubble_idle.png` | 泡泡队长·泡泡形态待机（4 帧横条，AnimatedSprite3D） |
-| `images/characters/player_bubble_move.png` | 同上·移动（6 帧横条） |
-| `images/characters/player_bubble_recoil.png` | 同上·开火后座（3 帧横条） |
-| `images/characters/player_sword_idle.png` | 泡泡队长·大剑形态待机（4 帧横条，同源造型） |
-| `images/characters/player_sword_move.png` | 同上·移动（6 帧横条） |
-| `images/characters/player_sword_swing.png` | 同上·弧斩全套（8 帧横条） |
-| `images/characters/player_hurt.png` | 受击（两形态共用，2 帧横条） |
-| `images/icons/weapon_bubble.png` | 武器图标·泡泡枪（128×128） |
-| `images/icons/weapon_sword.png` | 武器图标·大剑（128×128） |
+| `images/characters/paper_doll_move_{down,up,left,right}.png` | 纸偶四向 4 帧移动 |
+| `images/characters/mist_spirit_float.png` | 雾灵 4 帧浮动 |
+| `images/backgrounds/rainy_ancient_town.png` | 雨夜古镇屏幕背景层 |
+| `images/floors/wet_stone_tiles.png` | 湿石路面平铺材质 |
+| `images/icons/spirit_seal_coin.png` | 灵印金币图标 |
+
+## Scene cleanup and playable-area expansion (2026-09-08)
+
+- Removed the runtime carnival balloon/decor cluster from `main.gd`; the remaining
+  breakable props are gameplay objects and are re-colored as sealed wood boxes and
+  old copper vats.
+- Expanded the tiled floor from 26×38 to 52×76 world units (approximately 4× area).
+  Player/enemy clamps, spawn edges, rails, grid accents and the exit marker use the
+  expanded bounds.
+- Switched world lighting/background tint to a blue night palette and increased the
+  rainy ancient-town backdrop layer opacity so the replacement reads in-game.
 
 ## Retired candy-3D assets (2026-09-06)
 
@@ -39,11 +49,8 @@ Runtime code intentionally falls back to its procedural floor, characters and HU
 when these optional textures are absent. Do not restore or replace this set until
 the new theme and art contract are approved.
 
-**Update 2026-09-07 (merge review):** only `bubble_captain.png` is replaced by the
-Night Patrol heroine and stays retired. The other eight groups still have no
-new-style replacements, so their runtime copies were restored from HEAD to avoid
-invisible enemies / blank HUD; they will be retired again per-group as
-new-direction replacements land.
+All old candy-carnival references are now either replaced by the assets listed
+above or kept only in this archive for rollback; they are not loaded by runtime.
 
 ## Night Patrol heroine base sprites (2026-09-06)
 
@@ -60,9 +67,73 @@ aligns and quantizes them into 256px-per-frame Web-friendly output strips:
 - `images/characters/night_patrol/hero_skill_cast_body.png` — 4 帧技能施法身体
 - `images/characters/night_patrol/hero_knockdown_unarmed.png` — 4 帧倒地
 
+敌人运行时素材：
+
+- `images/characters/paper_doll_move_down.png`
+- `images/characters/paper_doll_move_up.png`
+- `images/characters/paper_doll_move_left.png`
+- `images/characters/paper_doll_move_right.png`
+- `images/characters/mist_spirit_float.png`
+
+纸偶为四向 4 帧行走；雾灵为单向 4 帧浮动。敌人代码按追击向量选纸偶方向，
+浮灵不做正背面切换，避免无意义地放大首章素材量。
+
 These base sprites deliberately contain no hand-held weapon. Weapons and attack
 effects must be produced as separate assets and attached as an independent visual
 layer rather than baked into the heroine image.
+
+## Night Patrol weapon and spirit-seal candidates (2026-09-08)
+
+The heroine's weapon layer and ranged attack are intentionally decoupled from the
+body strips. The old term "bullet" is replaced in the art language by a **灵印投射物**
+(spirit-seal projectile): a readable, non-firearm burst of lantern light, talisman
+paper, or binding ink. All candidate source boards live in
+`assets/references/night_patrol_weapons/` and are not wired to runtime until one
+weapon + one projectile family is approved.
+
+| Candidate | Reference | Intended combat read |
+|---|---|---|
+| A · 镇夜灯·镇尺 | `references/night_patrol_weapons/01_weapon_night_ruler_lantern_concept.png` | Short lantern-ruler; strongest default silhouette and close-range seal strikes. |
+| B · 朱砂折伞 | `references/night_patrol_weapons/02_weapon_cinnabar_umbrella_concept.png` | Folding ward umbrella; defensive fan/area control with a memorable cinnabar accent. |
+| C · 引魂灯绳 | `references/night_patrol_weapons/03_weapon_soul_lantern_rope_concept.png` | Lantern tether; naturally supports pull, chain and target-link skills. |
+| D · 墨线判笔 | `references/night_patrol_weapons/04_weapon_ink_judge_brush_concept.png` | Judge brush and ink strokes; highest supernatural identity, with line-trail VFX. |
+
+| Spirit-seal projectile | Reference source strip | Frame intent |
+|---|---|---|
+| A · 灯火灵印 | `references/night_patrol_weapons/05_projectile_lantern_seal_source_strip.png` | 5 frames: seal bloom → forward flare → trailing lantern ribbon → fade. |
+| B · 纸符流光 | `references/night_patrol_weapons/06_projectile_paper_talisman_source_strip.png` | 5 frames: folded talisman → unfurl → burning-gold flight → paper motes. |
+| C · 封缚墨线 | `references/night_patrol_weapons/07_projectile_ink_binding_source_strip.png` | 5 frames: jade ring/ink core → stretched binding line → snap impact. |
+
+Source strips are high-resolution review material. After approval they must be
+post-processed into centered 256 px/frame transparent strips, pass
+`tools/check_sprite_sheet.py`, and remain a separate visual layer consumed by
+`BoomBullet`; gameplay collision remains the existing sphere/area logic.
+
+For review and integration dry-runs, the first centered strips are also available
+under `images/projectiles/candidates/`:
+
+- `projectile_lantern_seal.png`
+- `projectile_paper_talisman.png`
+- `projectile_ink_binding.png`
+
+These candidate strips pass the 5×1 / 256×256 sprite-sheet gate but are not selected
+as the live attack until the weapon/projectile pairing is approved.
+
+## Selected first weapon set and action binding (2026-09-08)
+
+The first live pairing is now fixed: logical `bubble` keeps its save/skill-tree id
+but displays **镇夜灯·镇尺** and fires **灯火灵印**; logical `greatsword` keeps its
+compatibility id but displays **墨线判笔** as the heavy melee weapon. Weapon-only
+action strips are loaded from `images/weapons/night_patrol/` and mirrored to the
+body's animation frame in `BoomPlayer.WeaponSocket`:
+
+- `night_ruler_idle.png` (4), `night_ruler_move.png` (6), `night_ruler_recoil.png` (3)
+- `ink_brush_idle.png` (4), `ink_brush_move.png` (6), `ink_brush_swing.png` (5)
+
+The ranged visual is `images/projectiles/candidates/projectile_lantern_seal.png`.
+Collision and damage remain in `BoomGame`; only the visual layer changed.
+Review sheets: `assets/review/night_patrol_weapon_actions_preview.png` and
+`assets/review/night_patrol_weapon_binding_preview.png`.
 
 ## Current style invariants
 
@@ -116,3 +187,4 @@ Mode: Codex built-in ImageGen。M5 玩家动画的 prompt 骨架见 `design_m5_w
 
 ### M5 动画幅度返工（2026-09-04）
 仅返工 player_bubble_move、player_sword_move、player_sword_swing、player_bubble_recoil，其余 M5 资产保持不动。move 使用 ±10px 正弦重心起伏并加入左右短腿交替抬步；swing 使用 8 个唯一剑位/角度与逐帧身体倾斜；recoil 使用后仰→半程→归位三态。最终逐帧指标见本次交付回报。
+> **状态（2026-09-07）**：本文件中的早期 M5 糖果/泡泡素材清单与提示词均为历史归档，不得据此生成或更新运行时素材。当前素材必须遵循 `docs/art_bible_boom.md` 与 `shared/assets/styles/boom-3d/contract.yaml`；仅保留用于追溯的旧记录。

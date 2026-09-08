@@ -53,10 +53,10 @@ static func twin_shot(g: BoomGame) -> int:
 
 
 ## M7R whirl 旋风斩（sword 专属）：以玩家为圆心、斩距内 360° 全向一斩，
-## 至多 WHIRL_MAX_TARGETS 名敌人各受 swing_dmg(+titan 加成) 伤 + 强击退。
-## 复用弧斩的 blade_hit / take_damage / _finalize_kill 管线。返回命中数。
+## 至多 WHIRL_MAX_TARGETS 名敌人各受统一结算伤害（§5.2：floor(base×倍率)+独立暴击）
+## + 强击退。复用弧斩的 blade_hit / take_damage / _finalize_kill 管线。返回命中数。
 static func whirl(g: BoomGame) -> int:
-	var swing_dmg: int = g.weapon_cfg.swing_dmg + g.skill_swing_dmg_bonus
+	var swing_base: int = g._base_attack() + g.skill_swing_dmg_bonus
 	var hits: int = 0
 	var candidates: Array = []
 	for e in g.enemies:
@@ -72,8 +72,10 @@ static func whirl(g: BoomGame) -> int:
 		hit_dir.y = 0.0
 		if hit_dir.length_squared() < 0.001:
 			hit_dir = g.player.facing
-		g.blade_hit.emit(jelly.position, swing_dmg)
-		if jelly.take_damage(swing_dmg, hit_dir, g.weapon_cfg.swing_knock):
+		var roll: Array = g._roll_attack(swing_base)
+		g.blade_hit.emit(jelly.position, roll[0])
+		g.enemy_hit.emit(jelly.position, roll[0], roll[1])
+		if jelly.take_damage(roll[0], hit_dir, g.weapon_cfg.swing_knock):
 			g._finalize_kill(jelly)
 		hits += 1
 	return hits

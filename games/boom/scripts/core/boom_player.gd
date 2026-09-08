@@ -2,9 +2,11 @@ class_name BoomPlayer
 extends Node3D
 ## 玩家：夜巡灯使可换武器。移动由 BoomGame 驱动（读摇杆向量），本类只管
 ## 视觉与朝向、受击无敌闪烁状态、武器动作语义（2D 雪碧图动画 vs 程序化回退）。
-## 远程/近战共用同一位无武器女灯使；武器会作为独立图层在后续美术批次接入。
+## 远程/近战共用同一位无武器女灯使；武器通过 WeaponSocket 作为独立图层绑定。
 
-const BASE_MAX_HP: int = 5
+## M8 数值制（design_m8_attributes.md §4.1）：泡泡枪 50 / 大剑 70（+20 武器补偿）。
+## 升级不再增加最大生命；生命类升级统一为"回满当前生命"。
+const BASE_MAX_HP: int = 50
 const RADIUS: float = 0.55
 const MOVE_SPEED: float = 5.4
 const INVULN_TIME: float = 0.9
@@ -12,9 +14,33 @@ const INVULN_TIME: float = 0.9
 ## 2D 帧条规格（design §6.0）：单帧 256×256、横向无缝拼接、透明底。
 const FRAME_PX: int = 256
 const STRIP_DIR: String = "res://assets/images/characters/night_patrol/"
+const WEAPON_STRIP_DIR: String = "res://assets/images/weapons/night_patrol/"
+## 武器层动作只关心动作语义，不复制身体的四向移动条；每条与对应身体动作共享帧数。
+const WEAPON_STRIPS: Dictionary = {
+	"bubble":
+	{
+		"idle": ["night_ruler_idle", 4],
+		"move": ["night_ruler_move", 6],
+		"recoil": ["night_ruler_recoil", 3],
+	},
+	"sword":
+	{
+		"idle": ["ink_brush_idle", 4],
+		"move": ["ink_brush_move", 6],
+		"swing": ["ink_brush_swing", 5],
+	},
+}
 const _ANIM_FPS: Dictionary = {
-	"idle": 6.0,  # ≈6fps 呼吸起伏
-	"move": 12.0,  # ≈12fps 小步快挪
+	"idle": 6.0,
+	"move": 12.0,
+	"idle_down": 6.0,  # ≈6fps 呼吸起伏
+	"idle_up": 6.0,
+	"idle_left": 6.0,
+	"idle_right": 6.0,
+	"move_down": 12.0,  # ≈12fps 小步快挪
+	"move_up": 12.0,
+	"move_left": 12.0,
+	"move_right": 12.0,
 	"recoil": 14.0,  # 3 帧远程施法身姿
 	"swing": 16.0,  # 5 帧近战挥击身姿
 	"hurt": 12.0,  # 3 帧受击
@@ -25,16 +51,28 @@ const _ANIM_FPS: Dictionary = {
 const FORM_STRIPS: Dictionary = {
 	"bubble":
 	{
-		"idle": ["hero_idle_unarmed", 4],
-		"move": ["hero_move_unarmed", 6],
+		"idle_down": ["hero_idle_unarmed", 4],
+		"idle_up": ["hero_idle_up", 1],
+		"idle_left": ["hero_idle_left", 1],
+		"idle_right": ["hero_idle_right", 1],
+		"move_down": ["hero_move_unarmed", 6],
+		"move_up": ["hero_move_up", 6],
+		"move_left": ["hero_move_left", 6],
+		"move_right": ["hero_move_right", 6],
 		"recoil": ["hero_ranged_cast_body", 3],
 		"skill_cast": ["hero_skill_cast_body", 4],
 		"knockdown": ["hero_knockdown_unarmed", 4],
 	},
 	"sword":
 	{
-		"idle": ["hero_idle_unarmed", 4],
-		"move": ["hero_move_unarmed", 6],
+		"idle_down": ["hero_idle_unarmed", 4],
+		"idle_up": ["hero_idle_up", 1],
+		"idle_left": ["hero_idle_left", 1],
+		"idle_right": ["hero_idle_right", 1],
+		"move_down": ["hero_move_unarmed", 6],
+		"move_up": ["hero_move_up", 6],
+		"move_left": ["hero_move_left", 6],
+		"move_right": ["hero_move_right", 6],
 		"swing": ["hero_melee_swing_body", 5],
 		"skill_cast": ["hero_skill_cast_body", 4],
 		"knockdown": ["hero_knockdown_unarmed", 4],
@@ -49,20 +87,24 @@ var hp: int = BASE_MAX_HP
 var radius: float = RADIUS
 var move_speed: float = MOVE_SPEED
 var weapon_id: String = ""
-var anim_form: String = "bubble"  # 当前武器动作语义：bubble / sword
+var anim_form: String = "bubble"  # 逻辑形态：bubble=镇夜灯·镇尺，sword=墨线判笔
 
 var invuln_left: float = 0.0
 var move_vec: Vector2 = Vector2.ZERO
+var facing_anim: String = "down"
 var facing: Vector3 = Vector3.FORWARD
 var muzzle: Node3D = null
 var bob_t: float = 0.0
-## 锁移动窗口（大剑挥斩 active 段，由 BoomGame 写入，design §4.2）。
+## 锁移动窗口（墨线判笔挥击 active 段，由 BoomGame 写入，design §4.2）。
 var lock_move_left: float = 0.0
 
 var _procedural_root: Node3D
 var _body_mat: StandardMaterial3D
 var _anim: AnimatedSprite3D = null
 var _sprite_frames: SpriteFrames = null
+var _weapon_socket: Node3D = null
+var _weapon_anim: AnimatedSprite3D = null
+var _weapon_frames: SpriteFrames = null
 var _transient_anim: bool = false
 var _flicker_t: float = 0.0
 var _flash_energy: float = 0.0
@@ -157,16 +199,18 @@ func _add_eye(local_pos: Vector3, radius_value: float) -> void:
 ## 按当前 anim_form 构建 2D 形态动画（AnimatedSprite3D + SpriteFrames，横条切帧）。
 ## 无素材（文件不存在）则保持程序化造型回退（R4/R6 兜底）。
 func _build_form_art() -> void:
-	var idle_sheet: Array = FORM_STRIPS[anim_form]["idle"]
+	var idle_sheet: Array = FORM_STRIPS[anim_form]["idle_down"]
 	var idle_path: String = STRIP_DIR + (idle_sheet[0] as String) + ".png"
 	if not ResourceLoader.exists(idle_path):
 		_anim = null
 		_sprite_frames = null
+		_clear_weapon_art()
 		_sync_visual_layers()
 		return
 	_sprite_frames = _build_sprite_frames()
 	if _sprite_frames == null:
 		_anim = null
+		_clear_weapon_art()
 		_sync_visual_layers()
 		return
 	_anim = AnimatedSprite3D.new()
@@ -177,8 +221,9 @@ func _build_form_art() -> void:
 	_anim.position = Vector3(0.0, 0.92, 0.0)
 	_anim.render_priority = 2
 	add_child(_anim)
-	_anim.play("idle")
+	_anim.play("idle_down")
 	_anim.animation_finished.connect(_on_anim_finished)
+	_build_weapon_art()
 	_sync_visual_layers()
 
 
@@ -207,7 +252,7 @@ func _build_sprite_frames() -> SpriteFrames:
 			continue
 		var frames: int = spec[1]
 		sf.add_animation(action)
-		sf.set_animation_loop(action, action == "idle" or action == "move")
+		sf.set_animation_loop(action, action.begins_with("idle_") or action.begins_with("move_"))
 		sf.set_animation_speed(action, _ANIM_FPS[action])
 		for i in frames:
 			var atlas := AtlasTexture.new()
@@ -232,17 +277,99 @@ func _build_sprite_frames() -> SpriteFrames:
 	return sf if built else null
 
 
+## 构建独立武器层：武器挂在 WeaponSocket，不烘焙进人物身体帧条。
+func _build_weapon_art() -> void:
+	var specs: Dictionary = WEAPON_STRIPS.get(anim_form, {})
+	if specs.is_empty():
+		return
+	var sf := SpriteFrames.new()
+	var built := false
+	for action in specs:
+		var spec: Array = specs[action]
+		var path: String = WEAPON_STRIP_DIR + (spec[0] as String) + ".png"
+		if not ResourceLoader.exists(path):
+			continue
+		var tex := load(path) as Texture2D
+		if tex == null:
+			continue
+		var action_name: String = action as String
+		var frames: int = int(spec[1])
+		sf.add_animation(action_name)
+		sf.set_animation_loop(action_name, action_name in ["idle", "move"])
+		sf.set_animation_speed(action_name, float(_ANIM_FPS.get(action_name, 12.0)))
+		for i in frames:
+			var atlas := AtlasTexture.new()
+			atlas.atlas = tex
+			atlas.region = Rect2(float(i) * FRAME_PX, 0.0, FRAME_PX, FRAME_PX)
+			sf.add_frame(action_name, atlas)
+		built = true
+	if not built:
+		return
+	_weapon_frames = sf
+	if _weapon_socket == null:
+		_weapon_socket = Node3D.new()
+		_weapon_socket.name = "WeaponSocket"
+		add_child(_weapon_socket)
+	_weapon_socket.position = Vector3(0.34 if anim_form == "bubble" else 0.25, 0.96, 0.0)
+	_weapon_anim = AnimatedSprite3D.new()
+	_weapon_anim.name = "WeaponAnim2D"
+	_weapon_anim.sprite_frames = _weapon_frames
+	_weapon_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_weapon_anim.pixel_size = 0.0058 if anim_form == "bubble" else 0.0070
+	_weapon_anim.position = Vector3.ZERO
+	_weapon_anim.render_priority = 3
+	_weapon_socket.add_child(_weapon_anim)
+	var initial_action: String = (
+		"idle"
+		if _weapon_frames.has_animation("idle")
+		else String(_weapon_frames.get_animation_names()[0])
+	)
+	_weapon_anim.play(initial_action)
+
+
+func _clear_weapon_art() -> void:
+	if _weapon_anim != null:
+		_weapon_anim.queue_free()
+	_weapon_anim = null
+	_weapon_frames = null
+
+
+## 将身体动画的动作语义/帧进度镜像到武器层，保证握持与挥击同拍。
+func _sync_weapon_animation() -> void:
+	if _anim == null or _weapon_anim == null or _weapon_frames == null:
+		return
+	var desired := "idle"
+	var body_action: String = _anim.animation
+	if body_action == "recoil" and _weapon_frames.has_animation("recoil"):
+		desired = "recoil"
+	elif body_action == "swing" and _weapon_frames.has_animation("swing"):
+		desired = "swing"
+	elif body_action.begins_with("move_") and _weapon_frames.has_animation("move"):
+		desired = "move"
+	if not _weapon_frames.has_animation(desired):
+		return
+	if _weapon_anim.animation != desired:
+		_weapon_anim.play(desired)
+	var frame_count: int = _weapon_frames.get_frame_count(desired)
+	if frame_count <= 0:
+		return
+	_weapon_anim.frame = mini(_anim.frame, frame_count - 1)
+	_weapon_anim.frame_progress = _anim.frame_progress
+
+
 ## 切换程序化/2D 层的可见性（同源两形态共用一套闪烁/受击逻辑，R4）。
 func _sync_visual_layers() -> void:
 	var use_2d: bool = _anim != null and _sprite_frames != null
 	_procedural_root.visible = not use_2d
 	if _anim != null:
 		_anim.visible = use_2d
+	if _weapon_socket != null:
+		_weapon_socket.visible = use_2d and _weapon_anim != null and _weapon_frames != null
 	# 2D 形态枪口锚到形态语义位（R5：技能/子弹仍可引用 muzzle）。
 	if anim_form == "sword":
-		muzzle.position = Vector3(0.0, 1.1, 0.85)
+		muzzle.position = Vector3(0.24, 1.05, 0.70)
 	else:
-		muzzle.position = Vector3(0.0, 0.9, 0.8)
+		muzzle.position = Vector3(0.36, 1.00, 0.78)
 
 
 ## 由 BoomGame 在切换武器时注入武器 def：机体数值 + 形态（design §3.3/§4.1）。
@@ -262,17 +389,24 @@ func apply_weapon(def: BoomWeaponDef) -> void:
 func _clear_art() -> void:
 	if _anim != null:
 		_anim.queue_free()
-		_anim = null
+	_anim = null
 	_sprite_frames = null
+	_clear_weapon_art()
 	_transient_anim = false
 
 
 ## 设定移动输入（来自摇杆的 -1..1 向量）。
 func set_move(v: Vector2) -> void:
 	move_vec = v
+	if v.length_squared() <= 0.01:
+		return
+	if absf(v.x) > absf(v.y):
+		facing_anim = "right" if v.x > 0.0 else "left"
+	else:
+		facing_anim = "down" if v.y > 0.0 else "up"
 
 
-## 播放单次形态动作（泡泡开火后座 / 大剑挥斩 / 受击），播完回到基础动画。
+## 播放单次形态动作（灯火灵印施法 / 墨线判笔挥击 / 受击），播完回到基础动画。
 func play_anim_once(action: String) -> void:
 	if _anim == null or _sprite_frames == null:
 		return
@@ -283,7 +417,7 @@ func play_anim_once(action: String) -> void:
 
 
 func _base_anim_name() -> String:
-	return "move" if move_vec.length_squared() > 0.01 else "idle"
+	return ("move_" if move_vec.length_squared() > 0.01 else "idle_") + facing_anim
 
 
 ## 每物理帧由 BoomGame 调用：执行移动并做小幅呼吸动画。
@@ -337,10 +471,13 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 	if _anim != null:
 		var breath := 1.0 + sin(bob_t) * 0.012
 		_anim.scale = Vector3(breath, breath, breath)
+		if _weapon_anim != null:
+			_weapon_anim.scale = Vector3(breath, breath, breath)
 		if not _transient_anim:
 			var want := _base_anim_name()
 			if _sprite_frames.has_animation(want) and _anim.animation != want:
 				_anim.play(want)
+		_sync_weapon_animation()
 	else:
 		_procedural_root.position.y = sin(bob_t) * 0.03
 
@@ -358,10 +495,12 @@ func is_2d_form() -> bool:
 	return _anim != null and _anim.visible
 
 
-func take_damage() -> void:
+## M8（§8/§10.3）：amount 为统一受伤结算后的最终伤害（闪避/防御已在 BoomGame 扣除）。
+## 闪避成功不会调用本函数（不扣血、不进无敌帧、不播受击动画）。
+func take_damage(amount: int) -> void:
 	if invuln_left > 0.0:
 		return
-	hp -= 1
+	hp -= amount
 	invuln_left = INVULN_TIME
 	_flash_energy = 2.0
 	if _anim != null:

@@ -20,8 +20,8 @@ extends SceneTree
 ##   [m4-wave]  M4 波次系统（design_m4_waves.md §7）：
 ##              1. 配额分段边界 W1/4/5/9/10/封顶 30
 ##              2. 间歇阶梯 2.5/2.0/1.5/1.0 + 清波后 step(2.4) 不换波、越 2.5s 换波
-##              3. 属性阶梯 W1/W5/W10 HP 3/4/5、W10 速度 1.7×1.1、W40 封顶 1.3
-##              4. 精英标记 W5 最后一只/W4 否；精英 HP12/radius 0.84/速度 ×0.85
+##              3. 属性阶梯 W1/W5/W10 HP 30/40/50、W10 速度 1.7×1.1、W40 封顶 1.3×30=80
+##              4. 精英标记 W5 最后一只/W4 否；精英 HP120/radius 0.84/速度 ×0.85
 ##              5. 精英死亡金币雨 8×5=40 逐枚入账；波奖励查表 + 台阶 ×2
 ##              6. 同屏上限 12 封顶；auto_spawn=false 手动刷怪回归
 ##   [m5-weapon] M5 武器系统（design_m5_weapons.md §3/§4/§6）：
@@ -33,10 +33,9 @@ extends SceneTree
 ##                 max_hp 血条上限重建 7
 ##   [m7-assets] 夜巡灯使帧条素材存在性（无武器身体动作条 + 暂存 weapon 图标，
 ##              ResourceLoader.exists 走 .import remap）
-##   [m7-stats]  M7 属性系统（design_m7_progression.md §3）：零加成回归 M5 数值、
-##              hp/speed/dmg 升级落地、点数耗尽拒绝、重置清零
+##   [m7-stats]  M7 属性系统已被 M8 重构（design_m8_attributes.md）→ 节点见 [m8-*] 分册
 ##   [m7-exp]    M7 经验升级（§4）：曲线边界 5/9、跨级信号、满级封顶、
-##              击杀 +1 xp / 精英 +8 xp / 升级产属性点
+##              击杀 +1 xp / 精英 +6 xp（M8 §11.2）/ 升级产属性点
 ##   [m7-tree]   M7R 每武器技能树（§5）：全池 9 定义、双武器树 6 槽序列、跨树过滤、
 ##              树内顺序价 60/120/200/300/420、跨局存档解锁扣币、装备上限 3、
 ##              槽位手势重映射、ring 12 发 / twin 2 发 / heal 回复、跨局保留
@@ -46,6 +45,7 @@ extends SceneTree
 ##              对局金币即时入档、restart 保留、结算落盘
 ##   [m7-tree-ui] M7R 选单技能配置区（§5.5）：按当前武器切换 6 行、跨树技能不可见、
 ##              价格标注、行点击解锁/勾选
+##   [m8-*]      M8 属性/战斗数值/升级卡/属性面板分册 → tools/play_test_m8.gd
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
 
@@ -59,11 +59,14 @@ var _logic_done := false
 var _main: Node
 ## M7/M7R 测试分册（tools/play_test_m7.gd，控制本文件行数门禁）。
 var _m7_tests: RefCounted
+## M8 测试分册（tools/play_test_m8.gd，控制本文件行数门禁）。
+var _m8_tests: RefCounted
 
 
 func _initialize() -> void:
 	seed(20260902)
 	_m7_tests = preload("res://tools/play_test_m7.gd").new(self)
+	_m8_tests = preload("res://tools/play_test_m8.gd").new(self)
 	var ps := load("res://scenes/main.tscn") as PackedScene
 	if ps == null:
 		_check(false, "加载 scenes/main.tscn")
@@ -94,6 +97,7 @@ func _process(_delta: float) -> bool:
 		_test_m4_waves()
 		_test_m5_weapons()
 		_m7_tests.run_all()
+		_m8_tests.run_all()
 		_finish()
 	return false
 
@@ -151,15 +155,37 @@ func _test_smoke() -> void:
 	_check(sim.player.hp == sim.player.max_hp, "开局满血 hp=5")
 	_check(sim.player.is_2d_form(), "玩家 2D 动画管线已激活（AnimatedSprite3D）")
 	_check(sim.wave == 1, "初始波次 1")
+	_check(
+		BoomGame.PLAYER_BOUND_X >= 8.0 and BoomGame.PLAYER_BOUND_Z >= 24.0,
+		"夜巡可玩区域已扩展（玩家边界 %.1f×%.1f）" % [BoomGame.PLAYER_BOUND_X, BoomGame.PLAYER_BOUND_Z],
+	)
 	var st: Dictionary = _main.call("_test_hook_get_state")
 	_check(st.has("score") and st.has("wave") and st.has("hp"), "test_hook state 键完整")
 	for asset_path in [
-		"res://assets/images/icons/weapon_bubble.png",
-		"res://assets/images/icons/weapon_sword.png",
+		"res://assets/images/icons/weapon_night_ruler.png",
+		"res://assets/images/icons/weapon_ink_judge_brush.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_idle.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_move.png",
+		"res://assets/images/weapons/night_patrol/night_ruler_recoil.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_idle.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_move.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing.png",
+		"res://assets/images/characters/paper_doll_move_down.png",
+		"res://assets/images/characters/paper_doll_move_up.png",
+		"res://assets/images/characters/paper_doll_move_left.png",
+		"res://assets/images/characters/paper_doll_move_right.png",
+		"res://assets/images/characters/mist_spirit_float.png",
+		"res://assets/images/backgrounds/rainy_ancient_town.png",
+		"res://assets/images/floors/wet_stone_tiles.png",
 	]:
 		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
 	for retired_path in [
 		"res://assets/images/characters/bubble_captain.png",
+		"res://assets/images/characters/jelly_scout.png",
+		"res://assets/images/characters/water_gunner.png",
+		"res://assets/images/backgrounds/carnival_arena.png",
+		"res://assets/images/floors/carnival_tiles.png",
+		"res://assets/images/icons/coin.png",
 	]:
 		_check(not ResourceLoader.exists(retired_path), "已替换素材已退出运行目录: %s" % retired_path)
 
@@ -252,6 +278,8 @@ func _test_art_and_props() -> void:
 	var g := _new_game()
 	# M5：props 改由 begin_match 生成（R9 把开波从构造拆出），先开战再断言。
 	g.begin_match()
+	var enemy := g.spawn_enemy_at(Vector3(0.0, 0.0, -5.0))
+	_check(enemy.get("_art") != null, "纸偶/雾灵雪碧层已挂入敌人")
 	_check(g.props.size() == 3, "场景创建 3 个可破坏物")
 	var prop := g.props[0] as BoomProp
 	_check(prop != null and not prop.broken, "可破坏物初始可见")
@@ -343,7 +371,7 @@ func _test_nuke_aoe() -> void:
 	var dmg_before: float = g._freeze_left
 	var hits: Array = g.cast_aoe_nuke()
 	_check(hits.size() == 1, "nuke 命中 1 个范围内敌 (hits=%d)" % hits.size())
-	_check(inside.is_dead(), "nuke 范围内敌被 4 伤秒杀")
+	_check(inside.is_dead(), "nuke 范围内敌被 10×4 伤秒杀")
 	_check(g.kills == 1, "nuke 击杀计数 +1")
 	_check(outside.is_dead() == false, "nuke 范围外敌未受伤害")
 	_check(g._freeze_left >= 0.14 and g._freeze_left > dmg_before, "nuke 命中触发 0.14s 顿帧")
@@ -489,24 +517,24 @@ func _test_m4_waves() -> void:
 	print("[m4-wave]")
 	# §7.2 配额分段公式边界值。
 	var g := _new_game()
-	_check(g._wave_quota(1) == 3, "quota W1 = 3（2+n 教学段）")
-	_check(g._wave_quota(4) == 6, "quota W4 = 6")
-	_check(g._wave_quota(5) == 9, "quota W5 = 9（中段起步）")
-	_check(g._wave_quota(9) == 17, "quota W9 = 17")
-	_check(g._wave_quota(10) == 18, "quota W10 = 18（台阶）")
-	_check(g._wave_quota(99) == 30, "quota W99 封顶 30")
+	_check(BoomCombatMath.wave_quota(1) == 3, "quota W1 = 3（2+n 教学段）")
+	_check(BoomCombatMath.wave_quota(4) == 6, "quota W4 = 6")
+	_check(BoomCombatMath.wave_quota(5) == 9, "quota W5 = 9（中段起步）")
+	_check(BoomCombatMath.wave_quota(9) == 17, "quota W9 = 17")
+	_check(BoomCombatMath.wave_quota(10) == 18, "quota W10 = 18（台阶）")
+	_check(BoomCombatMath.wave_quota(99) == 30, "quota W99 封顶 30")
 	# §3.4 间歇阶梯查表。
-	_check(is_equal_approx(g._wave_rest(1), 2.5), "rest W1 = 2.5s")
-	_check(is_equal_approx(g._wave_rest(4), 2.5), "rest W4 = 2.5s")
-	_check(is_equal_approx(g._wave_rest(5), 2.0), "rest W5 = 2.0s")
-	_check(is_equal_approx(g._wave_rest(10), 1.5), "rest W10 = 1.5s")
-	_check(is_equal_approx(g._wave_rest(15), 1.0), "rest W15 = 1.0s（下限）")
-	_check(is_equal_approx(g._wave_rest(40), 1.0), "rest W40 = 1.0s")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(1), 2.5), "rest W1 = 2.5s")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(4), 2.5), "rest W4 = 2.5s")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(5), 2.0), "rest W5 = 2.0s")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(10), 1.5), "rest W10 = 1.5s")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(15), 1.0), "rest W15 = 1.0s（下限）")
+	_check(is_equal_approx(BoomCombatMath.wave_rest(40), 1.0), "rest W40 = 1.0s")
 	# §3.5 波奖励查表 + 台阶波 ×2。
-	_check(g._wave_bonus(1) == 30, "bonus W1 = 30")
-	_check(g._wave_bonus(9) == 110, "bonus W9 = 110")
-	_check(g._wave_bonus(10) == 240, "bonus W10 = 240（台阶 ×2）")
-	_check(g._wave_bonus(20) == 440, "bonus W20 = 440（台阶 ×2）")
+	_check(BoomCombatMath.wave_bonus(1) == 30, "bonus W1 = 30")
+	_check(BoomCombatMath.wave_bonus(9) == 110, "bonus W9 = 110")
+	_check(BoomCombatMath.wave_bonus(10) == 240, "bonus W10 = 240（台阶 ×2）")
+	_check(BoomCombatMath.wave_bonus(20) == 440, "bonus W20 = 440（台阶 ×2）")
 	# §6 同屏上限 9→12。
 	g.wave = 8
 	_check(g._max_alive() == 10, "max_alive W8 = 10")
@@ -515,37 +543,37 @@ func _test_m4_waves() -> void:
 	g.wave = 50
 	_check(g._max_alive() == 12, "max_alive W50 封顶 12")
 	g.free()
-	# §7.4 属性阶梯：HP 3→4→5、速度 1.0→1.1→1.3 封顶（硬红线）。
+	# §7.4 属性阶梯：HP 30→40→50、W40 封顶 80；速度 1.0→1.1→1.3 封顶（硬红线）。
 	var g2 := _new_game()
-	_check(g2.spawn_enemy_at(Vector3(0.0, 0.0, -5.0)).hp == 3, "W1 敌 HP = 3")
+	_check(g2.spawn_enemy_at(Vector3(0.0, 0.0, -5.0)).hp == 30, "W1 敌 HP = 30（M8 30 点制）")
 	g2.wave = 5
-	_check(g2.spawn_enemy_at(Vector3(2.0, 0.0, 0.0)).hp == 4, "W5 敌 HP = 4")
+	_check(g2.spawn_enemy_at(Vector3(2.0, 0.0, 0.0)).hp == 40, "W5 敌 HP = 40")
 	g2.wave = 10
 	var j10 := g2.spawn_enemy_at(Vector3(4.0, 0.0, 0.0))
-	_check(j10.hp == 5, "W10 敌 HP = 5")
+	_check(j10.hp == 50, "W10 敌 HP = 50")
 	_check(absf(j10.walk_speed - 1.7 * 1.1) < 0.01, "W10 速度 ≈ 1.7×1.1")
 	_check(absf(j10.lunge_speed - 11.0 * 1.1) < 0.01, "W10 冲撞速度 ≈ 11×1.1")
 	g2.wave = 40
 	var j40 := g2.spawn_enemy_at(Vector3(-4.0, 0.0, 0.0))
 	_check(absf(j40.walk_speed - 1.7 * 1.3) < 0.01, "W40 速度封顶 1.7×1.3（硬红线）")
-	_check(j40.hp == 8, "W40 敌 HP 封顶 = 8")
+	_check(j40.hp == 80, "W40 敌 HP 封顶 = 80")
 	g2.free()
-	# §7.5 精英：W5 最后一只 HP×3 / 体型×1.4 / 速度×0.85，死亡金币雨 40。
+	# §7.5 精英：W5 最后一只 HP×3（40×3=120）/ 体型×1.4 / 速度×0.85，死亡金币雨 40。
 	var g3 := _new_game()
 	g3.wave = 5
 	var elite := g3.spawn_enemy_at(Vector3(0.0, 0.0, -5.0), true)
-	_check(elite.hp == 12, "W5 精英 HP = round(4×3) = 12")
+	_check(elite.hp == 120, "W5 精英 HP = round(40×3) = 120")
 	_check(absf(elite.radius - 0.6 * 1.4) < 0.001, "精英 radius ≈ 0.6×1.4")
 	_check(absf(elite.walk_speed - 1.7 * 0.85) < 0.01, "精英速度 = 1.7×0.85（更慢）")
 	_check(elite.elite, "精英标记已置位")
 	# 精英只在配额最后一只触发：未满额否 / 满额是 / W4 满额否。
-	g3._quota_current = g3._wave_quota(5)
+	g3._quota_current = BoomCombatMath.wave_quota(5)
 	g3._spawned_total = g3._quota_current - 1
 	_check(not g3._is_elite_spawn(), "W5 非最后一只不触发精英")
 	g3._spawned_total = g3._quota_current
 	_check(g3._is_elite_spawn(), "W5 最后一只触发精英")
 	g3.wave = 4
-	g3._quota_current = g3._wave_quota(4)
+	g3._quota_current = BoomCombatMath.wave_quota(4)
 	g3._spawned_total = g3._quota_current
 	_check(not g3._is_elite_spawn(), "W4 不触发精英")
 	# 击杀精英 → 金币雨 8×5 = 40 逐枚入账（§7.5 断言总额）。
@@ -615,33 +643,38 @@ func _test_m5_weapons() -> void:
 	_check(
 		(
 			sword != null
-			and sword.swing_dmg == 3
+			and sword.swing_dmg == 30
+			and sword.base_attack == 30
 			and sword.swing_max_targets == 6
 			and absf(sword.swing_range - 2.9) < 0.001
 			and absf(sword.swing_arc_deg - 150.0) < 0.001
 		),
-		"大剑弧斩参数 3伤/6敌/2.9m/150°",
+		"大剑弧斩参数 30伤/6敌/2.9m/150°（M8 base_attack=30）",
 	)
 	_check(
-		sword != null and sword.max_hp_bonus == 2 and absf(sword.move_mult - 0.85) < 0.001,
-		"大剑机体 +2HP / 移速×0.85",
+		sword != null and sword.max_hp_bonus == 20 and absf(sword.move_mult - 0.85) < 0.001,
+		"大剑机体 +20HP（50→70）/ 移速×0.85",
+	)
+	_check(
+		bubble != null and bubble.base_attack == 10 and bubble.proj_dmg == 10,
+		"泡泡 base_attack=10 与 proj_dmg 同源",
 	)
 	_check(BoomWeapons.get_def("nope").id == "bubble", "未知武器 id 回退泡泡枪")
 
 	# 2) 默认武器与 set_weapon 机体注入。
 	var g0 := _new_game()
 	_check(g0.player.weapon_id == "bubble", "BoomGame 默认武器注入泡泡")
-	_check(g0.player.max_hp == 5 and g0.player.hp == 5, "泡泡默认 max_hp=5 满血")
+	_check(g0.player.max_hp == 50 and g0.player.hp == 50, "泡泡默认 max_hp=50 满血（M8）")
 	_check(absf(g0.player.move_speed - 5.4) < 0.001, "泡泡移速 = 5.4")
 	g0.free()
 	var g := _new_game()
 	g.player.invuln_left = 10.0
 	g.set_weapon("greatsword")
-	_check(g.player.max_hp == 7 and g.player.hp == 7, "set_weapon 大剑 max_hp=7 满血")
+	_check(g.player.max_hp == 70 and g.player.hp == 70, "set_weapon 大剑 max_hp=70 满血")
 	_check(absf(g.player.move_speed - 5.4 * 0.85) < 0.001, "set_weapon 大剑移速 ×0.85")
 	_check(g.player.anim_form == "sword", "set_weapon 大剑切 sword 形态")
 	g.set_weapon("bubble")
-	_check(g.player.max_hp == 5 and g.player.anim_form == "bubble", "切回泡泡形态/HP 复位")
+	_check(g.player.max_hp == 50 and g.player.anim_form == "bubble", "切回泡泡形态/HP 复位")
 
 	# 3) 大剑弧斩：无目标不空挥（挥斩状态保持 NONE）。
 	g.set_weapon("greatsword")
@@ -675,7 +708,7 @@ func _test_m5_weapons() -> void:
 	_check(g.combo == 4, "弧斩多杀 combo 累积到 4")
 	g.free()
 
-	# 5) 选武器 UX（main 层）：选单默认泡泡 → 确认开战/隐藏/血条上限重建。
+	# 5) 选武器 UX（main 层）：选单默认泡泡 → 确认开战/隐藏/血条上限自适应。
 	var sel := _main.get("_select") as BoomWeaponSelect
 	_check(sel != null, "选武器面板已构建")
 	if sel != null:
@@ -689,10 +722,10 @@ func _test_m5_weapons() -> void:
 	else:
 		_check(sel.visible, "开局停留选单（无头桌面态）")
 		_check(not sim.match_started, "确认前对局未开战")
-		_check(sim.player.max_hp == 5, "选单期机体默认 5HP")
+		_check(sim.player.max_hp == 50, "选单期机体默认 50HP")
 		_main.call("_on_weapon_confirmed", "greatsword")
 		_check(sim.match_started, "确认【开战】后对局开始")
-		_check(sim.player.max_hp == 7 and sim.player.hp == 7, "选大剑开战 max_hp=7 血条上限重建")
+		_check(sim.player.max_hp == 70 and sim.player.hp == 70, "选大剑开战 max_hp=70")
 		_check(sim.player.anim_form == "sword", "确认大剑后形态切换 sword")
 		_check(not sel.visible, "开战后选单隐藏")
 
