@@ -32,6 +32,7 @@ var program_id: String = ""
 var fire_mode: int = FireMode.SOLUTION
 var source_track_id: String = ""
 var source_solution_version: int = 0
+var source_solution_time: float = 0.0  # REQ-B4-01：来源解提交时刻（审计用）
 
 var initial_course_deg: float = 0.0
 var speed_mode: int = SpeedMode.CRUISE
@@ -79,6 +80,7 @@ func snapshot() -> WeaponProgram:
 	p.fire_mode = fire_mode
 	p.source_track_id = source_track_id
 	p.source_solution_version = source_solution_version
+	p.source_solution_time = source_solution_time
 	p.initial_course_deg = initial_course_deg
 	p.speed_mode = speed_mode
 	p.initial_depth_band = initial_depth_band
@@ -210,6 +212,8 @@ static func make_manual(
 
 ## S1-07 §5.2 BEARING_ONLY：只有玩家可见方位。初始航向=方位、搜索中心=方位、
 ## 宽搜索半角；不携带任何隐藏距离（程序无 range 字段）。仅数据。
+## REQ-B4-02：自治授权默认 TIME（可编辑程序，不永久隐藏在 MANUAL），
+## 主动发射仍默认 MANUAL——发射后被动监听立即 ON。
 static func make_bearing_only(bearing_deg: float) -> WeaponProgram:
 	var p := WeaponProgram.new()
 	p.fire_mode = FireMode.BEARING_ONLY
@@ -220,7 +224,8 @@ static func make_bearing_only(bearing_deg: float) -> WeaponProgram:
 	p.guidance_authority = GuidanceAuthority.WIRE_ONLY
 	p.wire_guidance_enabled = true
 	p.active_enable_mode = ActiveEnableMode.MANUAL
-	p.autonomy_enable_mode = AutonomyEnableMode.MANUAL
+	p.autonomy_enable_mode = AutonomyEnableMode.TIME
+	p.autonomy_enable_time_s = 180.0
 	p.warhead_arm_distance_m = 300.0
 	p.fallback_program = p.make_default_fallback()
 	return p

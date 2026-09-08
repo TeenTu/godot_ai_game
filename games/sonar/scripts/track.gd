@@ -34,6 +34,8 @@ const DEPTH_ASSESSMENT_LOWER := "LOWER_LIKELY"
 var track_id: String = ""  # 如 "S01"、"M01"
 var source_type: String = "S"  # S/E/R/V/M
 var measurement_history: Array = []  # 按时间排序的 Measurement 数组
+# REQ-B1-03：证据增删/改绑时递增；纯选择/显示变化不动。
+var evidence_revision: int = 0
 var source_sensors: Array = []  # 参与本航迹的 sensor_id 列表
 var classification_probabilities: Dictionary = {}  # class_id -> 概率
 var affiliation: String = "unknown"  # friend/foe/neutral/unknown
@@ -58,6 +60,8 @@ var depth_assessment: String = DEPTH_ASSESSMENT_UNKNOWN
 var depth_assessment_source: String = ""  # 观测模型/来源标签（如 "PITCH_ANGLE"）
 var depth_assessment_confidence: float = 0.0  # 0..1
 var depth_assessment_updated_s: float = -1.0
+
+var _known_evidence: Dictionary = {}  # 已登记 evidence_id（revision 去重用）
 
 
 ## 更新深度评估。仅接受四个合法状态；来源/置信度必填，供 UI 展示假设依据。
@@ -103,8 +107,15 @@ static func create(source_type: String, counter: int, initial_m: Measurement) ->
 
 
 ## 追加一条测量。维护时间排序、传感器来源、更新时间。
+## REQ-B1-03：证据组进入时按"新增物理证据"递增 revision（A/B 镜像共享
+## evidence_id 只算一次）。
 func add_measurement(m: Measurement) -> void:
 	measurement_history.append(m)
+	# REQ-B1-03：新物理证据进入时递增 revision（A/B 镜像共享 evidence_id
+	# 只计一次；同 id 重复 add 不重复计——重复点击去重的兜底）。
+	if str(m.evidence_id) != "" and not _known_evidence.has(str(m.evidence_id)):
+		_known_evidence[str(m.evidence_id)] = true
+		evidence_revision += 1
 	# 按时间排序（通常已有序，但保险起见）
 	measurement_history.sort_custom(
 		func(a: Measurement, b: Measurement) -> bool: return a.timestamp < b.timestamp
@@ -145,6 +156,8 @@ func predicted_bearing_at(t: float) -> float:
 ## 找不到时返回 false；移除后空历史保留（由调用方决定是否弃用 Track）。
 func remove_measurement(m: Measurement) -> bool:
 	var idx: int = measurement_history.find(m)
+	# REQ-B1-05：删除证据递增 revision（使 Fit/Solution stale）。
+	evidence_revision += 1
 	if idx < 0:
 		return false
 	measurement_history.remove_at(idx)

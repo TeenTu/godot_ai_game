@@ -509,10 +509,12 @@ func _r20_fixed_listen_window(fails: Array) -> void:
 	var w := World.new()
 	w.load_scenario(_mk_scenario(0.0, 25.0, 20000.0, 40.0))
 	_assert_true(fails, "R20 ping ok", w.issue_ping())
-	# 窗口内（t=5s）仍在监听：远目标不得让窗口立即判死
+	# 窗口内（t=5s）仍在监听：远目标不得让窗口立即判死。
+	# REQ-B2-01 契约演变：超窗实体在发射时刻即不登记（旧实现先登记后到期
+	# 丢弃）；"固定监听窗绝不延长"的不变量保留，由 NO_RETURN 时点验证。
 	w.run_steps(10)  # t=5.0
 	_assert_eq(fails, "R20 still LISTENING inside window", w.ping_state_name(), "LISTENING")
-	_assert_eq(fails, "R20 1 echo pending inside window", str(w.pending_echo_count()), "1")
+	_assert_eq(fails, "R20 far target excluded at registration", str(w.pending_echo_count()), "0")
 	# 窗口到期（t=15.0）：远回波（26.7s 才到）被丢弃 → NO_RETURN。
 	# 旧缺陷会把 listen_end 拉到 max(窗, 最远τ+0.1)≈26.8s → 此刻仍 LISTENING。
 	w.run_steps(22)  # t=16.0

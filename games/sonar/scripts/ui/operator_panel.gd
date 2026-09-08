@@ -57,7 +57,12 @@ func _init() -> void:
 	var arr_opt := OptionButton.new()
 	for aid in OperatorSonar.ARRAY_DEFS:
 		arr_opt.add_item(aid)
-	arr_opt.item_selected.connect(func(i: int): array_changed.emit(arr_opt.get_item_text(i)))
+	arr_opt.item_selected.connect(
+		func(i: int):
+			# REQ-B6-02：每个阵列独立噪声底跟踪状态（阵列间增益互不污染）。
+			wf_bb.set_display_key("bb_" + arr_opt.get_item_text(i))
+			array_changed.emit(arr_opt.get_item_text(i))
+	)
 	_arr_opt = arr_opt
 	row.add_child(arr_opt)
 	_autocrew = CheckBox.new()
@@ -163,6 +168,57 @@ func _init() -> void:
 			_lbl_bb_mode.text = "RELATIVE (bow=0°)" if i == 0 else "TRUE STABILIZED (north-up)"
 	)
 	bb_mode_row.add_child(bb_mode_opt)
+
+	# REQ-B6-03：显示控制（Palette / AGC / Dynamic Range / Reset Display）。
+	# 纯显示参数：不影响任何 peak/Mark/evidence/Track/Fit，不消耗仿真 RNG。
+	var disp_row := HBoxContainer.new()
+	disp_row.add_theme_constant_override("separation", 6)
+	add_child(disp_row)
+	var pal_opt := OptionButton.new()
+	for p in ["HOT", "GRAYSCALE", "BLUE", "AMBER"]:
+		pal_opt.add_item(p)
+	pal_opt.item_selected.connect(
+		func(i: int):
+			wf_bb.set_palette(["HOT", "GRAYSCALE", "BLUE", "AMBER"][i])
+			wf_nb.set_palette(["HOT", "GRAYSCALE", "BLUE", "AMBER"][i])
+			wf_demon.set_palette(["HOT", "GRAYSCALE", "BLUE", "AMBER"][i])
+	)
+	disp_row.add_child(pal_opt)
+	var agc_opt := OptionButton.new()
+	for m in ["AGC SLOW", "AGC FAST", "AGC OFF"]:
+		agc_opt.add_item(m)
+	agc_opt.select(0)
+	agc_opt.item_selected.connect(
+		func(i: int):
+			var m: String = ["SLOW", "FAST", "OFF"][i]
+			wf_bb.set_agc_mode(m)
+			wf_nb.set_agc_mode(m)
+			wf_demon.set_agc_mode(m)
+	)
+	disp_row.add_child(agc_opt)
+	var dr_spin := SpinBox.new()
+	dr_spin.min_value = 12.0
+	dr_spin.max_value = 36.0
+	dr_spin.step = 1.0
+	dr_spin.value = 24.0
+	dr_spin.suffix = " dB"
+	dr_spin.value_changed.connect(
+		func(v: float):
+			wf_bb.set_dynamic_range_db(v)
+			wf_nb.set_dynamic_range_db(v)
+			wf_demon.set_dynamic_range_db(v)
+	)
+	disp_row.add_child(dr_spin)
+	var reset_btn := Button.new()
+	reset_btn.text = "Reset Display"
+	reset_btn.pressed.connect(
+		func():
+			wf_bb.reset_display()
+			wf_nb.reset_display()
+			wf_demon.reset_display()
+			dr_spin.set_value_no_signal(24.0)
+	)
+	disp_row.add_child(reset_btn)
 
 	wf_bb = WaterfallView.new()
 	wf_bb.axis_mode = "bearing"

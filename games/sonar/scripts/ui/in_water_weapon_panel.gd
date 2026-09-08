@@ -155,6 +155,11 @@ func _mk_btn(parent: Control, text: String, action: Callable) -> Button:
 ## 命令分发：全部经 Torpedo 线控通道（内部有 _cmd_gate 门控并记录
 ## last_cmd_reject_reason）。失败时显示具体原因（P1-01）。
 func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
+	# REQ-B5-05：任务终局后一切线控命令拒绝（统一命令门）。
+	if _world != null and not _world.is_mission_running():
+		if _note != null:
+			_note.text = "MISSION ENDED — wire commands rejected"
+		return
 	var ok: bool = false
 	match kind:
 		"course":

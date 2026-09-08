@@ -124,19 +124,27 @@ func sync() -> void:
 
 
 func _on_course(deg: float) -> void:
+	if not _commands_ok():
+		return
 	_own().command_course(NavUtils.wrap360(deg))
 
 
 func _on_speed(kn: float) -> void:
+	if not _commands_ok():
+		return
 	_own().command_speed(maxf(kn, 0.0))
 
 
 func _on_depth(v: float) -> void:
+	if not _commands_ok():
+		return
 	_own().command_depth(maxf(v, 0.0))
 
 
 ## S1-07A：层按钮 → hold 深度 → 只写 commanded_depth_m。
 func _on_band(band: String) -> void:
+	if not _commands_ok():
+		return
 	if _spin_depth == null:
 		return
 	var dm: RefCounted = _depth_model()
@@ -164,6 +172,8 @@ func _on_slow_down() -> void:
 
 
 func _change_course(delta_deg: float) -> void:
+	if not _commands_ok():
+		return
 	if _spin_course == null:
 		return
 	var new_deg: float = NavUtils.wrap360(_spin_course.value + delta_deg)
@@ -172,6 +182,8 @@ func _change_course(delta_deg: float) -> void:
 
 
 func _change_speed(delta_kn: float) -> void:
+	if not _commands_ok():
+		return
 	if _spin_speed == null:
 		return
 	var new_kn: float = clampf(_spin_speed.value + delta_kn, 0.0, 30.0)
@@ -181,6 +193,11 @@ func _change_speed(delta_kn: float) -> void:
 
 func _own() -> TruthEntity:
 	return _world.world["own"] if _world != null else null
+
+
+## REQ-B5-05：任务终局后拒绝一切本艇机动命令。
+func _commands_ok() -> bool:
+	return _world != null and _world.is_mission_running()
 
 
 ## 取场景温跃层模型（未启用返回 null；层按钮回退 70/180 默认）。

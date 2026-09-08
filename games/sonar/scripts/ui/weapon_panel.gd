@@ -7,6 +7,7 @@ extends VBoxContainer
 ## Truth own、不直接调用 weapons.fire，只负责「展示 + 触发 + 模式提示」。
 
 signal fire_requested
+signal fire_mode_changed(mode: String)  # REQ-B1-04：显式发射模式选择
 signal status(msg: String)
 
 const MAX_LOG: int = 5
@@ -16,11 +17,15 @@ const SHALLOW_ATTACK_DEPTH_M: float = 12.0
 var weapons: WeaponSystem = null
 var chart: ChartView = null
 var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰减用）
+## REQ-B4-01/02：发射前编程控制器（玩家可编辑项 + 推荐默认构建）。
+var programmer := LaunchProgrammer.new()
 
 var _btn_fire: Button = null
+var _opt_fire_mode: OptionButton = null  # REQ-B1-04
 var _chk_shallow: CheckBox = null
 var _sel_preset: OptionButton = null
 var _lbl_fire_hint: Label = null
+var _lbl_prog_notice: Label = null  # REQ-B4-02：推荐默认/授权条件明示
 var _lbl_weapons: Label = null
 var _weapon_log: Array = []
 var _chart_dirty: Callable = Callable()
@@ -36,6 +41,21 @@ func _build() -> void:
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
+	# REQ-B1-04：FIRE MODE 显式选择——SOLUTION 只用选中 Contact 的解。
+	var fm_row := HBoxContainer.new()
+	var fm_lbl := Label.new()
+	fm_lbl.text = "FIRE MODE"
+	fm_lbl.add_theme_font_size_override("font_size", 12)
+	fm_row.add_child(fm_lbl)
+	_opt_fire_mode = OptionButton.new()
+	for m in ["SOLUTION", "BEARING_ONLY", "MANUAL"]:
+		_opt_fire_mode.add_item(m)
+	_opt_fire_mode.select(0)
+	_opt_fire_mode.item_selected.connect(
+		func(i: int): fire_mode_changed.emit(_opt_fire_mode.get_item_text(i))
+	)
+	fm_row.add_child(_opt_fire_mode)
+	add_child(fm_row)
 	# REQ-01：浅水攻击定深开关（水面/浅深目标；有限升降速率逼近，非瞬移）。
 	_chk_shallow = CheckBox.new()
 	_chk_shallow.text = "Shallow attack depth 12m"
@@ -60,6 +80,7 @@ func _build() -> void:
 				weapons.search_depth_preset = i
 	)
 	add_child(_sel_preset)
+	_build_program_editor()
 	_lbl_fire_hint = Label.new()
 	_lbl_fire_hint.text = ""
 	_lbl_fire_hint.add_theme_font_size_override("font_size", 12)
@@ -72,7 +93,6 @@ func _build() -> void:
 	add_child(_lbl_weapons)
 
 
-## 由 main_ui 装配后注入依赖并监听武器事件。
 func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> void:
 	weapons = p_weapons
 	chart = p_chart
@@ -93,6 +113,107 @@ func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> 
 func set_fire_context(text: String) -> void:
 	if _lbl_fire_hint != null:
 		_lbl_fire_hint.text = text
+
+
+## REQ-B4-01：完整发射前程序编辑区（搜索扇区/模式、主动/自治授权条件、
+## 导线、引信、解保距离、速度模式）。所有项写入 programmer 草稿，Fire 时
+## 经 FireExecutor→LaunchProgrammer.build_program 合成不可变程序快照。
+func _build_program_editor() -> void:
+	var t := Label.new()
+	t.text = "Program (pre-launch)"
+	t.add_theme_font_size_override("font_size", 13)
+	add_child(t)
+	_lbl_prog_notice = Label.new()
+	_lbl_prog_notice.add_theme_font_size_override("font_size", 11)
+	_lbl_prog_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_lbl_prog_notice)
+	var row_a := HBoxContainer.new()
+	row_a.add_theme_constant_override("separation", 3)
+	_add_lbl(row_a, "Speed")
+	var sp := OptionButton.new()
+	for i in WeaponProgram.SpeedMode.size():
+		sp.add_item(WeaponProgram.speed_mode_name(i), i)
+	sp.select(WeaponProgram.SpeedMode.CRUISE)
+	sp.item_selected.connect(func(i: int): programmer.speed_mode = i)
+	row_a.add_child(sp)
+	_add_lbl(row_a, "Half°")
+	var half := SpinBox.new()
+	half.min_value = 0.0
+	half.max_value = 180.0
+	half.step = 5.0
+	half.value = 0.0  # 0 = 用推荐默认
+	half.value_changed.connect(func(v: float): programmer.search_half_angle_deg = v)
+	row_a.add_child(half)
+	add_child(row_a)
+	var row_b := HBoxContainer.new()
+	row_b.add_theme_constant_override("separation", 3)
+	_add_lbl(row_b, "Pattern")
+	var pat := OptionButton.new()
+	pat.add_item("AUTO")
+	for i in WeaponProgram.SearchPattern.size():
+		pat.add_item(WeaponProgram.SearchPattern.keys()[i], i + 1)
+	pat.item_selected.connect(func(i: int): programmer.search_pattern = i if i > 0 else -1)
+	row_b.add_child(pat)
+	_add_lbl(row_b, "Active")
+	var am := OptionButton.new()
+	am.add_item("AUTO")
+	for i in WeaponProgram.ActiveEnableMode.size():
+		am.add_item(WeaponProgram.ActiveEnableMode.keys()[i], i + 1)
+	am.item_selected.connect(func(i: int): programmer.active_enable_mode = i if i > 0 else -1)
+	row_b.add_child(am)
+	add_child(row_b)
+	var row_c := HBoxContainer.new()
+	row_c.add_theme_constant_override("separation", 3)
+	_add_lbl(row_c, "Autonomy")
+	var um := OptionButton.new()
+	um.add_item("AUTO")
+	for i in WeaponProgram.AutonomyEnableMode.size():
+		um.add_item(WeaponProgram.AutonomyEnableMode.keys()[i], i + 1)
+	um.item_selected.connect(func(i: int): programmer.autonomy_enable_mode = i if i > 0 else -1)
+	row_c.add_child(um)
+	_add_lbl(row_c, "Val")
+	var av := SpinBox.new()
+	av.min_value = 0.0
+	av.max_value = 20000.0
+	av.step = 100.0
+	av.value = 0.0
+	av.value_changed.connect(func(v: float): programmer.autonomy_enable_value = v)
+	row_c.add_child(av)
+	add_child(row_c)
+	var row_d := HBoxContainer.new()
+	row_d.add_theme_constant_override("separation", 3)
+	_add_lbl(row_d, "Fuze")
+	var fz := OptionButton.new()
+	for f in [
+		FuzeController.FUZE_CONTACT,
+		FuzeController.FUZE_ACOUSTIC_PROXIMITY,
+		FuzeController.FUZE_MAGNETIC_PROXIMITY
+	]:
+		fz.add_item(f)
+	fz.item_selected.connect(func(i: int): programmer.fuze_mode = fz.get_item_text(i))
+	row_d.add_child(fz)
+	_add_lbl(row_d, "Arm m")
+	var arm := SpinBox.new()
+	arm.min_value = 0.0
+	arm.max_value = 5000.0
+	arm.step = 50.0
+	arm.value = 300.0
+	arm.value_changed.connect(func(v: float): programmer.warhead_arm_distance_m = v)
+	row_d.add_child(arm)
+	var wire := CheckBox.new()
+	wire.text = "Wire"
+	wire.button_pressed = true
+	wire.add_theme_font_size_override("font_size", 11)
+	wire.toggled.connect(func(on: bool): programmer.wire_guidance_enabled = on)
+	row_d.add_child(wire)
+	add_child(row_d)
+
+
+func _add_lbl(parent: Control, text: String) -> void:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 11)
+	parent.add_child(l)
 
 
 func _on_weapon_event(tid: String, kind: String, detail: Dictionary) -> void:
@@ -136,6 +257,9 @@ func refresh() -> void:
 func _refresh() -> void:
 	if weapons == null or _lbl_weapons == null:
 		return
+	# REQ-B4-02：推荐默认/风险说明明示（含自治授权距离/时间推导）。
+	if _lbl_prog_notice != null:
+		_lbl_prog_notice.text = programmer.last_notice
 	_lbl_weapons.text = (
 		"Tubes: %d/%d loaded  In-water: %d"
 		% [weapons.loaded_count(), weapons.tubes.size(), weapons.torpedoes.size()]

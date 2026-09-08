@@ -187,6 +187,13 @@ func fire_program(
 
 ## 由 SystemSolution 构建 SOLUTION 程序（瞄准点 = 解位置按解航速/航向 + 解龄
 ## 外推；只用解数据，非 Truth）。玩家修改后会以 snapshot 形式成为实际程序。
+## REQ-B4-02 推荐默认：
+##   - 来源绑定不可变：source_track_id / source_solution_version /
+##     source_solution_time 写入程序快照；
+##   - 搜索中心 = 解外推后的拦截方位（lead bearing）；
+##   - 自治授权默认 DISTANCE，授权距离由解估计射程推导（射程 × 0.45，
+##     夹 800~8000 m），UI 经 LaunchProgrammer.autonomy_notice 明示；
+##   - 主动发射默认 MANUAL；被动接收机发射后默认 ON。
 func _build_solution_program(
 	sys: SystemSolution, own_e: float, own_n: float, sim_time: float
 ) -> WeaponProgram:
@@ -207,6 +214,9 @@ func _build_solution_program(
 	var lead_bearing: float = NavUtils.wrap360(rad_to_deg(atan2(aim_e - own_e, aim_n - own_n)))
 	var p := WeaponProgram.new()
 	p.fire_mode = WeaponProgram.FireMode.SOLUTION
+	p.source_track_id = sys.source_track_id
+	p.source_solution_version = sys.source_fit_version
+	p.source_solution_time = sys.solution_time
 	p.initial_course_deg = lead_bearing
 	p.search_center_deg = lead_bearing
 	p.search_half_angle_deg = 30.0
@@ -214,7 +224,8 @@ func _build_solution_program(
 	p.guidance_authority = WeaponProgram.GuidanceAuthority.WIRE_ONLY
 	p.wire_guidance_enabled = true
 	p.active_enable_mode = WeaponProgram.ActiveEnableMode.MANUAL
-	p.autonomy_enable_mode = WeaponProgram.AutonomyEnableMode.MANUAL
+	p.autonomy_enable_mode = WeaponProgram.AutonomyEnableMode.DISTANCE
+	p.autonomy_enable_distance_m = clampf(sys.range_m * 0.45, 800.0, 8000.0)
 	p.warhead_arm_distance_m = 300.0
 	p.fallback_program = p.make_default_fallback()
 	return p

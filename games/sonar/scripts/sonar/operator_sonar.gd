@@ -129,6 +129,9 @@ var _last_row_t: float = -1e9
 var _last_autocrew_t: float = -1e9
 var _ambiguity_counter: int = 0
 var _evidence_counter: int = 0  # S1-00：玩家/自动 Mark 的物理证据唯一 id
+# REQ-B1-02：瀑布行/峰稳定身份 + 同峰重复点击去重（不新增物理证据）。
+var _row_counter: int = 0
+var _marks_by_row_peak: Dictionary = {}
 var _rng: RandomNumberGenerator = null
 var _env: RefCounted = null
 var _own_ref: RefCounted = null
@@ -436,6 +439,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 					if db < 12.0:
 						bb[i] = maxf(bb[i], NOISE_FLOOR_DB + amp * exp(-0.5 * pow(db / beamw, 2.0)))
 				var peak: Dictionary = {
+					"peak_id": "p%02d" % bb_peaks.size(),
 					"bearing_deg": brg_disp,
 					"level_db": amp,
 					"se_db": se_db,
@@ -507,6 +511,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		bb_rows
 		. append(
 			{
+				"row_id": _next_row_id(),
 				"t": sim_time,
 				"array_id": active_array_id,
 				"sensor_id": "OP_" + active_array_id,
@@ -630,6 +635,12 @@ func _argmax(probs: Dictionary) -> String:
 
 
 ## 最新 BB 行的主峰列表（供 UI/测试发现目标）。
+## REQ-B1-02：瀑布行稳定唯一 ID（行生成时分配一次）。
+func _next_row_id() -> String:
+	_row_counter += 1
+	return "row_%05d" % _row_counter
+
+
 func latest_peaks() -> Array:
 	if bb_rows.is_empty():
 		return []
@@ -684,6 +695,13 @@ func create_mark(
 			best_disp_diff = dd
 			se_db = float(pk["se_db"])
 			matched = pk
+	# REQ-B1-02：同一 row_id+peak_id 重复点击返回既有 Measurement——不新增
+	# 物理证据、不重抽噪声；主流程改为"选中既有 Mark"。
+	var dedupe_key := ""
+	if row.has("row_id") and not matched.is_empty() and matched.has("peak_id"):
+		dedupe_key = "%s:%s" % [str(row["row_id"]), str(matched["peak_id"])]
+		if _marks_by_row_peak.has(dedupe_key):
+			return _marks_by_row_peak[dedupe_key]
 	var sigma: float = float(def["sigma_min"])
 	if se_db > 0.0:
 		sigma = maxf(sigma * pow(2.0, -se_db / 6.0), 0.2)
@@ -715,10 +733,10 @@ func create_mark(
 	# （matched 非空）直接用峰方位转帧，不再二次抽样（峰已含测量噪声，二次
 	# 抽样会让 Measurement 方位 ≠ 玩家所见峰方位）。仅无峰上下文
 	# （测试/直接调用）保留一次加噪模拟测量误差。
+	# REQ-B1-02：点击值即玩家所见测量值——无峰自由点击直接用点击方位，
+	# 不再重抽随机误差（物理噪声只在行生成时抽一次）；峰命中沿用峰方位。
 	var brg_in: float = bearing_deg
-	if matched.is_empty():
-		brg_in = bearing_deg + _randn() * sigma
-	elif matched.has("bearing_deg"):
+	if not matched.is_empty() and matched.has("bearing_deg"):
 		brg_in = float(matched["bearing_deg"])
 	if as_true:
 		# REQ-10：匹配峰存的是显示 frame（艇艏相对）方位——TRUE 模式必须
@@ -746,6 +764,8 @@ func create_mark(
 		m.array_center_east_m = m.observer_east_m
 		m.array_center_north_m = m.observer_north_m
 		m.actual_tow_length_m = tow_len_m
+	if dedupe_key != "":
+		_marks_by_row_peak[dedupe_key] = m
 	return m
 
 

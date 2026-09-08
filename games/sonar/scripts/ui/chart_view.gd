@@ -54,6 +54,7 @@ var layers: Dictionary = {
 	"threat": true,  # P0-07 威胁证据图层
 }
 var show_all_lobs: bool = false  # "All LOB History" 开关（默认关闭=代表性 24 条）
+var show_selected_only: bool = false  # REQ-B3-03："Selected Track only / All Tracks" 切换
 var show_truth: bool = false  # Show Truth 开关（与 layers.truth 同步）
 
 # --- 相机 ---
@@ -104,11 +105,13 @@ var _drag_from: Vector2 = Vector2.ZERO
 var _cam_at_press: Vector2 = Vector2.ZERO
 var _tick_screens: Array = []  # 绘制期缓存 [{pos, time}] 供点击命中
 var _label_boxes: Array = []  # 绘制期缓存 Rect2，标签防重叠
+var _mouse_pos: Vector2 = Vector2(-1e6, -1e6)  # LOB 起点 hover（REQ-B3-03）
 
 
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_exited.connect(func(): _mouse_pos = Vector2(-1e6, -1e6))
 
 
 # ------------------------------------------------------------------
@@ -196,6 +199,7 @@ func _gui_input(event: InputEvent) -> void:
 					_on_click(mb.position)
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
+		_mouse_pos = mm.position
 		if _dragging:
 			var d: Vector2 = (mm.position - _drag_from) / _scale_px()
 			cam_center = _cam_at_press - Vector2(d.x, -d.y)
@@ -315,9 +319,8 @@ func _draw_own_track() -> void:
 			pts.append(world_to_screen(p))
 		draw_polyline(pts, Color(COL_OWN.r, COL_OWN.g, COL_OWN.b, 0.5), 2.0)
 	var s: Vector2 = world_to_screen(own_pos)
-	# 屏幕坐标系 y 向下：世界北(+N)对应屏幕 -y
-	var rad: float = own_course_deg * PI / 180.0
-	var fwd := Vector2(sin(rad), -cos(rad))
+	# 唯一方向换算（REQ-B3-01）：屏幕点直接加像素方向。
+	var fwd := NavUtils.bearing_to_screen_dir(own_course_deg)
 	var side := Vector2(-fwd.y, fwd.x)
 	var tip: Vector2 = s + fwd * 12.0
 	var left: Vector2 = s - fwd * 7.0 - side * 7.0
@@ -345,8 +348,7 @@ func _draw_range_ring() -> void:
 	if band_px >= 2.0:
 		draw_arc(cs, r_px, 0.0, TAU, 128, Color(col.r, col.g, col.b, 0.16), band_px)
 	draw_arc(cs, r_px, 0.0, TAU, 128, Color(col.r, col.g, col.b, 0.95), 1.5)
-	var brad: float = deg_to_rad(float(range_ring.get("bearing_deg", 0.0)))
-	var dirv := Vector2(sin(brad), -cos(brad))  # 屏幕 y 向下
+	var dirv := NavUtils.bearing_to_screen_dir(float(range_ring.get("bearing_deg", 0.0)))
 	draw_line(cs, cs + dirv * r_px, Color(col.r, col.g, col.b, 0.9), 1.0)
 	var lp: Vector2 = cs + dirv * r_px
 	var lab: String = "R %.1fkm ±%.0fm" % [r_m / 1000.0, s_m]
@@ -401,15 +403,32 @@ func _nearest_idx(sorted: Array, t: float) -> int:
 	return best_i
 
 
+## LOB 最终透明度合成（REQ-B3-04）：alpha = track_alpha × age_alpha × state_alpha。
+## - 悬停/点击选中的测量：完全高亮 1.0；
+## - 当前 Track 最新一条：高亮 0.95；
+## - 非当前 Track：track_alpha=0.15（明显弱化，绝不把 selection 藏在
+##   Color.alpha 里再在重建时丢失）；
+## - 拓曳 A/B 歧义候选支：state_alpha=0.32，同权（不分支符号泄露真假）。
 func _lob_alpha(lob: Dictionary, is_latest: bool, is_sel: bool) -> float:
 	if is_sel:
 		return 1.0
-	if is_latest:
-		return 0.95
+	var is_track: bool = bool(lob.get("is_track_selected", false))
+	var state_a: float = 0.32 if bool(lob.get("candidate", false)) else 1.0
+	var track_a: float = 1.0 if is_track else 0.15
 	var age: float = float(lob.get("time", 0.0))
 	var age_s: float = maxf(fit_now_time - age, 0.0) if fit_now_time > 0.0 else 0.0
-	# 绝对半衰期衰减，夹在 0.25~0.5
-	return clampf(pow(0.5, age_s / HALF_LIFE_S) * 0.5, 0.25, 0.5)
+	# 绝对半衰期衰减（不按最老样本归一化）
+	var age_a: float = clampf(pow(0.5, age_s / HALF_LIFE_S), 0.25, 1.0)
+	if is_track and is_latest:
+		age_a = maxf(age_a, 0.95)
+	return track_a * age_a * state_a
+
+
+## Selected-only 模式：非当前 Track 的 LOB 完全不绘制（REQ-B3-03/04）。
+func _lob_layer_visible(lob: Dictionary) -> bool:
+	if not show_selected_only:
+		return true
+	return bool(lob.get("is_track_selected", false))
 
 
 func _draw_lobs() -> void:
@@ -420,15 +439,17 @@ func _draw_lobs() -> void:
 	# 矢量线：LOB 是射线，屏幕空间延伸到海图边界，缩放不改变线型。
 	var ray_len_px: float = size.length() * 1.5
 	for lob in reps:
+		if not _lob_layer_visible(lob):
+			continue
 		var t: float = float(lob["time"])
 		var is_latest: bool = t >= t_latest
 		var is_sel: bool = t == selected_time or t == hover_time
 		var inlier: bool = bool(lob.get("inlier", true))
 		var candidate: bool = bool(lob.get("candidate", false))
 		var col: Color = lob.get("color", Color(1.0, 0.85, 0.3))
+		var alpha: float = _lob_alpha(lob, is_latest, is_sel)
 		var origin_s := world_to_screen(lob["origin"])
-		var brad: float = deg_to_rad(float(lob["bearing_deg"]))
-		var dir_px := Vector2(sin(brad), -cos(brad))  # 屏幕 y 向下
+		var dir_px := NavUtils.bearing_to_screen_dir(float(lob["bearing_deg"]))
 		var end_s: Vector2 = origin_s + dir_px * ray_len_px
 		if not inlier:
 			_draw_dashed(origin_s, end_s, COL_OUTLIER, 1.5)
@@ -437,47 +458,88 @@ func _draw_lobs() -> void:
 			# S1-03C-P1-02：未消歧的 A/B 候选组两条**同权**弱化（细虚线 + 半透明 +
 			# 同色同透明度）——绝不因 branch 符号把一边画实线泄露真假倾向；
 			# 歧义性只以弱化候选呈现（选中时标 LR AMBIGUOUS）。
-			_draw_dashed(origin_s, end_s, Color(col.r, col.g, col.b, 0.32), 1.0)
+			_draw_dashed(origin_s, end_s, Color(col.r, col.g, col.b, alpha), 1.0)
 		elif is_sel or is_latest:
-			draw_line(
-				origin_s, end_s, Color(col.r, col.g, col.b, _lob_alpha(lob, is_latest, is_sel)), 2.5
-			)
+			draw_line(origin_s, end_s, Color(col.r, col.g, col.b, alpha), 2.5)
 		else:
-			draw_line(
-				origin_s, end_s, Color(col.r, col.g, col.b, _lob_alpha(lob, false, false)), 1.0
-			)
+			draw_line(origin_s, end_s, Color(col.r, col.g, col.b, alpha), 1.0)
 		# σ 扇区：仅悬停 / 选中测量（图例开关 sigma 控制）；候选支不画同等级扇区
 		if bool(layers.get("sigma", true)) and is_sel and not candidate:
 			_draw_sigma_wedge(lob, col)
-		draw_circle(
-			origin_s,
-			2.5 if not candidate else 1.8,
-			Color(col.r, col.g, col.b, 0.9 if not candidate else 0.45),
-		)
+		_draw_sensor_icon(origin_s, col, alpha)
 	# 选中 LOB 附加高亮圈；候选支补 "LR AMBIGUOUS" 标注
 	if selected_time >= 0.0 or hover_time >= 0.0:
 		for lob in reps:
 			if float(lob["time"]) in [selected_time, hover_time]:
 				draw_arc(world_to_screen(lob["origin"]), 7.0, 0, TAU, 20, Color(1, 1, 1, 0.8), 2.0)
 				if bool(lob.get("candidate", false)):
-					var brad2: float = deg_to_rad(float(lob["bearing_deg"]))
-					var dir2 := Vector2(sin(brad2), -cos(brad2))
+					var dir2 := NavUtils.bearing_to_screen_dir(float(lob["bearing_deg"]))
 					var lp2: Vector2 = world_to_screen(lob["origin"]) + dir2 * ray_len_px * 0.3
 					_draw_label(lp2 + Vector2(6, 0), "LR AMBIGUOUS", Color(1.0, 0.9, 0.5, 0.9), 11)
+	_draw_lob_hover_info(reps)
+
+
+## LOB 起点传感器图标（REQ-B3-03）：小菱形代替圆点，语义 = 测量时刻的
+## 传感器位置（BOW/FLANK/ACTIVE=历史本艇位，TOWED=阵声学中心）。
+func _draw_sensor_icon(pos: Vector2, col: Color, alpha: float) -> void:
+	var a: float = clampf(alpha, 0.15, 1.0)
+	var c := Color(col.r, col.g, col.b, a)
+	draw_colored_polygon(
+		PackedVector2Array(
+			[
+				pos + Vector2(0, -4.0),
+				pos + Vector2(4.0, 0),
+				pos + Vector2(0, 4.0),
+				pos + Vector2(-4.0, 0)
+			]
+		),
+		c
+	)
+
+
+## LOB 起点 hover 信息（REQ-B3-03）：Track / 传感器 / 时刻 / 龄期 / 方位 / σ。
+func _draw_lob_hover_info(reps: Array) -> void:
+	if _mouse_pos.x < 0.0:
+		return
+	var best: Dictionary = {}
+	var best_d: float = 14.0
+	for lob in reps:
+		if not _lob_layer_visible(lob):
+			continue
+		var d: float = (world_to_screen(lob["origin"]) as Vector2).distance_to(_mouse_pos)
+		if d < best_d:
+			best_d = d
+			best = lob
+	if best.is_empty():
+		return
+	var age_s: float = maxf(fit_now_time - float(best.get("time", 0.0)), 0.0)
+	var txt := (
+		"%s  %s\nt=%s age=%.0fs  B=%.1f° ±%.1f°"
+		% [
+			str(best.get("track_id", "?")),
+			str(best.get("sensor_id", "?")),
+			_mmss(float(best.get("time", 0.0))),
+			age_s,
+			float(best.get("bearing_deg", 0.0)),
+			float(best.get("sigma_deg", 0.0)),
+		]
+	)
+	_draw_label(_mouse_pos + Vector2(12, -8), txt, Color(1, 1, 1, 0.95), 12)
 
 
 func _draw_sigma_wedge(lob: Dictionary, col: Color) -> void:
-	var brad: float = deg_to_rad(float(lob["bearing_deg"]))
+	var brad: float = float(lob["bearing_deg"])
 	var sig: float = float(lob.get("sigma_deg", 1.0))
 	var wedge_len: float = view_radius_m * 0.7
-	var a0: float = deg_to_rad(float(lob["bearing_deg"]) - 2.0 * sig)
-	var a1: float = deg_to_rad(float(lob["bearing_deg"]) + 2.0 * sig)
+	var a0: float = brad - 2.0 * sig
+	var a1: float = brad + 2.0 * sig
+	# 唯一方向换算（REQ-B3-01）：世界点 + 世界方向后再 world_to_screen。
 	var wedge := PackedVector2Array(
 		[
 			world_to_screen(lob["origin"]),
-			world_to_screen(lob["origin"] + Vector2(sin(a0), cos(a0)) * wedge_len * 0.35),
-			world_to_screen(lob["origin"] + Vector2(sin(brad), cos(brad)) * wedge_len),
-			world_to_screen(lob["origin"] + Vector2(sin(a1), cos(a1)) * wedge_len * 0.35),
+			world_to_screen(lob["origin"] + NavUtils.bearing_to_world_dir(a0) * wedge_len * 0.35),
+			world_to_screen(lob["origin"] + NavUtils.bearing_to_world_dir(brad) * wedge_len),
+			world_to_screen(lob["origin"] + NavUtils.bearing_to_world_dir(a1) * wedge_len * 0.35),
 		]
 	)
 	draw_colored_polygon(wedge, Color(col.r, col.g, col.b, 0.10))
@@ -598,7 +660,9 @@ func _draw_cov_ellipse(now_s: Vector2) -> void:
 	var pts := PackedVector2Array()
 	for i in range(49):
 		var ang: float = TAU * float(i) / 48.0
-		var local := Vector2(cos(ang) * a, sin(ang) * b)
+		var ca: float = cos(ang)
+		var sa: float = sin(ang)
+		var local := Vector2(ca * a, sa * b)
 		var rot := Vector2(
 			local.x * cos(theta) - local.y * sin(theta), local.x * sin(theta) + local.y * cos(theta)
 		)
@@ -739,8 +803,9 @@ func _ellipse_extent() -> Array:
 	return [c + Vector2(r, r), c - Vector2(r, r)]
 
 
-## P0-07：净化证据 → 威胁 LOB 图层数据。observer 用证据内接收时刻本艇快照
-## （本艇机动后 LOB 起点不漂移，AT-09）；无快照的旧证据跳过。
+## REQ-B3-02：净化证据 → 威胁 LOB 图层数据。observer 用证据内接收时刻本艇快照
+## （本艇机动后 LOB 起点不漂移）；带主动测距（range_m，Batch 2 链路）的证据
+## 升级为 ACTIVE_RETURN（估计点 + 范围环 + 误差区）；无快照的旧证据跳过。
 func set_threat_evidence(evs: Array, sim_now: float) -> void:
 	var out: Array = []
 	for e in evs:
@@ -751,6 +816,9 @@ func set_threat_evidence(evs: Array, sim_now: float) -> void:
 		var kind: String = str(e.get("evidence_kind", "ACOUSTIC_EVENT"))
 		if kind == "DETONATION" or kind == "DECOY":
 			continue
+		var has_rng: bool = e.has("range_m") and float(e["range_m"]) > 0.0
+		if has_rng:
+			kind = "ACTIVE_RETURN"
 		(
 			out
 			. append(
@@ -762,6 +830,9 @@ func set_threat_evidence(evs: Array, sim_now: float) -> void:
 					"sigma_deg": float(e.get("bearing_sigma_deg", 2.0)),
 					"kind": kind,
 					"time": float(e.get("timestamp", sim_now)),
+					"confidence": float(e.get("confidence", 0.0)),
+					"range_m": float(e.get("range_m", -1.0)),
+					"range_sigma_m": float(e.get("range_sigma_m", 0.0)),
 					"length_m": THREAT_LOB_LENGTH_M,
 				}
 			)
@@ -774,6 +845,8 @@ func _threat_color(kind: String) -> Color:
 	if kind == "LAUNCH_TRANSIENT":
 		return COL_THREAT_LAUNCH
 	if kind == "ACTIVE_PING":
+		return COL_THREAT_PING
+	if kind == "ACTIVE_RETURN":
 		return COL_THREAT_PING
 	return COL_THREAT_NOISE  # RUNNING_NOISE / 其他
 
@@ -798,47 +871,106 @@ func torpedo_click_points() -> Array:
 	return out
 
 
-## 威胁证据 LOB：有限长度射线 + ±2σ 不确定扇形（从 observer 接收时刻快照
-## 画出），颜色/线型区分种类，透明度随龄期衰减。每条 ThreatTrack 只保留
-## 最新一条（抑制每秒一条线的闪烁，P1-11.3）。
+## 威胁证据 LOB（REQ-B3-01/02）：唯一方向换算（世界点 + 世界方向），有限长度
+## 射线 + ±2σ 不确定扇形（从 observer 接收时刻快照画出），颜色/线型区分种类
+##（LAUNCH 黄虚线 / RUNNING 红线 / ACTIVE_PING 品红优先 / ACTIVE_RETURN 估计
+## 点 + 范围环 + 误差区），透明度随龄期衰减，标注 kind/age/confidence。
+## 每 ThreatTrack 只保留代表性证据（ACTIVE_PING 优先）。
 func _draw_threat_lobs() -> void:
 	for e in _representative_threats():
 		var origin: Vector2 = e["observer"]
-		var col := _threat_color(str(e["kind"]))
+		var kind: String = str(e["kind"])
+		var col := _threat_color(kind)
 		var age: float = maxf(now_time - float(e["time"]), 0.0)
 		var a: float = clampf(pow(0.5, age / THREAT_HALF_LIFE_S) * 0.7, 0.15, 0.7)
-		var brad: float = deg_to_rad(float(e["bearing_deg"]))
-		var dirv := Vector2(sin(brad), -cos(brad))
+		var brad: float = float(e["bearing_deg"])
+		var wdir := NavUtils.bearing_to_world_dir(brad)
 		var s0 := world_to_screen(origin)
-		var s1 := world_to_screen(origin + dirv * float(e.get("length_m", THREAT_LOB_LENGTH_M)))
 		var is_sel: bool = int(e["evidence_id"]) == selected_evidence_id
-		if str(e["kind"]) == "LAUNCH_TRANSIENT":
+		var is_newest: bool = int(e["evidence_id"]) == _newest_threat_id()
+		if kind == "ACTIVE_RETURN":
+			# 主动测距（Batch 2 链路）才有估计位置：环 + 估计点 + 误差区。
+			_draw_active_return(e, col, a)
+			continue
+		var s1 := world_to_screen(origin + wdir * float(e.get("length_m", THREAT_LOB_LENGTH_M)))
+		if kind == "LAUNCH_TRANSIENT":
 			_draw_dashed(s0, s1, Color(col.r, col.g, col.b, a), 1.5)
 		else:
 			draw_line(s0, s1, Color(col.r, col.g, col.b, a), 2.0 if is_sel else 1.2)
-		# ±2σ 不确定扇形（有限长度）。
-		var sig: float = deg_to_rad(2.0 * float(e.get("sigma_deg", 2.0)))
-		var mid := origin + dirv * float(e.get("length_m", THREAT_LOB_LENGTH_M)) * 0.55
-		var l0: float = brad - sig
-		var l1: float = brad + sig
+		# ±2σ 不确定扇形（有限长度，世界点 + 世界方向）。
+		var sig: float = 2.0 * float(e.get("sigma_deg", 2.0))
+		var mid := origin + wdir * float(e.get("length_m", THREAT_LOB_LENGTH_M)) * 0.55
 		var wedge := PackedVector2Array(
 			[
 				s0,
-				world_to_screen(origin + Vector2(sin(l0), -cos(l0)) * float(e["length_m"]) * 0.35),
+				world_to_screen(
+					origin + NavUtils.bearing_to_world_dir(brad - sig) * float(e["length_m"]) * 0.35
+				),
 				world_to_screen(mid),
-				world_to_screen(origin + Vector2(sin(l1), -cos(l1)) * float(e["length_m"]) * 0.35),
+				world_to_screen(
+					origin + NavUtils.bearing_to_world_dir(brad + sig) * float(e["length_m"]) * 0.35
+				),
 			]
 		)
 		draw_colored_polygon(wedge, Color(col.r, col.g, col.b, a * 0.16))
-		draw_circle(s0, 2.5, Color(col.r, col.g, col.b, a))
+		_draw_sensor_icon(s0, col, a)
 		if is_sel:
 			draw_arc(s0, 8.0, 0, TAU, 20, Color(1, 1, 1, 0.85), 2.0)
+		# REQ-B3-02：标注 kind / age / confidence（最新 + 选中，防铺满）。
+		if is_newest or is_sel:
+			var lbl: String = (
+				"%s %s c=%.2f" % [kind, _mmss(float(e["time"])), float(e.get("confidence", 0.0))]
+			)
+			_draw_label(s0 + Vector2(8, -8), lbl, Color(col.r, col.g, col.b, 0.95), 11)
 
 
-## 威胁 LOB 减载：每条 ThreatTrack 最新一条 + 全局最新 8 条，上限 16。
+## ACTIVE_RETURN 渲染：沿测量方位的估计点 + 范围环（measured range）+ 误差区
+##（range sigma + bearing sigma 扇形）。绝无 Truth 图标。
+func _draw_active_return(e: Dictionary, col: Color, alpha: float) -> void:
+	var origin: Vector2 = e["observer"]
+	var r_m: float = float(e.get("range_m", -1.0))
+	if r_m <= 0.0:
+		return
+	var brad: float = float(e["bearing_deg"])
+	var wdir := NavUtils.bearing_to_world_dir(brad)
+	var est := origin + wdir * r_m
+	var cs := world_to_screen(est)
+	var scl: float = _scale_px()
+	var rsig: float = maxf(float(e.get("range_sigma_m", 0.0)), 50.0)
+	draw_arc(cs, rsig * scl, 0.0, TAU, 64, Color(col.r, col.g, col.b, alpha), 1.5)
+	draw_circle(cs, 3.0, Color(col.r, col.g, col.b, clampf(alpha + 0.2, 0.0, 1.0)))
+	# 方位 ±2σ 不确定扇形（有限长度 = 估计距离）。
+	var sig: float = 2.0 * float(e.get("sigma_deg", 2.0))
+	var wedge := PackedVector2Array(
+		[
+			world_to_screen(origin),
+			world_to_screen(origin + NavUtils.bearing_to_world_dir(brad - sig) * r_m),
+			world_to_screen(origin + NavUtils.bearing_to_world_dir(brad) * r_m),
+			world_to_screen(origin + NavUtils.bearing_to_world_dir(brad + sig) * r_m),
+		]
+	)
+	draw_colored_polygon(wedge, Color(col.r, col.g, col.b, alpha * 0.14))
+	var lbl: String = "ACTIVE_RETURN est %.1fkm ±%.0fm" % [r_m / 1000.0, rsig]
+	_draw_label(cs + Vector2(8, -6), lbl, Color(col.r, col.g, col.b, 0.95), 11)
+
+
+## 最新威胁证据 id（标签防铺满）。
+func _newest_threat_id() -> int:
+	var best_id: int = -1
+	var best_t: float = -INF
+	for e in threat_lobs:
+		if float(e["time"]) > best_t:
+			best_t = float(e["time"])
+			best_id = int(e["evidence_id"])
+	return best_id
+
+
+## 威胁 LOB 减载：每条 ThreatTrack 保留代表性证据（REQ-B3-02：
+## 最新 ACTIVE_PING 优先级高于 running noise；无 ping 时取最新证据）
+## + 全局最新 8 条，上限 16。
 func _representative_threats() -> Array:
 	if threat_lobs.size() <= 16:
-		return threat_lobs
+		return _with_ping_priority(threat_lobs)
 	var by_track: Dictionary = {}
 	var newest: Array = []
 	for e in threat_lobs:
@@ -852,7 +984,45 @@ func _representative_threats() -> Array:
 	for v in by_track.values():
 		out.append(v)
 	out.append_array(newest)
-	return out.slice(0, 16)
+	out = out.slice(0, 16)
+	return _with_ping_priority(out)
+
+
+## 同 Track 上 ACTIVE_PING 优先：有 ping 时代表证据改取最新 ping。
+func _with_ping_priority(evs: Array) -> Array:
+	var ping_by_track: Dictionary = {}
+	for e in evs:
+		var tid: String = str(e.get("threat_track_id", ""))
+		if str(e["kind"]) != "ACTIVE_PING" or tid == "":
+			continue
+		if not ping_by_track.has(tid) or float(e["time"]) > float(ping_by_track[tid]["time"]):
+			ping_by_track[tid] = e
+	if ping_by_track.is_empty():
+		return evs
+	var out: Array = []
+	for e in evs:
+		var tid: String = str(e.get("threat_track_id", ""))
+		if (
+			ping_by_track.has(tid)
+			and str(e["kind"]) != "ACTIVE_PING"
+			and e == _track_newest(evs, tid)
+		):
+			continue  # 被 ping 取代的 running noise 代表
+		out.append(e)
+	for tid in ping_by_track:
+		if not out.has(ping_by_track[tid]):
+			out.append(ping_by_track[tid])
+	return out
+
+
+func _track_newest(evs: Array, tid: String) -> Dictionary:
+	var best: Dictionary = {}
+	for e in evs:
+		if str(e.get("threat_track_id", "")) != tid:
+			continue
+		if best.is_empty() or float(e["time"]) > float(best["time"]):
+			best = e
+	return best
 
 
 ## 鱼雷符号 + 扇区（P0-10/P1-02 重做）：
@@ -861,7 +1031,6 @@ func _representative_threats() -> Array:
 ##   - 主动发射/接收扇区：由 tx_state 驱动（OFF 不画"正在照射"；PINGING 亮色
 ##     脉冲；WAITING_TRIGGER 橙虚线；COOLDOWN 暗红点线）——绝不由
 ##     ATTACK/TERMINAL 猜测；
-##   - 程序搜索扇区：黄色边界（保留）；
 ##   - 选中 SeekerTrack：方位线 + ±σ 楔形；
 ##   - 选中鱼雷高亮圈。
 func _draw_torpedoes() -> void:
@@ -883,44 +1052,43 @@ func _draw_torpedoes() -> void:
 		if pts.is_empty():
 			continue
 		var head := world_to_screen(Vector2(float(pts[-1]["e"]), float(pts[-1]["n"])))
-		# S1-07 §11.3（Commit 11）：线导连线（CONNECTED 虚线，只表示通信链）。
 		if str(tp.get("wire_state", "")) == "CONNECTED":
 			draw_dashed_line(own_pos_screen(), head, Color(0.5, 0.7, 1.0, 0.5), 1.0, 6.0)
 		var beam: Dictionary = tp.get("beam", {}) as Dictionary
-		# 搜索扇区两条边界（细黄，§11.3）。
-		var half: float = deg_to_rad(float(tp.get("search_half_deg", 0.0)))
+		# 搜索扇区两条边界（细黄，§11.3）——唯一方向换算（REQ-B3-01）。
+		var half: float = float(tp.get("search_half_deg", 0.0))
 		if half > 0.01:
-			var crs: float = deg_to_rad(float(tp.get("search_center_deg", 0.0)))
+			var crs: float = float(tp.get("search_center_deg", 0.0))
 			for a in [crs - half, crs + half]:
-				var dir := Vector2(sin(a), cos(a))
+				var dir := NavUtils.bearing_to_screen_dir(a)
 				draw_line(head, head + dir * 46.0, Color(1.0, 1.0, 0.4, 0.5), 1.0)
 		# P0-10：扇区由 beam 状态驱动（绘制输入 = 物理门同一参数）。
-		var fh: float = deg_to_rad(float(tp.get("fov_half_deg", 0.0)))
-		var fc: float = deg_to_rad(float(tp.get("course_deg", 0.0)))
+		var fh: float = float(tp.get("fov_half_deg", 0.0))
+		var fc: float = float(tp.get("course_deg", 0.0))
 		var tx: String = str(tp.get("tx_state", "OFF"))
 		# 被动接收扇区：冷色青虚线（receiver ON）。
 		if str(beam.get("receiver_state", "PASSIVE_ON")) == "PASSIVE_ON" and fh > 0.01:
 			for a in [fc - fh, fc + fh]:
-				var pdir := Vector2(sin(a), cos(a))
+				var pdir := NavUtils.bearing_to_screen_dir(a)
 				draw_dashed_line(head, head + pdir * 30.0, Color(0.4, 0.8, 1.0, 0.4), 1.0, 4.0)
 		# 主动发射/接收扇区：tx_state 驱动。
 		if fh > 0.01:
 			if tx == "PINGING":
 				var pulse: float = 0.55 + 0.35 * absf(sin(now_time * 8.0))
 				for a2 in [fc - fh, fc + fh]:
-					var adir := Vector2(sin(a2), cos(a2))
+					var adir := NavUtils.bearing_to_screen_dir(a2)
 					draw_dashed_line(
 						head, head + adir * 34.0, Color(1.0, 0.25, 0.15, pulse), 1.5, 5.0
 					)
 			elif tx == "WAITING_TRIGGER":
 				for a3 in [fc - fh, fc + fh]:
-					var adir3 := Vector2(sin(a3), cos(a3))
+					var adir3 := NavUtils.bearing_to_screen_dir(a3)
 					draw_dashed_line(
 						head, head + adir3 * 32.0, Color(1.0, 0.6, 0.2, 0.55), 1.0, 4.0
 					)
 			elif tx == "COOLDOWN":
 				for a4 in [fc - fh, fc + fh]:
-					var adir4 := Vector2(sin(a4), cos(a4))
+					var adir4 := NavUtils.bearing_to_screen_dir(a4)
 					draw_dashed_line(
 						head, head + adir4 * 30.0, Color(0.8, 0.25, 0.2, 0.25), 1.0, 7.0
 					)
@@ -928,8 +1096,7 @@ func _draw_torpedoes() -> void:
 		# 选中 SeekerTrack 方位（不确定方位线 ±sigma，绝不画 Truth 目标）。
 		var tb: float = float(tp.get("track_bearing_deg", -1.0))
 		if tb >= 0.0:
-			var ta: float = deg_to_rad(tb)
-			var tdir := Vector2(sin(ta), cos(ta))
+			var tdir := NavUtils.bearing_to_screen_dir(tb)
 			draw_line(head, head + tdir * 60.0, Color(1.0, 0.4, 1.0, 0.8), 1.5)
 			# P1-02.1：±σ 楔形（真实航迹方差，非硬编码）。
 			var sig_d: float = float(tp.get("track_sigma_deg", 0.0))
@@ -938,23 +1105,19 @@ func _draw_torpedoes() -> void:
 		draw_circle(head, 3.5, col)
 		var tid: String = str(tp.get("torpedo_id", "TK%d" % [i + 1]))
 		_draw_label(head + Vector2(6.0, -6.0), "%s %s" % [tid, str(tp.get("state", ""))], col, 12)
-		# P1-02.5：地图选中鱼雷高亮。
 		if tid == selected_torpedo_id and selected_torpedo_id != "":
 			draw_arc(head, 8.0, 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0)
 
 
-## 选中航迹 ±σ 不确定楔形（沿航迹方位线，长度 60px 屏幕空间）。
+## 选中航迹 ±σ 不确定楔形（沿航迹方位线，长度 60px 屏幕空间，唯一方向换算）。
 func _draw_track_sigma_wedge(head: Vector2, bearing_deg: float, sigma_deg: float) -> void:
-	var brad: float = deg_to_rad(bearing_deg)
-	var s0: float = deg_to_rad(bearing_deg - sigma_deg)
-	var s1: float = deg_to_rad(bearing_deg + sigma_deg)
-	var tip := head + Vector2(sin(brad), -cos(brad)) * 60.0
+	var tip := head + NavUtils.bearing_to_screen_dir(bearing_deg) * 60.0
 	var wedge := PackedVector2Array(
 		[
 			head,
-			head + Vector2(sin(s0), -cos(s0)) * 30.0,
+			head + NavUtils.bearing_to_screen_dir(bearing_deg - sigma_deg) * 30.0,
 			tip,
-			head + Vector2(sin(s1), -cos(s1)) * 30.0,
+			head + NavUtils.bearing_to_screen_dir(bearing_deg + sigma_deg) * 30.0,
 		]
 	)
 	draw_colored_polygon(wedge, Color(1.0, 0.4, 1.0, 0.10))
@@ -1004,16 +1167,20 @@ func _draw_camera_overlays() -> void:
 	draw_string(
 		_font, nc + Vector2(-4, 36), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.9)
 	)
-	# 图例（右下）
+	# 图例（右下）——含 REQ-B3-02 威胁图层图例。
 	var lg := Vector2(size.x - 190.0, size.y - 92.0)
 	var items := [
+		["Launch Transient", COL_THREAT_LAUNCH],
+		["Torpedo Noise", COL_THREAT_NOISE],
+		["Active Ping", COL_THREAT_PING],
+		["Active Return", COL_THREAT_PING],
 		["Best Fit", COL_BEST],
 		["Alt A/B/C", ALT_COLORS[0]],
 		["Trial", COL_TRIAL],
 		["System", COL_SYSTEM],
 		["Outlier", COL_OUTLIER],
 	]
-	var ly: float = lg.y
+	var ly: float = lg.y - 4.0 * 18.0  # 威胁图例占额外 4 行
 	for it in items:
 		draw_line(Vector2(lg.x, ly + 5.0), Vector2(lg.x + 22.0, ly + 5.0), it[1] as Color, 2.5)
 		draw_string(

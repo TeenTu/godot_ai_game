@@ -27,6 +27,43 @@ const COLORMAP_HOT: Array = [
 	Color(1.0, 1.0, 0.9),
 ]
 
+# REQ-B6-03：调色板（色阶单调；HOT 保留但不再唯一）。
+const COLORMAP_GRAYSCALE: Array = [
+	Color(0.02, 0.02, 0.02),
+	Color(0.25, 0.25, 0.25),
+	Color(0.5, 0.5, 0.5),
+	Color(0.72, 0.72, 0.72),
+	Color(0.88, 0.88, 0.88),
+	Color(1.0, 1.0, 1.0),
+]
+
+const COLORMAP_BLUE: Array = [
+	Color(0.0, 0.0, 0.05),
+	Color(0.0, 0.12, 0.28),
+	Color(0.0, 0.35, 0.5),
+	Color(0.1, 0.6, 0.6),
+	Color(0.5, 0.82, 0.75),
+	Color(0.92, 1.0, 0.95),
+]
+
+const COLORMAP_AMBER: Array = [
+	Color(0.05, 0.03, 0.0),
+	Color(0.3, 0.15, 0.02),
+	Color(0.6, 0.35, 0.05),
+	Color(0.85, 0.58, 0.1),
+	Color(1.0, 0.8, 0.35),
+	Color(1.0, 0.96, 0.82),
+]
+
+const AGC_SMOOTH := {"SLOW": 0.05, "FAST": 0.35}
+
+const PALETTES: Dictionary = {
+	"HOT": COLORMAP_HOT,
+	"GRAYSCALE": COLORMAP_GRAYSCALE,
+	"BLUE": COLORMAP_BLUE,
+	"AMBER": COLORMAP_AMBER,
+}
+
 var axis_mode: String = "bearing"
 var x_min: float = -180.0
 var x_max: float = 180.0
@@ -41,16 +78,20 @@ var cursor_value: float = NAN
 var cursor_time: float = -1.0
 var markers: Array = []  # [{x, color, label}] 竖线标记（谐波/转向）
 
-# REQ-AC-06：AGC 显示校准（只影响显示，不改波形/P_d/证据/TMA）。
-# floor=smooth(P10(window)); ceiling=smooth(P99(window));
-# display=clamp((x-floor)/max(ceiling-floor,min_span),0,1)。
-# 百分位/最小 span 可配置；极强单峰被 P99 稳健统计排除，不致全屏闪烁。
-var agc_enabled: bool = true
+# REQ-B6-02：噪声底跟踪 + 固定动态范围（只影响显示，不改波形/P_d/证据/TMA）。
+#   floor = smooth(robust background = 滚动窗中位数，峰被稳健统计排除)
+#   black = floor - black_offset_db；display = clamp((x-black)/dynamic_range, 0, 1)
+#   OFF  固定 black/white level（manual_black_db + dynamic_range_db）
+#   SLOW 缓慢跟踪背景（正常值守）  FAST 快速恢复（强干扰场景）
+# 显示状态按 display_key 隔离（BB/NB/DEMON 为独立实例天然隔离；同阵列视图
+# 经 set_display_key 换键，阵列间增益互不污染）。
+var palette_name: String = "HOT"
+var agc_mode: String = "SLOW"
+var black_offset_db: float = 6.0
+var dynamic_range_db: float = 24.0
+var manual_black_db: float = -20.0
+var display_key: String = "default"
 var agc_window_rows: int = 24
-var agc_percentile_lo: float = 0.10
-var agc_percentile_hi: float = 0.99
-var agc_min_span_db: float = 8.0
-var agc_smooth: float = 0.15  # attack/release 平滑系数（每行）
 
 var _img: Image = null
 var _tex: ImageTexture = null
@@ -75,6 +116,54 @@ func set_cursor(v: float) -> void:
 	queue_redraw()
 
 
+## REQ-B6-03：AGC 模式（OFF/SLOW/FAST）。切换不触碰 rows（纯显示）。
+func set_agc_mode(mode: String) -> void:
+	if not (mode == "OFF" or mode == "SLOW" or mode == "FAST"):
+		return
+	agc_mode = mode
+	_img_dirty = true
+	queue_redraw()
+
+
+## REQ-B6-03：调色板切换（HOT/GRAYSCALE/BLUE/AMBER）。纯显示。
+func set_palette(name: String) -> void:
+	if not PALETTES.has(name):
+		return
+	palette_name = name
+	_img_dirty = true
+	queue_redraw()
+
+
+## REQ-B6-02：动态范围（12~36 dB 可配置）。
+func set_dynamic_range_db(v: float) -> void:
+	dynamic_range_db = clampf(v, 12.0, 36.0)
+	_img_dirty = true
+	queue_redraw()
+
+
+func set_black_offset_db(v: float) -> void:
+	black_offset_db = clampf(v, 0.0, 24.0)
+	_img_dirty = true
+	queue_redraw()
+
+
+## REQ-B6-03：Reset Display——恢复默认显示参数。
+func reset_display() -> void:
+	palette_name = "HOT"
+	agc_mode = "SLOW"
+	black_offset_db = 6.0
+	dynamic_range_db = 24.0
+	_img_dirty = true
+	queue_redraw()
+
+
+## 阵列切换时换显示状态键（BOW→TOWED→BOW 各自独立噪声底跟踪）。
+func set_display_key(key: String) -> void:
+	display_key = key
+	_img_dirty = true
+	queue_redraw()
+
+
 func _x_to_px(v: float) -> float:
 	var w: float = size.x
 	return (v - x_min) / (x_max - x_min) * w
@@ -94,30 +183,29 @@ func _rebuild_image() -> void:
 	var h: int = maxi(rows.size(), 2)
 	_img = Image.create(w, h, false, Image.FORMAT_RGB8)
 	var true_mode: bool = axis_mode == "bearing" and bearing_mode == "true"
-	var agc_lo: float = NAN
-	var agc_hi: float = NAN
+	# 每次重建从最旧可见行重算噪声底（确定性：同 rows 重建像素完全一致，
+	# 阵列/键间天然无状态污染）。
+	var floor_v: float = NAN
+	var smooth_k: float = float(AGC_SMOOTH.get(agc_mode, 0.05))
 	for r in range(rows.size()):
 		var vals: PackedFloat32Array = rows[r]["values"]
 		var lo: float = db_min
 		var hi_span: float = db_max - db_min
-		if agc_enabled:
-			# 滚动稳健统计（最近 window 行）→ 平滑 floor/ceiling（逐行确定，
-			# 同 rows 重建结果一致）。
+		if agc_mode == "OFF":
+			lo = manual_black_db
+			hi_span = dynamic_range_db
+		else:
+			# REQ-B6-02：滚动窗稳健背景估计（中位数——峰被排除）→ 逐行平滑
+			# 噪声底（同 rows 重建结果一致，不消耗仿真 RNG）。
 			var w0: int = maxi(r - agc_window_rows + 1, 0)
 			var pool: PackedFloat32Array = PackedFloat32Array()
 			for rr in range(w0, r + 1):
 				pool.append_array(rows[rr]["values"])
 			pool.sort()
-			var p_lo: float = pool[clampi(
-				int(agc_percentile_lo * (pool.size() - 1)), 0, pool.size() - 1
-			)]
-			var p_hi: float = pool[clampi(
-				int(agc_percentile_hi * (pool.size() - 1)), 0, pool.size() - 1
-			)]
-			agc_lo = p_lo if is_nan(agc_lo) else lerpf(agc_lo, p_lo, agc_smooth)
-			agc_hi = p_hi if is_nan(agc_hi) else lerpf(agc_hi, p_hi, agc_smooth)
-			lo = agc_lo
-			hi_span = maxf(agc_hi - agc_lo, agc_min_span_db)
+			var bg: float = pool[int(pool.size() / 2.0)]
+			floor_v = bg if is_nan(floor_v) else lerpf(floor_v, bg, smooth_k)
+			lo = floor_v - black_offset_db
+			hi_span = dynamic_range_db
 		if true_mode:
 			# TRUE STABILIZED 重排（S1-01）：源列恒为 -180..180（每格 2°，
 			# 与显示轴 x_min/x_max 无关！），目标列才是 0..360 真北方位。
@@ -157,9 +245,10 @@ func set_bearing_mode(mode: String) -> void:
 
 
 func _cmap(t: float) -> Color:
-	var f: float = t * float(COLORMAP_HOT.size() - 1)
-	var i: int = clampi(int(f), 0, COLORMAP_HOT.size() - 2)
-	return COLORMAP_HOT[i].lerp(COLORMAP_HOT[i + 1], f - float(i))
+	var cmap: Array = PALETTES.get(palette_name, COLORMAP_HOT)
+	var f: float = t * float(cmap.size() - 1)
+	var i: int = clampi(int(f), 0, cmap.size() - 2)
+	return cmap[i].lerp(cmap[i + 1], f - float(i))
 
 
 func _draw() -> void:

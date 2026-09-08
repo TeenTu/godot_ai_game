@@ -15,6 +15,26 @@ const KNOT_TO_MS: float = 0.514444
 const DEG_TO_RAD: float = 0.017453292519943295
 const RAD_TO_DEG: float = 57.29577951308232
 
+# ------------------------------------------------------------------
+# 唯一方向换算入口（REQ-0908 §2.2）：
+#   bearing_to_world_dir(θ)  = Vector2(sinθ,  cosθ)   世界点加方向用
+#   bearing_to_screen_dir(θ) = Vector2(sinθ, -cosθ)   屏幕点加像素方向用
+# 世界约定 +x=东 +y=北；屏幕 y 向下（北为 -y）。0°=屏幕上、90°=右、
+# 180°=下、270°=左。绘制代码禁止散写 Vector2(sin(...), ±cos(...))。
+# ------------------------------------------------------------------
+
+
+## 方位角 → 世界方向单位向量（供世界点 + 方向后再 world_to_screen）。
+static func bearing_to_world_dir(deg: float) -> Vector2:
+	var rad: float = deg * DEG_TO_RAD
+	return Vector2(sin(rad), cos(rad))
+
+
+## 方位角 → 屏幕方向单位向量（供屏幕点直接加像素方向，y 向下翻转）。
+static func bearing_to_screen_dir(deg: float) -> Vector2:
+	var rad: float = deg * DEG_TO_RAD
+	return Vector2(sin(rad), -cos(rad))
+
 
 ## 把角度归一化到 [0,360)
 static func wrap360(deg: float) -> float:
