@@ -144,6 +144,23 @@ func _test_smoke() -> void:
 	_check(_main.get("skill_fx") != null, "skill_fx 技能特效已注入")
 	var btns: Dictionary = _main.get("skill_btns")
 	_check(btns.size() == 3, "技能 HUD 3 个圆形按钮已构建 (n=%d)" % btns.size())
+	# D6：按钮 key = 手势槽（"0"/"1"/"2"），test 默认档仅槽0装备 → 槽1/2 空槽灰显。
+	_check(btns.has("0") and btns.has("1") and btns.has("2"), "HUD 按钮按槽位 key 0/1/2")
+	var skill_sys_hud: BoomSkillSystem = _main.get("skill_sys")
+	if skill_sys_hud != null and skill_sys_hud.equipped == ["fan"]:
+		var slot1: Control = btns["1"]
+		var slot2: Control = btns["2"]
+		_check(
+			(
+				slot1 != null
+				and slot1.get("is_empty_slot") == true
+				and slot2 != null
+				and slot2.get("is_empty_slot") == true
+			),
+			"默认档槽1/2 为空槽灰显"
+		)
+	var slot0: Control = btns["0"]
+	_check(slot0 != null and slot0.get("skill_id") == "fan", "默认档槽0 按钮展示 fan")
 	_check(_main.get("waypoints") != null, "waypoint 边缘标记层已构建")
 	_check(_main.get("_combo_label") != null, "击杀播报大字 Label 已构建")
 	if not has_sim:
@@ -450,35 +467,53 @@ func _test_skill_system_cd() -> void:
 	var sys := BoomSkillSystem.new()
 	sys.game = g
 	g.add_child(sys)
-	# M7R：新档仅树首 fan 解锁；先补齐 chain/nuke 解锁并装备满 3 槽，再验证冷却语义。
-	sys.debug_grant("chain")
-	sys.debug_grant("nuke")
-	_check(sys.equip("chain") and sys.equip("nuke"), "解锁 chain/nuke 后装备满 3 槽")
-	# GDScript lambda 按值捕获局部 int；用容器承载计数才能跨信号累加。
+	# 信号记录 fired 次数与技能 id（验证手势路由目标技能，而不只是计数）。
 	var fired_box: Array = [0]
-	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
-	# 就绪态第一次 tap 应触发 fan。
+	var ids_box: Array = []
+	sys.skill_fired.connect(
+		func(id: String, _r: Variant) -> void:
+			fired_box[0] += 1
+			ids_box.append(id)
+	)
+	# D6（design_m7_progression §174-175）：新档默认仅树首 fan 装备；
+	# ←/→ 手势命中空槽应静默（成长设计而非回归），且不崩溃。
+	_check(sys.equipped == ["fan"], "新档默认 equipped=[fan]")
+	sys.handle_swipe_left()
+	sys.handle_swipe_right()
+	_check(fired_box[0] == 0, "新档空槽 ←/→ 手势静默 (fired=%d)" % fired_box[0])
+	# 就绪态第一次 tap 应触发槽 0 = fan。
 	sys.handle_tap()
-	var fired_count: int = fired_box[0]
-	_check(fired_count == 1, "就绪态 tap 触发 fan 1 次")
+	_check(fired_box[0] == 1, "新档 tap 触发槽0 fan")
+	_check(ids_box[-1] == "fan", "tap 路由到 fan")
 	var st: Dictionary = sys.get_state()
 	_check(st["fan"] > 0.0, "fan 施放后进入 CD (cooldown_left=%.2f)" % st["fan"])
 	# 冷却中连发不触发（fan CD 3s 未到）。
 	sys.handle_tap()
-	fired_count = fired_box[0]
-	_check(fired_count == 1, "CD 中 tap 不重复触发 fan")
-	# 其它技能独立不受 fan CD 影响。
-	sys.handle_swipe_left()
-	sys.handle_swipe_right()
-	fired_count = fired_box[0]
-	_check(fired_count == 3, "chain/nuke 就绪，另两技能仍可触发 (fired=%d)" % fired_count)
+	_check(fired_box[0] == 1, "CD 中 tap 不重复触发 fan")
 	# 越过 fan CD 后即可再次触发。
 	sys.tick(BoomSkillSystem.FAN_COOLDOWN + 0.1)
 	var st2: Dictionary = sys.get_state()
 	_check(st2["fan"] <= 0.0, "tick 越过 CD 后 fan 冷却归零 (%.2f)" % st2["fan"])
+	# M7R：补齐 chain/nuke 解锁并装备满 3 槽，验证手势→槽位→技能映射。
+	sys.debug_grant("chain")
+	sys.debug_grant("nuke")
+	_check(sys.equip("chain") and sys.equip("nuke"), "解锁 chain/nuke 后装备满 3 槽")
+	_check(sys.equipped == ["fan", "chain", "nuke"], "3 槽顺序 = 手势槽 tap/←/→")
 	sys.handle_tap()
-	fired_count = fired_box[0]
-	_check(fired_count == 4, "CD 归零后 tap 再触发 fan (fired=%d)" % fired_count)
+	_check(ids_box[-1] == "fan", "满槽 tap 槽0=fan")
+	sys.handle_swipe_left()
+	_check(ids_box[-1] == "chain", "←swipe 槽1=chain")
+	sys.handle_swipe_right()
+	_check(ids_box[-1] == "nuke", "→swipe 槽2=nuke")
+	_check(fired_box[0] == 4, "满槽三技能各触发一次 (fired=%d)" % fired_box[0])
+	# 换装后手势重映射到新槽位技能（D6 §228：装备即手势）。
+	sys.debug_grant("ring")
+	_check(sys.unequip("fan"), "卸 fan")
+	_check(sys.equip("ring"), "装 ring → equipped=[chain,nuke,ring]")
+	_check(sys.equipped == ["chain", "nuke", "ring"], "槽位顺序 = 装备顺序")
+	sys.tick(BoomSkillSystem.CHAIN_COOLDOWN + 0.1)  # 越过 chain 8s CD，避免换装断言撞冷却
+	sys.handle_tap()
+	_check(ids_box[-1] == "chain", "换装后 tap 路由到槽0=chain")
 	g.remove_child(sys)
 	sys.free()
 	g.free()

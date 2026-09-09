@@ -18,6 +18,30 @@ const TAP_MAX_TIME: float = 0.20
 const TAP_MAX_DIST: float = 14.0
 const SWIPE_MIN_DIST: float = 110.0
 
+# ---- 技能槽位 HUD（D6 §228：圆钮展示当前 equipped 槽位技能；与手势槽一一对应）----
+const SKILL_SLOT_COUNT: int = 3
+const SKILL_BTN_X: float = 596.0
+const SKILL_BTN_YS = [760.0, 886.0, 1012.0]  # 3 槽按钮 Y（对齐原 fan/chain/nuke 布局）
+const SKILL_GESTURES = ["TAP", "< SWIPE", "SWIPE >"]
+## 有美术位图的技能（其余技能走缩写大字标识）。
+const SKILL_ICONS: Dictionary = {
+	"fan": "res://assets/images/icons/skill_fan.png",
+	"chain": "res://assets/images/icons/skill_chain.png",
+	"nuke": "res://assets/images/icons/skill_nuke.png",
+}
+## 无位图技能的圆心缩写（configure_empty 用 "—"）。
+const SKILL_ABBREVS: Dictionary = {
+	"fan": "F",
+	"chain": "C",
+	"nuke": "N",
+	"ring": "R",
+	"twin": "TW",
+	"rapid": "RX",
+	"heal": "+",
+	"whirl": "W",
+	"titan": "T",
+}
+
 const COL_CREAM: Color = Color("fff6e8")
 const COL_GOLD: Color = Color("ffc93c")
 const COL_SPIRIT_SEAL: Color = Color("f2b84b")
@@ -36,7 +60,7 @@ var audio: BoomAudio
 var joystick: GameKitVirtualJoystick
 var skill_sys: BoomSkillSystem
 var skill_fx: BoomSkillFx
-var skill_btns: Dictionary = {}  # skill_id -> BoomSkillButton（P1-1 技能 HUD，美术位图版）
+var skill_btns: Dictionary = {}  # 槽位key("0"/"1"/"2")->按钮（D6：按钮=手势槽, 展示 equipped[slot]）
 var waypoints: WaypointLayer = null  # M3 屏幕边缘目标标记
 
 # M2 手势识别状态：touch_index -> {sx,sy,t,dx,dy}
@@ -166,6 +190,8 @@ func _start_match_with(weapon_id: String) -> void:
 	sim.set_weapon(weapon_id)
 	if skill_sys != null:
 		skill_sys.set_weapon_tree(weapon_id)
+	# D6：equipped 在此刻最终化（面板装备+树首默认），按槽位重建技能 HUD。
+	_rebuild_skill_hud()
 	sim.begin_match()
 
 
@@ -177,7 +203,7 @@ func _to_canvas(sp: Vector2) -> Vector2:
 	return get_viewport().get_canvas_transform().affine_inverse() * sp
 
 
-## P1-1：设计坐标是否落在某个技能按钮内（按钮本体 + 12px 拇指容错）。
+## 设计坐标是否落在某个技能槽按钮内（按钮本体 + 12px 拇指容错）；返回槽位 key("0".."2")，未命中返回 ""。
 func _skill_button_at(cp: Vector2) -> String:
 	for id in skill_btns:
 		var btn := skill_btns[id] as BoomSkillButton
@@ -221,16 +247,13 @@ func _input(event: InputEvent) -> void:
 		var adx: float = absf(g["dx"])
 		var ady: float = absf(g["dy"])
 		if dt <= TAP_MAX_TIME and dist <= TAP_MAX_DIST:
-			# P1-1：起手落在技能按钮圆内（含 12px 容错）→ 直接触发对应技能；
-			# 其余 tap 维持默认主技能（爆裂弹幕）。
-			var sid: String = _skill_button_at(Vector2(g["sx"], g["sy"]))
-			match sid:
-				"chain":
-					skill_sys.handle_swipe_left()
-				"nuke":
-					skill_sys.handle_swipe_right()
-				_:
-					skill_sys.handle_tap()
+			# D6：tap 落在某槽位按钮圆内（含 12px 容错）→ 释放该槽技能（空槽越界静默）；
+			# 其余手势区 tap = 槽 0（主技能）。
+			var slot_hit: String = _skill_button_at(Vector2(g["sx"], g["sy"]))
+			if slot_hit != "":
+				skill_sys.handle_slot(int(slot_hit))
+			else:
+				skill_sys.handle_tap()
 		elif adx >= SWIPE_MIN_DIST and adx > ady * 2.0:
 			if g["dx"] < 0.0:
 				skill_sys.handle_swipe_left()
@@ -298,6 +321,12 @@ func _test_hook_get_state() -> Dictionary:
 	state["sk_chain"] = sk["chain"]
 	state["sk_nuke"] = sk["nuke"]
 	state["sk_ready"] = sk["ready"]
+	# D6：每槽技能 id（空槽 ""），供 vision-e2e 断言 HUD 与手势槽一致。
+	var slot_ids: Array[String] = []
+	var equipped: Array = skill_sys.equipped
+	for slot in SKILL_SLOT_COUNT:
+		slot_ids.append(equipped[slot] if slot < equipped.size() else "")
+	state["sk_slots"] = slot_ids
 	return state
 
 
@@ -559,13 +588,14 @@ func _build_hud() -> void:
 
 	_hint_label = _make_label(
 		hud,
-		"LEFT: MOVE   \u00b7  RIGHT TAP: FAN   \u00b7  \u2190 CHAIN   \u2192 NUKE",
+		"",
 		15,
 		Color(0.45, 0.20, 0.10, 0.65),
 		Vector2(0, 1168),
 	)
 	_hint_label.size = Vector2(720, 26)
 	_hint_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_refresh_gesture_hint()
 
 	_toast = _make_label(hud, "", 40, Color.WHITE, Vector2(0, 500))
 	_toast.size = Vector2(720, 60)
@@ -671,38 +701,55 @@ func _build_coin_hud(hud: Control) -> void:
 
 
 func _build_skill_hud(hud: Control) -> void:
-	var specs: Array = [
-		[
-			"fan",
-			"res://assets/images/icons/skill_fan.png",
-			BoomSkillSystem.FAN_COOLDOWN,
-			BoomSkillSystem.FAN_COLOR,
-			"TAP",
-			760.0
-		],
-		[
-			"chain",
-			"res://assets/images/icons/skill_chain.png",
-			BoomSkillSystem.CHAIN_COOLDOWN,
-			BoomSkillSystem.CHAIN_COLOR,
-			"< SWIPE",
-			886.0
-		],
-		[
-			"nuke",
-			"res://assets/images/icons/skill_nuke.png",
-			BoomSkillSystem.NUKE_COOLDOWN,
-			BoomSkillSystem.NUKE_COLOR,
-			"SWIPE >",
-			1012.0
-		],
-	]
-	for spec in specs:
+	# D6 §228：3 圆钮 = 3 手势槽，展示当前 equipped 槽位技能；空槽灰显占位（成长设计）。
+	var equipped: Array = skill_sys.equipped if skill_sys != null else []
+	for slot in SKILL_SLOT_COUNT:
 		var button := BoomSkillButton.new()
-		button.position = Vector2(596.0, float(spec[5]))
-		button.setup(spec[0], spec[1], spec[2], spec[3], spec[4])
+		button.slot = slot
+		button.position = Vector2(SKILL_BTN_X, float(SKILL_BTN_YS[slot]))
+		if slot < equipped.size():
+			var sid: String = equipped[slot]
+			var skill := skill_sys.get_skill(sid) if skill_sys != null else null
+			var cd: float = skill.cooldown if skill != null else 0.0
+			var color: Color = skill.icon_color if skill != null else Color.WHITE
+			button.setup(
+				sid,
+				str(SKILL_ICONS.get(sid, "")),
+				cd,
+				color,
+				SKILL_GESTURES[slot],
+				str(SKILL_ABBREVS.get(sid, String(sid).left(1).to_upper())),
+				skill != null and skill.is_passive
+			)
+		else:
+			button.configure_empty(SKILL_GESTURES[slot])
 		hud.add_child(button)
-		skill_btns[spec[0]] = button
+		skill_btns[str(slot)] = button
+
+
+## D6：按当前 equipped 重建技能 HUD（开战确认时调用一次；槽位技能对局内不变）。
+func _rebuild_skill_hud() -> void:
+	for key in skill_btns:
+		var old := skill_btns[key] as Control
+		if old != null and old.get_parent() != null:
+			old.queue_free()
+	skill_btns.clear()
+	if _hud != null:
+		_build_skill_hud(_hud)
+	_refresh_gesture_hint()
+
+
+## 底部手势提示文案：按当前槽位技能刷新（空槽显示 "—"）。
+func _refresh_gesture_hint() -> void:
+	if _hint_label == null or skill_sys == null:
+		return
+	var equipped: Array = skill_sys.equipped
+	var parts: Array[String] = []
+	for slot in SKILL_SLOT_COUNT:
+		var label: String = SKILL_GESTURES[slot].replace(" ", "")
+		var sid: String = equipped[slot] if slot < equipped.size() else ""
+		parts.append("%s:%s" % [label, sid.to_upper() if sid != "" else "-"])
+	_hint_label.text = "LEFT: MOVE  ·  RIGHT  " + "  ·  ".join(parts)
 
 
 func _build_hp(hud: Control) -> void:
@@ -891,8 +938,15 @@ func _hud_refresh() -> void:
 		_coin_label.text = str(sim.coins)
 	if skill_sys != null:
 		var skill_state := skill_sys.get_state()
-		for skill_id in skill_btns:
-			(skill_btns[skill_id] as BoomSkillButton).set_cooldown(float(skill_state[skill_id]))
+		var equipped: Array = skill_sys.equipped
+		for slot_key in skill_btns:
+			var btn := skill_btns[slot_key] as BoomSkillButton
+			if btn == null or btn.is_empty_slot:
+				continue
+			var slot: int = int(slot_key)
+			if slot >= equipped.size():
+				continue
+			btn.set_cooldown(float(skill_state[equipped[slot]]))
 	# M8 连续血条（§4.3）：宽度按 HP 比例填充，颜色米纸白→朱砂红渐变。
 	if _hp_bar_fill != null:
 		var max_hp: float = maxf(1.0, float(sim.player.max_hp))
