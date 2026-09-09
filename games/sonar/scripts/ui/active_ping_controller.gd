@@ -50,9 +50,13 @@ var return_rows: Array = []
 ## RANGE_AIDED / REJECTED。由本控制器按模式置位，main_ui 拟合后经
 ## mark_range_applied() 校正。
 var evidence_state: String = ""
-## 最近一次自动关联（Undo 目标）：{measurement, track}；手动 Mark 不在此列。
-var _last_assoc: Dictionary = {}
-## ASSISTED 待玩家裁决的"range 证据 → Trial"申请：{measurement, track}。
+## S109 §5.1 ActiveReturnRecord 台账（P0-07：禁止单份 _last_assoc 承载多回波）：
+## [{local_return_id, ping_id, measurement, track, track_id, association_score,
+##   se_db, received_time}]，最新在尾，保留 ≤MAX_RETURNS。
+var _records: Array = []
+var _next_return_seq: int = 1
+## ASSISTED 待玩家裁决的"range 证据 → Trial"申请：{measurement, track,
+## local_return_id}。S109 §5.2：取本次 Ping 全局最高优先回波，非最后写入。
 var _pending_apply: Dictionary = {}
 
 
@@ -73,16 +77,16 @@ func request_ping() -> void:
 	if world == null or tracker == null:
 		return
 	if world.ping_state_name() == "UNAVAILABLE":
-		_call_status("Ping unavailable — no active sonar on this platform")
+		_call_status(UiText.t("st_ping_unavailable"))
 		return
 	if not world.can_ping():
-		_call_status("Ping recharging / ping in flight")
+		_call_status(UiText.t("st_ping_recharge"))
 		return
 	if not world.issue_ping():
 		return
 	notify_dirty()
-	last_summary = "transmitting…"
-	_call_status("ACTIVE PING transmitted — listening for echoes (you are emitting!)")
+	last_summary = "脉冲在途"
+	_call_status(UiText.t("st_ping_tx"))
 
 
 ## 每帧排空 World 已结算回波：detected 命中喂 Tracker 并回调主 UI。
@@ -110,20 +114,47 @@ func _process_arrived_echoes() -> void:
 			# 全新接触由主动回波直接锚定：range 即初始证据，置信度取高。
 			t.association_confidence = 0.9
 			t.last_association_mode = "range"
+		_next_return_seq += 1
+		var rid: String = "R%03d" % _next_return_seq
 		notify_dirty()
-		fed.append({"measurement": m, "track": t, "summary": e})
-		_last_assoc = {"measurement": m, "track": t}
+		(
+			_records
+			. append(
+				{
+					"local_return_id": rid,
+					"ping_id": m.ping_id,
+					"measurement": m,
+					"track": t,
+					"track_id": t.track_id if t != null else "",
+					"association_score": t.association_confidence if t != null else 0.0,
+					"se_db": m.signal_excess_db,
+					"received_time": world.sim_time,
+				}
+			)
+		)
+		_next_return_id_trim()
+		(
+			fed
+			. append(
+				{
+					"measurement": m,
+					"track": t,
+					"summary": e,
+					"local_return_id": rid,
+				}
+			)
+		)
 		_append_return_row(m, t)
 	if hits.is_empty():
-		last_summary = "no echo"
-		_call_status("Ping returned — no echo")
+		last_summary = "无回波"
+		_call_status(UiText.t("st_ping_no_return"))
 	else:
 		var best: Dictionary = hits[0]
 		var multi: String = ""
 		if hits.size() > 1:
-			multi = "  (%d echoes)" % hits.size()
+			multi = "（%d 重回波）" % hits.size()
 		last_summary = (
-			"echo brg %.0f° rng %.2fkm SE%+.0fdB%s"
+			"回波 方位 %.0f° 距离 %.2fkm SE%+.0fdB %s"
 			% [
 				float(best["bearing_deg"]),
 				float(best["range_m"]) / 1000.0,
@@ -131,7 +162,7 @@ func _process_arrived_echoes() -> void:
 				multi,
 			]
 		)
-		_call_status("ACTIVE PING → " + last_summary + "  (you are emitting!)")
+		_call_status(str(UiText.t("st_ping_tx")) + " → " + last_summary)
 	_route_fed_by_mode(fed)
 	if on_echo_hits.is_valid() and not fed.is_empty():
 		on_echo_hits.call(fed)
@@ -173,28 +204,47 @@ func _route_fed_by_mode(fed: Array) -> void:
 	match fit_mode:
 		MODE_AUTO:
 			evidence_state = ""
-			_call_status("Active range on %s (AUTO) — refitting Trial…" % tid)
+			_call_status(str(UiText.t("st_active_refit")) + " " + tid)
 			if on_fit_requested.is_valid():
 				on_fit_requested.call(tid)
 		MODE_ASSISTED:
 			evidence_state = "PENDING_APPLY"
-			_pending_apply = _last_assoc.duplicate()
-			_call_status("Active range on %s — Apply range evidence to Trial?" % tid)
+			# S109 §5.2：待 Apply 对象 = 本次 Ping 全部回波中最高优先者（跨
+			# 批次），绝不取"最后写入"——P0-07 修复。
+			var cand: Dictionary = _pending_candidate()
+			_pending_apply = cand.duplicate() if not cand.is_empty() else primary.duplicate()
+			_call_status(str(UiText.t("st_active_apply")) + " " + tid)
 		MODE_MANUAL:
 			evidence_state = "REFIT_REQUIRED"
-			_call_status("Active range on %s (MANUAL) — Trial unchanged, REFIT REQUIRED" % tid)
+			_call_status(str(UiText.t("st_active_manual")) + " " + tid)
 
 
 ## 撤销最近一次自动关联（S1-04C-REQ-03 UI 允许撤销/改绑一次主动回波）：
 ## 把该测量从 Track 移除并触发刷新回调。ASSISTED 模式下同时撤下待 Apply
 ## 申请（=Reject），证据状态置 REJECTED。返回是否真的撤销了。
+## 撤销最近一条回波记录（等价 undo_return(最新 id)；兼容旧入口）。
 func undo_last_association() -> bool:
-	if _last_assoc.is_empty():
+	if _records.is_empty():
 		return false
-	var m: Measurement = _last_assoc.get("measurement")
-	var t: Track = _last_assoc.get("track")
-	_last_assoc = {}
-	_pending_apply = {}
+	return undo_return(str(_records[_records.size() - 1]["local_return_id"]))
+
+
+## S109 §5.2：按 local_return_id 精确撤销一条主动回波关联——不依赖
+## "最后一条"。Undo/Reject 均走本入口。
+func undo_return(rid: String) -> bool:
+	var idx: int = -1
+	for i in range(_records.size()):
+		if str(_records[i]["local_return_id"]) == rid:
+			idx = i
+			break
+	if idx < 0:
+		return false
+	var rec: Dictionary = _records[idx]
+	_records.remove_at(idx)
+	if str(_pending_apply.get("local_return_id", "")) == rid:
+		_pending_apply = {}
+	var m: Measurement = rec.get("measurement")
+	var t: Track = rec.get("track")
 	if m == null or t == null:
 		return false
 	if not t.remove_measurement(m):
@@ -205,8 +255,60 @@ func undo_last_association() -> bool:
 	return true
 
 
+## 回波记录只读摘要（测试/面板用；无 target_id 等禁止字段，§2.3）。
+func records_snapshot() -> Array:
+	var out: Array = []
+	for rec in _records:
+		var m: Measurement = rec.get("measurement")
+		(
+			out
+			. append(
+				{
+					"local_return_id": str(rec["local_return_id"]),
+					"ping_id": int(rec["ping_id"]),
+					"track_id": str(rec["track_id"]),
+					"range_m": float(m.measured_range_m) if m != null else -1.0,
+				}
+			)
+		)
+	return out
+
+
+## ASSISTED 待裁决记录的命中 Track id（"" = 无）。
+func pending_track_id() -> String:
+	var t: Track = _pending_apply.get("track")
+	return t.track_id if t != null else ""
+
+
+## 本次 Ping（最后一条记录的 ping_id）中优先级最高的回波：REQ-02 排序口径
+## （preferred 命中 > association_score > se_db）。
+func _pending_candidate() -> Dictionary:
+	if _records.is_empty():
+		return {}
+	var pid: int = int(_records[_records.size() - 1]["ping_id"])
+	var best: Dictionary = {}
+	for rec in _records:
+		if int(rec["ping_id"]) != pid:
+			continue
+		if best.is_empty() or _rec_priority(rec) > _rec_priority(best):
+			best = rec
+	return best
+
+
+func _rec_priority(rec: Dictionary) -> float:
+	var p: float = 0.0
+	if preferred_track_id != "" and str(rec["track_id"]) == preferred_track_id:
+		p += 1000000.0
+	return p + float(rec["association_score"]) * 1000.0 + float(rec["se_db"])
+
+
+func _next_return_id_trim() -> void:
+	while _records.size() > MAX_RETURNS:
+		_records.pop_front()
+
+
 func has_undo() -> bool:
-	return not _last_assoc.is_empty()
+	return not _records.is_empty()
 
 
 # ------------------------------------------------------------------
@@ -267,11 +369,11 @@ func mark_range_applied(success: bool) -> void:
 	notify_dirty()
 
 
-## 当前卡片应显示的关联 Track id（无则 "-"）。
+## 当前卡片应显示的关联 Track id（最新回波记录；无则 "-"）。
 func linked_track_id() -> String:
-	if _last_assoc.is_empty():
+	if _records.is_empty():
 		return "-"
-	var t: Track = _last_assoc.get("track")
+	var t: Track = _records[_records.size() - 1].get("track")
 	if t == null:
 		return "-"
 	return t.track_id
@@ -311,21 +413,21 @@ func _card_data() -> Dictionary:
 			state = "COOLDOWN"
 	var disabled_reason: String = ""
 	if state == "UNAVAILABLE":
-		disabled_reason = "No active sonar fitted on this platform."
+		disabled_reason = UiText.t("ping_unavail_tip")
 	elif state != "READY":
-		disabled_reason = "Single ping in flight / recharging — wait for it to return."
+		disabled_reason = UiText.t("ping_busy_tip")
 	elif not world.can_ping():
-		disabled_reason = "Ping recharging."
+		disabled_reason = UiText.t("ping_recharge_tip")
 	var params := {
-		"mode": "Single pulse",
+		"mode": "Single pulse",  # 内部键 → UiText.ping_mode 显示
 		"freq_khz": world.ping_center_freq_hz() / 1000.0,
 		"sl_db": world.ping_sl_db,
 		"listen_s": world.ping_listen_window_s,
 		"max_range_km": world.ping_max_range_m() / 1000.0,
-		"exposure": "HIGH — enemy may intercept",
+		"exposure": "HIGH — enemy may intercept",  # → UiText.exposure 显示
 	}
 	var linked: String = linked_track_id()
-	var evidence: String = "ACTIVE RANGE ADDED" if linked != "-" else "-"
+	var evidence: String = "已增加主动测距" if linked != "-" else "-"
 	var fit_txt: String = "-"
 	match evidence_state:
 		"PENDING_APPLY":

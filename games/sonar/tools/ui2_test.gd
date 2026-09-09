@@ -50,10 +50,8 @@ func _ui2_2_cm_band_hint(fails: Array) -> void:
 	p.bind(w)
 	p.sync()
 	var txt: String = p._lbl_state.text
-	_assert_bool(
-		fails, "UI2-2a jammer band hint shown", txt.contains("JAMMER band 800–1200 Hz"), true
-	)
-	_assert_bool(fails, "UI2-2b rounds/cooldown still shown", txt.contains("Rounds"), true)
+	_assert_bool(fails, "UI2-2a jammer band hint shown", txt.contains("干扰器频段 800–1200 Hz"), true)
+	_assert_bool(fails, "UI2-2b rounds/cooldown still shown", txt.contains("弹药"), true)
 	# 无 band 配置时不显示频带行（不虚构）。
 	var w2 := World.new()
 	w2.load_scenario(ConfigLoader.load_scenario("stage1_basic_passive"))
@@ -98,6 +96,7 @@ func _ui2_3_alert_groups_bda(fails: Array) -> void:
 				"timestamp": 30.0,
 				"alert": "DETONATION_HEARD",
 				"emission_kind": AcousticEmissionEvent.EXPLOSION,
+				"evidence_kind": "DETONATION",
 				"side_hint": "OWN_FACT",
 				"bearing_deg": 46.0,
 				"se_db": 25.0,
@@ -109,12 +108,10 @@ func _ui2_3_alert_groups_bda(fails: Array) -> void:
 	p.bind(w, func() -> Array: return [46.0])
 	p.sync()
 	var txt: String = p._lbl.text
-	_assert_bool(
-		fails, "UI2-3a BDA summary line", txt.contains("BDA summary: 1×PROBABLE_KILL"), true
-	)
-	_assert_bool(fails, "UI2-3b threat group tagged", txt.contains("THREAT"), true)
-	_assert_bool(fails, "UI2-3c countermeasure group tagged", txt.contains("CM T+20s"), true)
-	_assert_bool(fails, "UI2-3d kill graded on row", txt.contains("BDA T+30s PROBABLE_KILL"), true)
+	_assert_bool(fails, "UI2-3a BDA summary line", txt.contains("战果汇总：1×可能击沉"), true)
+	_assert_bool(fails, "UI2-3b threat group tagged", txt.contains("威胁"), true)
+	_assert_bool(fails, "UI2-3c countermeasure group tagged", txt.contains("反制 T+20s"), true)
+	_assert_bool(fails, "UI2-3d kill graded on row", txt.contains("战果 T+30s 可能击沉"), true)
 	_assert_bool(
 		fails, "UI2-3e no truth leak", not txt.contains("target") and not txt.contains("ET-"), true
 	)
@@ -139,7 +136,7 @@ func _ui2_4_start_menu_tutorial(fails: Array) -> void:
 		fails.append("UI2-4a tutorial briefing label not found")
 	else:
 		var t: String = found.text
-		for token in ["Mark", "TMA", "System", "Countermeasures", "seed", "ASSISTED/FULL_AUTO"]:
+		for token in ["Mark", "TMA", "Solution", "反制措施", "seed", "辅助/全自动"]:
 			if not t.contains(token):
 				fails.append("UI2-4a tutorial missing %s" % token)
 		_assert_bool(fails, "UI2-4a tutorial content checked", true, true)

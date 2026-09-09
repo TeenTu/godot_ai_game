@@ -55,7 +55,31 @@ func _mk_rng(seed_val: int) -> RandomNumberGenerator:
 
 
 func _mk_bus_event(bus: AcousticEmissionBus, kind: String, e: float, n: float) -> void:
-	bus.record(kind, "ET01", 10.0, Vector3(e, n, 60.0), 1000.0, 500.0, 170.0, 0.5)
+	# S109：合成事件携带真实可观测特征（分类器只看特征，不看枚举）：
+	# 航行噪声=宽带+双谱线；出管瞬态=低频宽带短持续无谱线。
+	if kind == AcousticEmissionEvent.TORPEDO_RUNNING_NOISE:
+		(
+			bus
+			. record(
+				kind,
+				"ET01",
+				10.0,
+				Vector3(e, n, 60.0),
+				1550.0,
+				2900.0,
+				170.0,
+				1.0,
+				{
+					"tonal_lines":
+					[
+						{"freq_hz": 660.0, "level_db": 128.0},
+						{"freq_hz": 1320.0, "level_db": 121.0},
+					]
+				}
+			)
+		)
+	else:
+		bus.record(kind, "ET01", 10.0, Vector3(e, n, 60.0), 1500.0, 8000.0, 168.0, 0.5)
 
 
 ## ---- PD-01：观察点快照（AT-09）----

@@ -253,7 +253,13 @@ func _p4_echo_in_stream_on_arrival(fails: Array) -> void:
 	if added == 1:
 		var m: Measurement = w.measurements[n0]
 		_assert_bool(fails, "P4 appended has range", m.has_range(), true)
-		_assert_bool(fails, "P4 appended target_id", str(m.target_id) == "tgt", true)
+		# S109 P0-06：测量对象结构性不含内部身份；Truth 对照走调试台账。
+		_assert_bool(
+			fails,
+			"P4 identity in debug ledger only",
+			str(w.world["generator"].identity_by_evidence.get(str(m.evidence_id), "")) == "tgt",
+			true,
+		)
 		_assert_bool(fails, "P4 appended ping_id", m.ping_id > 0, true)
 		_assert_bool(
 			fails,
@@ -274,7 +280,6 @@ func _p5_summary_fields(fails: Array) -> void:
 		return
 	var e: Dictionary = echoes[0]
 	var keys: Array = [
-		"target_id",
 		"ping_id",
 		"detected",
 		"se_db",
@@ -282,6 +287,7 @@ func _p5_summary_fields(fails: Array) -> void:
 		"bearing_deg",
 		"range_m",
 		"range_sigma_m",
+		"measurement",
 	]
 	for key in keys:
 		if not e.has(key):

@@ -81,16 +81,14 @@ func _pe_01_reject_reasons(fails: Array) -> void:
 	w.run_steps(4)
 	p.sync()
 	var lbl: Label = p._sections[str(tp2.torpedo_id)]["lbl"]
-	for token in ["Recv", "TX", "Trk", "Auth", "Steer"]:
+	for token in ["接收机", "发射机", "航迹", "权限", "转向"]:
 		if not lbl.text.contains(token):
 			fails.append("PE-01d orthogonal row missing %s in: %s" % [token, lbl.text])
 	# e) TX 行随权威状态逐帧刷新（set_active_tx 后立即反映，不等 phase 变化）。
 	tp2.set_active_tx(true)
 	p.sync()
 	lbl = p._sections[str(tp2.torpedo_id)]["lbl"]
-	_assert_bool(
-		fails, "PE-01e TX row per-frame refresh", lbl.text.contains("TX WAITING_TRIGGER"), true
-	)
+	_assert_bool(fails, "PE-01e TX row per-frame refresh", lbl.text.contains("发射机 待发"), true)
 
 
 ## ---- PE-02：武器卡生命周期 / 日志 ----
@@ -123,7 +121,9 @@ func _pe_02_panel_lifecycle(fails: Array) -> void:
 	var log_txt: String = wp._lbl_weapons.text
 	_assert_bool(fails, "PE-02c1 two log lines", log_txt.split("\n").size() >= 3, true)
 	_assert_bool(fails, "PE-02c2 no pipe join", not log_txt.contains(" | "), true)
-	_assert_bool(fails, "PE-02c3 real event mapped", log_txt.contains("ASSISTED"), true)
+	_assert_bool(
+		fails, "PE-02c3 real event mapped", log_txt.contains("导引头") and log_txt.contains("辅助"), true
+	)
 	# d) 断线命令失败 → 拒绝原因来自 torpedo.last_cmd_reject_reason。
 	tp2.wire_link.cut()
 	tp2._enter_fallback()
@@ -131,11 +131,7 @@ func _pe_02_panel_lifecycle(fails: Array) -> void:
 	_assert_bool(
 		fails,
 		"PE-02d reject reason surfaced",
-		(
-			p._note.text.contains("WIRE")
-			or p._note.text.contains("CUT")
-			or p._note.text.contains("BROKEN")
-		),
+		p._note.text.contains("导线状态") or p._note.text.contains("已切断"),
 		true
 	)
 
@@ -143,7 +139,7 @@ func _pe_02_panel_lifecycle(fails: Array) -> void:
 func _count_titles(p: InWaterWeaponPanel) -> int:
 	var n: int = 0
 	for c in p.get_children():
-		if c is Label and (c as Label).text == "In-Water Weapons":
+		if c is Label and (c as Label).text == "在水武器":
 			n += 1
 	return n
 

@@ -99,6 +99,8 @@ var trail: Array = []  # [{e, n, t}] 供海图画轨迹（自身状态，非 Tru
 var command_log: Array = []  # [{t, cmd, detail}] 已接受线控命令（封顶 256）
 # P1-01：最近一次 UI 命令被拒原因（供武器卡显示；命令成功时清空）。
 var last_cmd_reject_reason: String = ""
+# S109 AT-40：World 级任务门提供者（终局后所有线导命令统一 MISSION_ENDED）。
+var mission_gate: Callable = Callable()
 # 净化 SeekerReturn 记录（无 target_id/Truth，可直供 UI/日志）。
 var seeker_returns: Array = []
 # Commit 6（REQ-DECISION-01）：被动接收机默认 ON；发射并安全出管后开始监听。
@@ -429,6 +431,11 @@ func _wire_accepts_command() -> bool:
 
 
 func _cmd_gate() -> bool:
+	if mission_gate.is_valid():
+		var gate: String = str(mission_gate.call())
+		if gate != "":
+			last_cmd_reject_reason = gate
+			return false
 	if mission_state == MissionState.STOWED or mission_state == MissionState.DEAD:
 		last_cmd_reject_reason = "INVALID STATE %s" % mission_state_name()
 		return false

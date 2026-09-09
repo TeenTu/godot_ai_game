@@ -118,7 +118,7 @@ func _unit_suffix() -> String:
 
 
 func _mode_hint() -> String:
-	return "click: deg/m/σ" if _has_range_rows() else "click: deg/σ"
+	return UiText.t("residual_hint")
 
 
 func _draw() -> void:

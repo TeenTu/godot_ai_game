@@ -63,7 +63,18 @@ func _initialize() -> void:
 		_assert(fails, bool(techo["settled"]), "snapshot echo settled after torpedo removed (验收6)")
 	var echo_meas: Measurement = null
 	for r in results:
-		if str(r.get("target_id")) == str(tp.torpedo_id) and bool(r.get("detected")):
+		# S109：回波摘要无 target_id；按会话回波结算方位匹配同一物理回波。
+		if (
+			bool(r.get("detected"))
+			and (
+				absf(
+					NavUtils.wrap180(
+						float(r.get("bearing_deg", 0.0)) - float(techo.get("bearing_deg", 1e9))
+					)
+				)
+				< 1e-6
+			)
+		):
 			echo_meas = r["measurement"]
 			break
 
@@ -148,7 +159,13 @@ func _initialize() -> void:
 		for i in range(40):
 			wk.run_steps(1)
 		for r in wk.take_arrived_echoes():
-			if str(r.get("target_id")) == str(tpk.torpedo_id) and bool(r.get("detected")):
+			# S109：无 target_id 匹配；已接近到 ≤1500m 的弱 TS 雷回波距离必然
+			# <2km（敌方反击雷仍在 ~3km 处，不会误计）。
+			if (
+				bool(r.get("detected"))
+				and float(r.get("range_m", -1.0)) > 0.0
+				and float(r["range_m"]) < 2000.0
+			):
 				det += 1
 				break
 	_assert(

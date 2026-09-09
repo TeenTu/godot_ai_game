@@ -364,7 +364,7 @@ Commit 12 集成与 CI 门禁（§13/§14.7）：`s107_integrated_test` 三条�
 | 状态显示 BOUNDARY_HIT | 解撞到搜索边界，通常是测量太少或几何病态 |
 | FIT 标签没有 ±xx m | 协方差仅在单峰且可观测时输出，不可观测时故意不给误差椭圆 |
 | 找不到 TMA Course/Speed | 右侧面板需向下滚动（已加 ScrollContainer） |
-| 英文显示 | Web 版 Godot 默认字体无中文字形，已全部英文化 |
+| 界面中文显示 | S109 Batch 7 起界面全中文化：文案集中在 `scripts/ui/ui_text.gd`，Web/桌面用子集字体 `assets/fonts/ui_subset.ttf`（含所需中文字形，AT-35..38 回归）。新增界面文案后需重跑 `python tools/make_font_subset.py` 再生字体，否则缺字形 |
 | 接触一直是 S01 | 单目标场景只有一个接触，属正常 |
 | 想重置 | 刷新浏览器页面（场景固定种子，重开会从 0 开始） |
 

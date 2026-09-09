@@ -65,7 +65,7 @@ var _ping_cd: float = 0.0  # 冷却剩余（本艇事实，可显示）
 func _init() -> void:
 	add_theme_constant_override("separation", 3)
 	var title := Label.new()
-	title.text = "Active Sonar"
+	title.text = UiText.t("active_sonar")
 	title.add_theme_font_size_override("font_size", 15)
 	title.add_theme_color_override("font_color", Color(1.0, 0.75, 0.4))
 	add_child(title)
@@ -80,7 +80,7 @@ func _init() -> void:
 	_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	badge_row.add_child(_badge)
 	_btn_ping = Button.new()
-	_btn_ping.text = "PING"
+	_btn_ping.text = UiText.t("btn_ping")
 	_btn_ping.add_theme_font_size_override("font_size", 13)
 	_btn_ping.custom_minimum_size = Vector2(76, 30)
 	_btn_ping.pressed.connect(func(): ping_requested.emit())
@@ -92,19 +92,19 @@ func _init() -> void:
 	grid.add_theme_constant_override("h_separation", 6)
 	grid.add_theme_constant_override("v_separation", 1)
 	add_child(grid)
-	_lbl_mode = _add_param_row(grid, "Mode")
-	_lbl_freq = _add_param_row(grid, "Frequency")
-	_lbl_sl = _add_param_row(grid, "Source Level")
-	_lbl_listen = _add_param_row(grid, "Listen Window")
-	_lbl_exposure = _add_param_row(grid, "Exposure")
+	_lbl_mode = _add_param_row(grid, UiText.t("param_mode"))
+	_lbl_freq = _add_param_row(grid, UiText.t("param_frequency"))
+	_lbl_sl = _add_param_row(grid, UiText.t("param_source_level"))
+	_lbl_listen = _add_param_row(grid, UiText.t("param_listen_window"))
+	_lbl_exposure = _add_param_row(grid, UiText.t("param_exposure"))
 
 	# Latest Returns 表
 	var ret_title := Label.new()
-	ret_title.text = "Latest Returns"
+	ret_title.text = str(UiText.t("latest_returns")) + "（脉冲·时刻·方位·距离·±σ·SE·关联）"
 	ret_title.add_theme_font_size_override("font_size", 14)
 	add_child(ret_title)
 	var head := Label.new()
-	head.text = "#  time   brg   range    ±σ     SE   assoc"
+	head.visible = false
 	head.add_theme_font_size_override("font_size", 11)
 	head.add_theme_color_override("font_color", Color(0.6, 0.75, 0.8))
 	add_child(head)
@@ -114,7 +114,7 @@ func _init() -> void:
 
 	# TMA Link
 	var tma_title := Label.new()
-	tma_title.text = "TMA Link"
+	tma_title.text = UiText.t("tma_link")
 	tma_title.add_theme_font_size_override("font_size", 14)
 	add_child(tma_title)
 	var tma_grid := GridContainer.new()
@@ -122,31 +122,31 @@ func _init() -> void:
 	tma_grid.add_theme_constant_override("h_separation", 6)
 	tma_grid.add_theme_constant_override("v_separation", 1)
 	add_child(tma_grid)
-	_lbl_tma_track = _add_param_row(tma_grid, "Track")
-	_lbl_tma_evidence = _add_param_row(tma_grid, "Evidence")
-	_lbl_tma_fit = _add_param_row(tma_grid, "Fit")
+	_lbl_tma_track = _add_param_row(tma_grid, UiText.t("param_track"))
+	_lbl_tma_evidence = _add_param_row(tma_grid, UiText.t("param_evidence"))
+	_lbl_tma_fit = _add_param_row(tma_grid, UiText.t("param_fit"))
 	# REQ-02：TMA 拟合模式（AUTO/ASSISTED/MANUAL）+ Take Control
 	var mode_row := HBoxContainer.new()
 	mode_row.add_theme_constant_override("separation", 4)
 	add_child(mode_row)
 	var mode_lbl := Label.new()
-	mode_lbl.text = "Fit Mode"
+	mode_lbl.text = UiText.t("fit_mode")
 	mode_lbl.add_theme_font_size_override("font_size", 12)
 	mode_lbl.custom_minimum_size = Vector2(96, 0)
 	mode_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 0.85))
 	mode_row.add_child(mode_lbl)
 	_opt_fit_mode = OptionButton.new()
 	for fm in FIT_MODES:
-		_opt_fit_mode.add_item(fm as String)
+		_opt_fit_mode.add_item(UiText.mode(fm as String))
 	_opt_fit_mode.add_theme_font_size_override("font_size", 12)
 	_opt_fit_mode.custom_minimum_size = Vector2(92, 0)
 	_opt_fit_mode.item_selected.connect(_on_fit_mode_selected)
 	mode_row.add_child(_opt_fit_mode)
 	var btn_take := Button.new()
-	btn_take.text = "Take Control"
+	btn_take.text = UiText.t("btn_take_control")
 	btn_take.add_theme_font_size_override("font_size", 11)
 	btn_take.flat = true
-	btn_take.tooltip_text = "Switch to MANUAL: keep range evidence, stop auto-refitting Trial"
+	btn_take.tooltip_text = UiText.t("tip_take_control")
 	btn_take.pressed.connect(func(): take_control_requested.emit())
 	mode_row.add_child(btn_take)
 	# REQ-02：ASSISTED 提示行（默认隐藏）：Apply range evidence to Trial?
@@ -155,22 +155,22 @@ func _init() -> void:
 	_prompt_box.visible = false
 	add_child(_prompt_box)
 	var prompt_lbl := Label.new()
-	prompt_lbl.text = "Apply range to Trial?"
+	prompt_lbl.text = UiText.t("apply_prompt")
 	prompt_lbl.add_theme_font_size_override("font_size", 11)
 	prompt_lbl.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
 	_prompt_box.add_child(prompt_lbl)
 	var btn_apply := Button.new()
-	btn_apply.text = "Apply"
+	btn_apply.text = UiText.t("btn_apply")
 	btn_apply.add_theme_font_size_override("font_size", 11)
 	btn_apply.pressed.connect(func(): apply_requested.emit())
 	_prompt_box.add_child(btn_apply)
 	var btn_reject := Button.new()
-	btn_reject.text = "Reject"
+	btn_reject.text = UiText.t("btn_reject")
 	btn_reject.add_theme_font_size_override("font_size", 11)
 	btn_reject.pressed.connect(func(): undo_requested.emit())
 	_prompt_box.add_child(btn_reject)
 	_btn_undo = Button.new()
-	_btn_undo.text = "Undo last association"
+	_btn_undo.text = UiText.t("btn_undo_assoc")
 	_btn_undo.add_theme_font_size_override("font_size", 12)
 	_btn_undo.flat = true
 	_btn_undo.pressed.connect(func(): undo_requested.emit())
@@ -213,10 +213,10 @@ func set_data(d: Dictionary) -> void:
 	var returns: Array = d.get("returns", [])
 	var tma: Dictionary = d.get("tma", {})
 	# State badge：颜色 + 文字双编码（色盲安全）。冷却附在本艇事实徽标内。
-	var badge_txt: String = state
+	var badge_key: String = state
 	if state == "RETURN" or state == "NO RETURN" or state == "COOLDOWN":
-		badge_txt = "COOLDOWN"
-	_badge.text = badge_txt
+		badge_key = "COOLDOWN"
+	_badge.text = UiText.ping(badge_key)
 	var col: Color = COL_STATE.get(state, COL_STATE["UNAVAILABLE"])
 	if (state == "RETURN" or state == "NO RETURN") and _ping_cd > 0.0:
 		col = COL_STATE["COOLDOWN"]
@@ -226,16 +226,16 @@ func set_data(d: Dictionary) -> void:
 	var ready: bool = state == "READY"
 	_btn_ping.disabled = not ready
 	_btn_ping.modulate = Color(1.0, 0.7, 0.3) if ready else Color(0.55, 0.55, 0.58)
-	_btn_ping.tooltip_text = str(d.get("ping_disabled_reason", ""))
+	_btn_ping.tooltip_text = UiText.reject(str(d.get("ping_disabled_reason", "")))
 	# 固定参数
-	_lbl_mode.text = str(params.get("mode", "-"))
+	_lbl_mode.text = UiText.ping_mode(str(params.get("mode", "-")))
 	_lbl_freq.text = "%.1f kHz" % float(params.get("freq_khz", 0.0))
 	_lbl_sl.text = "%.0f dB" % float(params.get("sl_db", 0.0))
 	_lbl_listen.text = (
 		"%.0f s / max %.1f km"
 		% [float(params.get("listen_s", 0.0)), float(params.get("max_range_km", 0.0))]
 	)
-	_lbl_exposure.text = str(params.get("exposure", "-"))
+	_lbl_exposure.text = UiText.exposure(str(params.get("exposure", "-")))
 	_lbl_exposure.add_theme_color_override(
 		"font_color",
 		(
@@ -251,14 +251,13 @@ func set_data(d: Dictionary) -> void:
 		var r: Dictionary = returns[i]
 		(_return_rows[i] as Button).text = _fmt_return(r)
 		(_return_rows[i] as Button).tooltip_text = (
-			"Ping %d @ %.0fs — click to select associated contact"
-			% [int(r.get("ping_id", -1)), float(r.get("time", 0.0))]
+			UiText.t("ret_tooltip") % [int(r.get("ping_id", -1)), float(r.get("time", 0.0))]
 		)
 	# TMA Link
 	_lbl_tma_track.text = str(tma.get("track", "-"))
 	_lbl_tma_evidence.text = str(tma.get("evidence", "-"))
 	var fit_txt: String = str(tma.get("fit", "-"))
-	_lbl_tma_fit.text = fit_txt
+	_lbl_tma_fit.text = UiText.fit(fit_txt)
 	var fit_col := Color(0.85, 0.9, 0.9)
 	if fit_txt == "AWAITING APPLY":
 		fit_col = Color(0.4, 0.9, 1.0)
@@ -287,15 +286,15 @@ func set_data(d: Dictionary) -> void:
 
 func _badge_tooltip(state: String) -> String:
 	if state == "COOLDOWN":
-		return "Recharging %.0f s" % _ping_cd
+		return UiText.t("ping_cd_tip") % _ping_cd
 	var tips := {
-		"READY": "Active sonar ready — single pulse",
-		"TRANSMITTING": "Pulse emitted — listening for echoes",
-		"LISTENING": "Listening — fixed echo window open",
-		"RETURN": "Echo(es) returned — recharging",
-		"NO RETURN": "No echo returned — recharging",
+		"READY": UiText.t("ping_tip_ready"),
+		"TRANSMITTING": UiText.t("ping_tip_transmitting"),
+		"LISTENING": UiText.t("ping_tip_listening"),
+		"RETURN": UiText.t("ping_tip_return"),
+		"NO RETURN": UiText.t("ping_tip_noreturn"),
 	}
-	return str(tips.get(state, "No active sonar fitted on this platform"))
+	return str(tips.get(state, UiText.t("ping_unavail_tip")))
 
 
 func _rebuild_return_rows(returns: Array) -> void:

@@ -22,11 +22,11 @@ var _last_highlight: int = -2
 
 func _init() -> void:
 	var title := Label.new()
-	title.text = "Weapon Alerts"
+	title.text = UiText.t("weapon_alerts")
 	title.add_theme_font_size_override("font_size", 15)
 	add_child(title)
 	_lbl = Label.new()
-	_lbl.text = "No alerts"
+	_lbl.text = UiText.t("no_alerts")
 	_lbl.add_theme_font_size_override("font_size", 11)
 	add_child(_lbl)
 
@@ -41,7 +41,7 @@ func sync() -> void:
 		return
 	var evs: Array = _world.player_evidence
 	if evs.is_empty():
-		_lbl.text = "No alerts"
+		_lbl.text = UiText.t("no_alerts")
 		_last_newest_id = -1
 		return
 	var newest: int = int(evs[evs.size() - 1].get("evidence_id", -1))
@@ -62,8 +62,9 @@ func sync() -> void:
 		var e: Dictionary = evs[i]
 		var tag: String = str(e.get("alert", "?"))
 		# §10.4：己方武器爆炸 + 航迹一致 → 战果评估（仍非 Truth）。
+		# S109：识别用净化后的 evidence_kind（DETONATION）/ 己方事实事件种类。
 		if (
-			str(e.get("emission_kind", "")) == AcousticEmissionEvent.EXPLOSION
+			str(e.get("evidence_kind", "")) == "DETONATION"
 			and str(e.get("side_hint")) == "OWN_FACT"
 		):
 			var level: String = EmissionSanitizer.classify_detonation(e, track_brgs, true)
@@ -72,10 +73,13 @@ func sync() -> void:
 		var group: String = _group_for(tag)
 		if group == "BDA":
 			bda_counts[tag] = int(bda_counts.get(tag, 0)) + 1
-		var line: String = "%s T+%ds %s" % [group, int(float(e.get("timestamp", 0.0))), tag]
+		var line: String = (
+			"%s T+%ds %s"
+			% [UiText.group(group), int(float(e.get("timestamp", 0.0))), UiText.event(tag)]
+		)
 		if e.has("bearing_deg"):
-			line += " brg %03.0f°" % float(e["bearing_deg"])
-		line += " conf %d%%" % int(100.0 * float(e.get("confidence", 0.0)))
+			line += " 方位 %03.0f°" % float(e["bearing_deg"])
+		line += " 置信 %d%%" % int(100.0 * float(e.get("confidence", 0.0)))
 		# P0-07.4：地图选中的证据行加前缀高亮。
 		if int(e.get("evidence_id", -1)) == highlight_evidence_id:
 			line = "> " + line + " <"
@@ -83,8 +87,8 @@ func sync() -> void:
 	if not bda_counts.is_empty():
 		var parts: Array = []
 		for k in bda_counts:
-			parts.append("%d×%s" % [int(bda_counts[k]), k])
-		lines.push_front("BDA summary: " + " ".join(parts))
+			parts.append("%d×%s" % [int(bda_counts[k]), UiText.event(k)])
+		lines.push_front(UiText.t("bda_summary") + "：" + " ".join(parts))
 	_lbl.text = "\n".join(lines)
 
 

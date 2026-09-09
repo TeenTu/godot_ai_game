@@ -31,18 +31,18 @@ func _ready() -> void:
 	row.add_theme_constant_override("separation", 6)
 	add_child(row)
 	var lbl := Label.new()
-	lbl.text = "AUTO"
+	lbl.text = UiText.t("lbl_auto")
 	row.add_child(lbl)
 	_mode_opt = OptionButton.new()
 	for m in AutomationController.MODE_NAMES:
-		_mode_opt.add_item(str(m))
+		_mode_opt.add_item(UiText.mode(str(m)))
 	_mode_opt.select(AutomationController.MODE_MANUAL)
 	_mode_opt.item_selected.connect(_on_mode)
 	row.add_child(_mode_opt)
 	_chk_fire = _mk_roe("auto_fire")
 	_chk_decoy = _mk_roe("auto_decoy")
 	_lbl_state = Label.new()
-	_lbl_state.text = "slots 0 | —"
+	_lbl_state.text = UiText.t("slots_fmt") % [0, "—"]
 	_lbl_state.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lbl_state.custom_minimum_size = Vector2(0, 0)
 	add_child(_lbl_state)
@@ -77,7 +77,7 @@ func _on_mode(index: int) -> void:
 
 func _mk_roe(key: String) -> CheckButton:
 	var c := CheckButton.new()
-	c.text = key
+	c.text = UiText.roe(key)
 	c.button_pressed = bool(ctrl.roe.get(key, false))
 	c.toggled.connect(func(on: bool): ctrl.set_roe(key, on, _sim_now))
 	add_child(c)
@@ -88,11 +88,11 @@ func _refresh_state() -> void:
 	var last: String = "—"
 	if not ctrl.command_log.is_empty():
 		var e: Dictionary = ctrl.command_log[ctrl.command_log.size() - 1]
-		last = "%s %s" % [str(e.get("kind", "")), str(e.get("detail", ""))]
-	var txt: String = "slots %d | %s" % [ctrl.slots.size(), last]
+		last = "%s %s" % [UiText.event(str(e.get("kind", ""))), str(e.get("detail", ""))]
+	var txt: String = UiText.t("slots_fmt") % [ctrl.slots.size(), last]
 	if not _pending_proposals.is_empty():
 		var ids: Array = []
 		for p in _pending_proposals:
 			ids.append(str(p.get("track_id", "")))
-		txt += " | Apply? " + ",".join(ids)
+		txt += " | " + str(UiText.t("apply_prompt_2")) + ",".join(ids)
 	_lbl_state.text = txt

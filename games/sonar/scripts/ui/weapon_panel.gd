@@ -37,28 +37,28 @@ func _init() -> void:
 
 func _build() -> void:
 	_btn_fire = Button.new()
-	_btn_fire.text = "🚀 Fire Torpedo"
+	_btn_fire.text = UiText.t("btn_fire")
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
 	# REQ-B1-04：FIRE MODE 显式选择——SOLUTION 只用选中 Contact 的解。
 	var fm_row := HBoxContainer.new()
 	var fm_lbl := Label.new()
-	fm_lbl.text = "FIRE MODE"
+	fm_lbl.text = UiText.t("fire_mode")
 	fm_lbl.add_theme_font_size_override("font_size", 12)
 	fm_row.add_child(fm_lbl)
 	_opt_fire_mode = OptionButton.new()
 	for m in ["SOLUTION", "BEARING_ONLY", "MANUAL"]:
-		_opt_fire_mode.add_item(m)
+		_opt_fire_mode.add_item(UiText.fire_mode(m))
 	_opt_fire_mode.select(0)
 	_opt_fire_mode.item_selected.connect(
-		func(i: int): fire_mode_changed.emit(_opt_fire_mode.get_item_text(i))
+		func(i: int): fire_mode_changed.emit(["SOLUTION", "BEARING_ONLY", "MANUAL"][i])
 	)
 	fm_row.add_child(_opt_fire_mode)
 	add_child(fm_row)
 	# REQ-01：浅水攻击定深开关（水面/浅深目标；有限升降速率逼近，非瞬移）。
 	_chk_shallow = CheckBox.new()
-	_chk_shallow.text = "Shallow attack depth 12m"
+	_chk_shallow.text = UiText.t("chk_shallow")
 	_chk_shallow.button_pressed = false
 	_chk_shallow.add_theme_font_size_override("font_size", 12)
 	_chk_shallow.toggled.connect(
@@ -71,7 +71,7 @@ func _build() -> void:
 	# 程序侧仍按深度模型/武器限制鈐制）。玩家浅水开关优先于预设。
 	_sel_preset = OptionButton.new()
 	for i in WeaponProgram.SearchDepthPreset.size():
-		_sel_preset.add_item(WeaponProgram.search_depth_preset_name(i), i)
+		_sel_preset.add_item(UiText.depth_preset(WeaponProgram.search_depth_preset_name(i)), i)
 	_sel_preset.selected = WeaponProgram.SearchDepthPreset.UPPER
 	_sel_preset.add_theme_font_size_override("font_size", 12)
 	_sel_preset.item_selected.connect(
@@ -87,7 +87,7 @@ func _build() -> void:
 	_lbl_fire_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_lbl_fire_hint)
 	_lbl_weapons = Label.new()
-	_lbl_weapons.text = "Tubes: -"
+	_lbl_weapons.text = UiText.t("tubes_placeholder")
 	_lbl_weapons.add_theme_font_size_override("font_size", 14)
 	_lbl_weapons.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2
 	add_child(_lbl_weapons)
@@ -120,7 +120,7 @@ func set_fire_context(text: String) -> void:
 ## 经 FireExecutor→LaunchProgrammer.build_program 合成不可变程序快照。
 func _build_program_editor() -> void:
 	var t := Label.new()
-	t.text = "Program (pre-launch)"
+	t.text = UiText.t("program_prelaunch")
 	t.add_theme_font_size_override("font_size", 13)
 	add_child(t)
 	_lbl_prog_notice = Label.new()
@@ -129,14 +129,14 @@ func _build_program_editor() -> void:
 	add_child(_lbl_prog_notice)
 	var row_a := HBoxContainer.new()
 	row_a.add_theme_constant_override("separation", 3)
-	_add_lbl(row_a, "Speed")
+	_add_lbl(row_a, UiText.t("iw_btn_speed"))
 	var sp := OptionButton.new()
 	for i in WeaponProgram.SpeedMode.size():
-		sp.add_item(WeaponProgram.speed_mode_name(i), i)
+		sp.add_item(UiText.speed_mode(WeaponProgram.speed_mode_name(i)), i)
 	sp.select(WeaponProgram.SpeedMode.CRUISE)
 	sp.item_selected.connect(func(i: int): programmer.speed_mode = i)
 	row_a.add_child(sp)
-	_add_lbl(row_a, "Half°")
+	_add_lbl(row_a, UiText.t("prog_search_half"))
 	var half := SpinBox.new()
 	half.min_value = 0.0
 	half.max_value = 180.0
@@ -147,31 +147,31 @@ func _build_program_editor() -> void:
 	add_child(row_a)
 	var row_b := HBoxContainer.new()
 	row_b.add_theme_constant_override("separation", 3)
-	_add_lbl(row_b, "Pattern")
+	_add_lbl(row_b, UiText.t("prog_pattern"))
 	var pat := OptionButton.new()
-	pat.add_item("AUTO")
+	pat.add_item(UiText.t("auto_label"))
 	for i in WeaponProgram.SearchPattern.size():
-		pat.add_item(WeaponProgram.SearchPattern.keys()[i], i + 1)
+		pat.add_item(UiText.pattern(str(WeaponProgram.SearchPattern.keys()[i])), i + 1)
 	pat.item_selected.connect(func(i: int): programmer.search_pattern = i if i > 0 else -1)
 	row_b.add_child(pat)
-	_add_lbl(row_b, "Active")
+	_add_lbl(row_b, UiText.t("prog_active"))
 	var am := OptionButton.new()
-	am.add_item("AUTO")
+	am.add_item(UiText.t("auto_label"))
 	for i in WeaponProgram.ActiveEnableMode.size():
-		am.add_item(WeaponProgram.ActiveEnableMode.keys()[i], i + 1)
+		am.add_item(UiText.enmode(str(WeaponProgram.ActiveEnableMode.keys()[i])), i + 1)
 	am.item_selected.connect(func(i: int): programmer.active_enable_mode = i if i > 0 else -1)
 	row_b.add_child(am)
 	add_child(row_b)
 	var row_c := HBoxContainer.new()
 	row_c.add_theme_constant_override("separation", 3)
-	_add_lbl(row_c, "Autonomy")
+	_add_lbl(row_c, UiText.t("prog_autonomy"))
 	var um := OptionButton.new()
-	um.add_item("AUTO")
+	um.add_item(UiText.t("auto_label"))
 	for i in WeaponProgram.AutonomyEnableMode.size():
-		um.add_item(WeaponProgram.AutonomyEnableMode.keys()[i], i + 1)
+		um.add_item(UiText.enmode(str(WeaponProgram.AutonomyEnableMode.keys()[i])), i + 1)
 	um.item_selected.connect(func(i: int): programmer.autonomy_enable_mode = i if i > 0 else -1)
 	row_c.add_child(um)
-	_add_lbl(row_c, "Val")
+	_add_lbl(row_c, UiText.t("prog_val"))
 	var av := SpinBox.new()
 	av.min_value = 0.0
 	av.max_value = 20000.0
@@ -182,17 +182,24 @@ func _build_program_editor() -> void:
 	add_child(row_c)
 	var row_d := HBoxContainer.new()
 	row_d.add_theme_constant_override("separation", 3)
-	_add_lbl(row_d, "Fuze")
+	_add_lbl(row_d, UiText.t("prog_fuze"))
 	var fz := OptionButton.new()
 	for f in [
 		FuzeController.FUZE_CONTACT,
 		FuzeController.FUZE_ACOUSTIC_PROXIMITY,
 		FuzeController.FUZE_MAGNETIC_PROXIMITY
 	]:
-		fz.add_item(f)
-	fz.item_selected.connect(func(i: int): programmer.fuze_mode = fz.get_item_text(i))
+		fz.add_item(UiText.fuze_mode(str(f)))
+	fz.item_selected.connect(
+		func(i: int):
+			programmer.fuze_mode = [
+				FuzeController.FUZE_CONTACT,
+				FuzeController.FUZE_ACOUSTIC_PROXIMITY,
+				FuzeController.FUZE_MAGNETIC_PROXIMITY,
+			][i]
+	)
 	row_d.add_child(fz)
-	_add_lbl(row_d, "Arm m")
+	_add_lbl(row_d, UiText.t("prog_arm"))
 	var arm := SpinBox.new()
 	arm.min_value = 0.0
 	arm.max_value = 5000.0
@@ -201,7 +208,7 @@ func _build_program_editor() -> void:
 	arm.value_changed.connect(func(v: float): programmer.warhead_arm_distance_m = v)
 	row_d.add_child(arm)
 	var wire := CheckBox.new()
-	wire.text = "Wire"
+	wire.text = UiText.t("wire_label")
 	wire.button_pressed = true
 	wire.add_theme_font_size_override("font_size", 11)
 	wire.toggled.connect(func(on: bool): programmer.wire_guidance_enabled = on)
@@ -225,24 +232,21 @@ func _on_weapon_event(tid: String, kind: String, detail: Dictionary) -> void:
 	var txt: String = ""
 	match kind:
 		"DETONATION":
-			txt = (
-				"💥 %s DETONATION (min pass %.0fm)"
-				% [tid, float(detail.get("min_distance_m", -1.0))]
-			)
+			txt = "%s 起爆（最近通过 %.0fm）" % [tid, float(detail.get("min_distance_m", -1.0))]
 		"SEEKER_PHASE":
-			txt = "%s seeker %s" % [tid, str(detail.get("state", ""))]
+			txt = "%s 导引头 %s" % [tid, UiText.seeker(str(detail.get("state", "")))]
 		"TRACK_ACCEPTED":
-			txt = "%s track #%s accepted (ASSISTED)" % [tid, str(detail.get("track_id", "?"))]
+			txt = "%s 已接受航迹 #%s（辅助）" % [tid, str(detail.get("track_id", "?"))]
 		"ACTIVE_TX_PING":
-			txt = "%s ping %s sent" % [tid, str(detail.get("ping_id", ""))]
+			txt = "%s 主动脉冲 %s 已发射" % [tid, str(detail.get("ping_id", ""))]
 		"ECHO_RECEIVED":
-			txt = "%s echo received" % tid
+			txt = "%s 收到回波" % tid
 		"LISTEN_COMPLETE_NO_RETURN":
-			txt = "%s listen complete — no return" % tid
+			txt = "%s 监听结束 — 无回波" % tid
 		"FUZE_ARMED":
-			txt = "%s fuze ARMED (%.0fm run)" % [tid, float(detail.get("traveled_m", 0.0))]
+			txt = "%s 引信已解保（已航行 %.0fm）" % [tid, float(detail.get("traveled_m", 0.0))]
 		_:
-			txt = "%s %s" % [tid, kind]
+			txt = "%s %s" % [tid, UiText.event(kind)]
 	_weapon_log.push_front(txt)
 	if _weapon_log.size() > MAX_LOG:
 		_weapon_log.pop_back()
@@ -261,7 +265,7 @@ func _refresh() -> void:
 	if _lbl_prog_notice != null:
 		_lbl_prog_notice.text = programmer.last_notice
 	_lbl_weapons.text = (
-		"Tubes: %d/%d loaded  In-water: %d"
+		"鱼雷管：%d/%d 已装填　在水：%d"
 		% [weapons.loaded_count(), weapons.tubes.size(), weapons.torpedoes.size()]
 	)
 	if _btn_fire != null:

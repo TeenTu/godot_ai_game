@@ -21,12 +21,10 @@ extends RefCounted
 ## sensor_id。地图 LOB 起点用接收时刻快照，本艇机动后不漂移（AT-09）；
 ## 绝不包含 Truth 位置 / range / target_id。
 
-# P0-07：事件种类 → 威胁证据种类（地图图层颜色/线型语义）。
-const _EVIDENCE_KINDS := {
-	AcousticEmissionEvent.TORPEDO_TUBE_TRANSIENT: "LAUNCH_TRANSIENT",
-	AcousticEmissionEvent.TORPEDO_MOTOR_START: "LAUNCH_TRANSIENT",
-	AcousticEmissionEvent.TORPEDO_RUNNING_NOISE: "RUNNING_NOISE",
-	AcousticEmissionEvent.TORPEDO_ACTIVE_PING: "ACTIVE_PING",
+# P0-07/S109：本类不再把内核事件枚举映射为鱼雷类别（P0-01 修复）。己方事件
+# （own_emitter_refs 集合内）是本艇合法已知事实，仍按事件种类转录；敌方事件
+# 一律经 TorpedoClassifier（只看可观测特征）得到分类结果。
+const _FACT_EVIDENCE_KINDS := {
 	AcousticEmissionEvent.EXPLOSION: "DETONATION",
 	AcousticEmissionEvent.DECOY_ACTIVATION: "DECOY",
 }
@@ -40,6 +38,9 @@ var receiver_dt_db: float = 3.0
 var receiver_k_d: float = 6.0
 var sigma_min_deg: float = 1.0
 var sigma_max_deg: float = 8.0
+## S109：特征估计噪声（加噪/量化，绝不复制发射端配置原值）。
+var feature_noise_rel: float = 0.08
+var classifier := TorpedoClassifier.new()
 
 var _next_evidence_id: int = 1
 var _last_event_id: int = 0
@@ -113,9 +114,10 @@ func _event_available_time(ev: Dictionary, own: RefCounted) -> float:
 
 
 ## 单事件结算（敌方瞬态概率截获）。返回 {"evidence": [...]}。
+## S109 P0-01：类别只由 TorpedoClassifier 从可观测特征得出；输出证据
+## 绝不含 emission_kind / target_id / Truth 位置（§2.3）。
 func _consume_single(ev: Dictionary, own: RefCounted, now: float) -> Dictionary:
 	var out: Array = []
-	var kind: String = str(ev.get("emission_kind", ""))
 	# 敌方事件：单程概率截获（§9.3）。
 	var src: Dictionary = ev.get("source_position_internal", {})
 	var range_m: float = (
@@ -158,39 +160,60 @@ func _consume_single(ev: Dictionary, own: RefCounted, now: float) -> Dictionary:
 			float(src.get("n", 0.0)),
 		)
 	)
-	(
-		out
-		. append(
-			{
-				"evidence_id": _next_evidence_id,
-				"timestamp": now,
-				"available_time": now,
-				"side_hint": "INTERCEPT",
-				"alert": _alert_for(kind),
-				"emission_kind": kind,
-				"evidence_kind": _evidence_kind_for(kind),
-				"sensor_id": "own_passive",
-				"observer_e_m": float(own.position_east_m),
-				"observer_n_m": float(own.position_north_m),
-				"bearing_deg": NavUtils.wrap360(true_brg + rng.randfn(0.0, sigma)),
-				"bearing_sigma_deg": sigma,
-				"se_db": se,
-				"pd": pd,
-				"confidence": clampf(pd, 0.0, 1.0),
-				"freq_hz": freq,
-			}
-		)
+	var brg: float = NavUtils.wrap360(true_brg + rng.randfn(0.0, sigma))
+	# 接收端特征估计（加噪+量化）：中心频率/带宽/持续时间/谱线数。
+	var tonals: Array = ev.get("tonal_lines", [])
+	var est := {
+		"center_frequency_hz": _noisy(freq),
+		"bandwidth_hz": _noisy(float(ev.get("bandwidth_hz", 0.0))),
+		"duration_s": _noisy(float(ev.get("duration_s", 0.0))),
+		"tonal_peaks": tonals,
+	}
+	var obs := AcousticObservation.from_event_features(
+		_next_evidence_id,
+		now,
+		"own_passive",
+		float(own.position_east_m),
+		float(own.position_north_m),
+		brg,
+		sigma,
+		se,
+		pd,
+		est,
+		"EMISSION_INTERCEPT"
 	)
+	var res: Dictionary = classifier.classify(obs.to_dict())
+	var kind: String = TorpedoClassifier.evidence_kind_for(res)
+	var alert: String = TorpedoClassifier.alert_for(res)
+	var e: Dictionary = obs.to_dict()
+	# UI/航迹层兼容键（视图别名；DTO 纪律见 §2.2/§2.3）。
+	e["bearing_deg"] = brg
+	e["side_hint"] = "INTERCEPT"
+	e["alert"] = alert
+	e["evidence_kind"] = kind
+	e["se_db"] = se
+	e["pd"] = pd
+	e["confidence"] = clampf(pd, 0.0, 1.0)
+	e["p_torpedo"] = float(res.get("p_torpedo", 0.0))
+	e["class_state"] = str(res.get("classification_state", "UNCLASSIFIED"))
+	e["class_cues"] = res.get("cues", [])
+	e["model_version"] = str(res.get("model_version", ""))
+	out.append(e)
 	_next_evidence_id += 1
 	return {"evidence": out}
 
 
 ## 战果反馈层级（§10.4，纯函数）：输入爆炸证据（含方位）与玩家航迹方位集合
-## （均为玩家合法数据）。绝不读 target_id / damage_state。
+## （均为玩家合法数据）。绝不读 target_id / damage_state。识别爆炸证据用
+## 净化后的 evidence_kind（DETONATION，分类器线索）/ 己方事实的 emission_kind。
 static func classify_detonation(
 	evidence: Dictionary, track_bearings_deg: Array, own_detonated: bool
 ) -> String:
-	if str(evidence.get("emission_kind", "")) != AcousticEmissionEvent.EXPLOSION:
+	var is_blast: bool = (
+		str(evidence.get("evidence_kind", "")) == "DETONATION"
+		or str(evidence.get("emission_kind", "")) == AcousticEmissionEvent.EXPLOSION
+	)
+	if not is_blast:
 		return ""
 	if not own_detonated:
 		return "DETONATION_HEARD"
@@ -224,8 +247,16 @@ func _alert_for(kind: String) -> String:
 	return "ACOUSTIC_EVENT"
 
 
-func _evidence_kind_for(kind: String) -> String:
-	return str(_EVIDENCE_KINDS.get(kind, "ACOUSTIC_EVENT"))
+## 己方事件种类 → 本艇事实证据种类（合法已知事实；非敌方识别）。
+func _fact_evidence_kind_for(kind: String) -> String:
+	return str(_FACT_EVIDENCE_KINDS.get(kind, "ACOUSTIC_EVENT"))
+
+
+## 特征估计加噪（乘性）：接收端只有估计值，不是发射配置原值。
+func _noisy(v: float) -> float:
+	if v <= 0.0 or rng == null:
+		return v
+	return maxf(v * (1.0 + rng.randfn(0.0, feature_noise_rel)), 0.01)
 
 
 ## 本艇事实转录（无探测判定、无 Truth）。bearing_deg/se_db 为本艇声学
@@ -237,6 +268,7 @@ func _make_fact(ev: Dictionary, kind: String, emitter: String, own: RefCounted) 
 		"side_hint": "OWN_FACT",
 		"alert": _alert_for(kind),
 		"emission_kind": kind,
+		"evidence_kind": _fact_evidence_kind_for(kind),
 		"own_emitter_ref": emitter,  # 己方武器 id（非敌方身份，合法）
 		"confidence": 1.0,
 	}

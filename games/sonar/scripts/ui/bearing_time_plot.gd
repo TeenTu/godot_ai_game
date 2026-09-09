@@ -243,7 +243,7 @@ func _draw_time_axis(r: Rect2) -> void:
 		draw_string(
 			_font,
 			Vector2(r.end.x - 100.0, r.position.y + 16.0),
-			"track " + track_id,
+			"航迹 " + track_id,
 			HORIZONTAL_ALIGNMENT_LEFT,
 			-1,
 			14,

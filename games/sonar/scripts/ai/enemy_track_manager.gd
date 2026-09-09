@@ -37,6 +37,9 @@ func _new_track(ev: Dictionary, now: float) -> Dictionary:
 		"hits": 1,
 		"first_t": now,
 		"last_t": now,
+		# S109 P0-03：衰减时钟独立于 last_t（证据龄期）——按增量时间衰减，
+		# 更新频率不再影响结果（AT-22）。
+		"last_decay_t": now,
 		"source_class": str(ev.get("source_class", "PLATFORM")),
 	}
 	_next_id += 1
@@ -76,18 +79,22 @@ func feed(ev: Dictionary, now: float) -> int:
 	)
 	best["hits"] = int(best["hits"]) + 1
 	best["last_t"] = now
+	best["last_decay_t"] = now  # 新证据重置衰减时钟（S109 P0-03）
 	# 分类假设取更"警报"的一方（TORPEDO 优先保留，警示语义不可降级）。
 	if str(ev.get("source_class", "")) == "TORPEDO":
 		best["source_class"] = "TORPEDO"
 	return int(best["track_id"])
 
 
-## 周期推进：质量随无证据时间衰减，低于 min_quality 删除（不确定区扩大）。
+## 周期推进：质量按增量时间衰减（delta = now − last_decay_t），低于
+## min_quality 删除（不确定区扩大）。S109 P0-03/AT-22：同一证据序列与
+## 总时长下，0.1s/0.5s/2s 更新步长得到近似相同结果。
 func update(now: float) -> void:
 	var keep: Array = []
 	for t in tracks:
-		var dt: float = maxf(now - float(t["last_t"]), 0.0)
-		t["quality"] = clampf(float(t["quality"]) - decay_per_s * dt, 0.0, 1.0)
+		var delta: float = maxf(now - float(t["last_decay_t"]), 0.0)
+		t["last_decay_t"] = now
+		t["quality"] = clampf(float(t["quality"]) - decay_per_s * delta, 0.0, 1.0)
 		if float(t["quality"]) >= min_quality:
 			keep.append(t)
 	tracks = keep

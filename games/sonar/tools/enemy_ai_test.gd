@@ -115,11 +115,15 @@ func _ai_04_ping_intercept_bearing_only(fails: Array) -> void:
 	# 玩家 Ping：方位 45°、5km、SL 210（默认接收参数下 SE 很高 → 确定性探测）。
 	var ev := _mk_event(AcousticEmissionEvent.PLATFORM_ACTIVE_PING, 45.0, 5000.0, 210.0)
 	var out: Array = ad.intercept_events([ev], own, 100.0)
+	_assert_bool(fails, "AI-04a pending before R/c", out.is_empty(), true)
+	# S109 §6.2：单程传播 5000m → ~3.33s，到点后结算。
+	out = ad.intercept_events([ev], own, 104.0)
 	_assert_bool(fails, "AI-04a intercepted", out.size() == 1, true)
 	if out.is_empty():
 		return
 	var e: Dictionary = out[0]
-	_assert_bool(fails, "AI-04b classified PING", str(e["source_class"]) == "PING", true)
+	# S109：平台 Ping 非鱼雷特征 → 分类 UNKNOWN（绝不产生 TORPEDO 假阳性）。
+	_assert_bool(fails, "AI-04b classified non-torpedo", str(e["source_class"]) != "TORPEDO", true)
 	for bad in ["range_m", "position", "target_id", "emitter_internal_ref", "source_position"]:
 		if e.has(bad):
 			fails.append("AI-04c evidence leaks %s" % bad)
@@ -138,12 +142,20 @@ func _ai_05_launch_transient_classified(fails: Array) -> void:
 	var own := _mk_own(0.0, 0.0, 4.0, 0.0)
 	var ev := _mk_event(AcousticEmissionEvent.TORPEDO_TUBE_TRANSIENT, 200.0, 3000.0, 168.0)
 	var out: Array = ad.intercept_events([ev], own, 100.0)
+	_assert_bool(fails, "AI-05a pending before R/c", out.is_empty(), true)
+	out = ad.intercept_events([ev], own, 103.0)
 	_assert_bool(fails, "AI-05a transient intercepted", out.size() == 1, true)
 	if out.is_empty():
 		return
 	var e: Dictionary = out[0]
-	_assert_bool(fails, "AI-05b classified TORPEDO", str(e["source_class"]) == "TORPEDO", true)
-	_assert_bool(fails, "AI-05c timestamped", float(e["timestamp"]) == 100.0, true)
+	# S109 §3.2：单次出管瞬态只能是“疑似”（SUSPECTED），不是确认鱼雷。
+	_assert_bool(
+		fails,
+		"AI-05b suspected torpedo (%s)" % str(e.get("class_state", "")),
+		float(e.get("p_torpedo", 0.0)) >= 0.40,
+		true
+	)
+	_assert_bool(fails, "AI-05c timestamped", float(e["timestamp"]) == 103.0, true)
 	for bad in ["range_m", "position", "target_id"]:
 		if e.has(bad):
 			fails.append("AI-05d evidence leaks %s" % bad)
@@ -253,17 +265,29 @@ func _ai_09_command_rate_limited(fails: Array) -> void:
 		},
 		rng
 	)
-	# 来袭鱼雷事件（方位 90°、1km、响）→ 告警。
+	# 来袭鱼雷事件（方位 90°、1km、响）→ 告警。S109 §6.2：事件先入单程
+	# 传播队列（1km → ~1.33s），到点结算后才可感知（AI-09pre）。
 	var ev := _mk_event(AcousticEmissionEvent.TORPEDO_RUNNING_NOISE, 90.0, 1000.0, 146.0)
 	ai.update(100.0, DT, [ev])
 	_assert_bool(
-		fails, "AI-09a enters EVADING", ai.state == EnemyDoctrineController.State.EVADING, true
+		fails,
+		"AI-09pre no perception before R/c",
+		ai.state != EnemyDoctrineController.State.EVADING,
+		true
 	)
+	# 推进到传播到点 → 告警触发 EVADING；反应延迟 3s 未到，命令未下。
+	var evading := false
+	for i in range(10):
+		ai.update(101.0 + DT * i, DT, [])
+		if ai.state == EnemyDoctrineController.State.EVADING:
+			evading = true
+			break
+	_assert_bool(fails, "AI-09a enters EVADING", evading, true)
 	# 同 tick 绝不反应：命令未下。
 	_assert_bool(fails, "AI-09b no same-tick reaction", enemy.commanded_course_deg < 0.0, true)
 	# 延迟到时（3s）：规避命令下达（命令值接口）。
-	for i in range(5):
-		ai.update(101.0 + DT * i, DT, [])
+	for i in range(12):
+		ai.update(101.0 + DT * (10 + i), DT, [])
 	_assert_bool(
 		fails, "AI-09c course commanded after delay", enemy.commanded_course_deg >= 0.0, true
 	)
@@ -418,7 +442,37 @@ func _mk_adapter() -> EnemySensorAdapter:
 func _mk_event(kind: String, bearing_deg: float, range_m: float, sl_db: float) -> Dictionary:
 	var b: float = deg_to_rad(bearing_deg)
 	var src := Vector3(sin(b) * range_m, cos(b) * range_m, 50.0)
-	return AcousticEmissionEvent.make(1, kind, "TEST", 100.0, src, 3000.0, 1000.0, sl_db, 0.5)
+	# S109：真实可观测特征（分类器只看特征）——航行噪声宽带+双谱线，
+	# 出管瞬态宽带短持续，平台 Ping 中频窄带，鱼雷主动脉冲高频短脉冲。
+	var freq: float = 3000.0
+	var bw: float = 1000.0
+	var dur: float = 0.5
+	var extra: Dictionary = {}
+	match kind:
+		AcousticEmissionEvent.TORPEDO_RUNNING_NOISE:
+			freq = 1550.0
+			bw = 2900.0
+			dur = 1.0
+			extra = {
+				"tonal_lines":
+				[
+					{"freq_hz": 660.0, "level_db": 128.0},
+					{"freq_hz": 1320.0, "level_db": 121.0},
+				]
+			}
+		AcousticEmissionEvent.TORPEDO_TUBE_TRANSIENT:
+			freq = 1500.0
+			bw = 8000.0
+			dur = 0.5
+		AcousticEmissionEvent.TORPEDO_ACTIVE_PING:
+			freq = 12000.0
+			bw = 4000.0
+			dur = 0.02
+		AcousticEmissionEvent.PLATFORM_ACTIVE_PING:
+			freq = 3000.0
+			bw = 2000.0
+			dur = 1.0
+	return AcousticEmissionEvent.make(1, kind, "TEST", 100.0, src, freq, bw, sl_db, dur, extra)
 
 
 func _mk_own(e: float, n: float, spd: float, crs: float) -> TruthEntity:

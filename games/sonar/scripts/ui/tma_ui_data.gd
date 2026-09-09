@@ -211,12 +211,14 @@ static func _median_sigma_kind(res: Array, kind: String) -> float:
 ## = Track 去重后的真实探测数——两者分离展示，禁止混为一谈。
 static func summary(r: Dictionary, sel: Track = null) -> String:
 	var lines: Array = []
-	lines.append("Track %s  Status: %s" % [str(r.get("track_id", "?")), str(r.get("status", "?"))])
+	lines.append(
+		"航迹 %s 状态：%s" % [str(r.get("track_id", "?")), UiText.fit(str(r.get("status", "?")))]
+	)
 	if bool(r.get("maneuver_suspected", false)):
-		lines.append("!! Target maneuver suspected - re-maneuver & refit")
+		lines.append("!! 疑似目标机动 — 请重新机动并重拟合")
 	if int(r.get("hypothesis_count", 0)) > 1:
 		var n_alt: int = mini(int(r.get("hypothesis_count", 1)) - 1, MAX_ALTS)
-		lines.append("Alternatives: %d (A/B/C on chart)" % n_alt)
+		lines.append("备选解：%d（海图 A/B/C）" % n_alt)
 	var b_used: int = 0
 	var b_rej: int = 0
 	var r_used: int = 0
@@ -236,7 +238,7 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 		lines
 		. append(
 			(
-				"Ref t=%.0fs stale=%.0fs legs=%d"
+				"基准 t=%.0fs 过期=%.0fs 段=%d"
 				% [
 					float(r.get("reference_time", 0.0)),
 					float(r.get("stale_seconds", 0.0)),
@@ -247,20 +249,18 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 	)
 	var ev_txt: String = ""
 	if sel != null:
-		ev_txt = "  Ev %d phys" % sel.evidence_count()
+		ev_txt = "  证据 %d 条" % sel.evidence_count()
 	if r_used + r_rej > 0:
-		lines.append(
-			"Rows B used %d rej %d | R used %d rej %d%s" % [b_used, b_rej, r_used, r_rej, ev_txt]
-		)
+		lines.append("行：方位 用%d 弃%d | 距离 用%d 弃%d%s" % [b_used, b_rej, r_used, r_rej, ev_txt])
 	else:
-		lines.append("Rows B used %d rej %d%s" % [b_used, b_rej, ev_txt])
+		lines.append("行：方位 用%d 弃%d%s" % [b_used, b_rej, ev_txt])
 	var cond: float = float(r.get("condition_number", 0.0))
 	var cond_txt: String = "inf" if is_inf(cond) else "%.0f" % cond
 	(
 		lines
 		. append(
 			(
-				"RMSE %.2f° rank=%d cond=%s"
+				"RMSE %.2f° 秩=%d 条件数=%s"
 				% [
 					float(r.get("angular_rmse", 0.0)),
 					int(r.get("jacobian_rank", 0)),
@@ -280,7 +280,7 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 			lines
 			. append(
 				(
-					"RANGE AIDED: active ranges used %d (rejected %d)  R_RMSE %s"
+					"主动测距辅助：采用 %d 条（拒用 %d）距离 RMSE %s"
 					% [
 						int(r.get("active_range_rows_used", 0)),
 						int(r.get("active_range_rows_rejected", 0)),
@@ -399,12 +399,18 @@ static func latest_lobs_for_dial(lobs: Array) -> Array:
 	return newest.values()
 
 
-## Truth 目标位置（仅供 Show Truth 开关显示，非操作依据）。
+## Truth 快照（仅供 Show Truth 开关显示，非操作依据）。S109 P1-01：委托
+## TruthDebugProvider——含双方在水鱼雷位置/真方位/距离（§7.1）。
 static func collect_truth(world: World) -> Array:
-	var out: Array = []
-	for t in world.world["targets"]:
-		out.append({"pos": Vector2(t.position_east_m, t.position_north_m), "id": t.id})
-	return out
+	return TruthDebugProvider.collect_truth(world)
+
+
+## Show Truth 入口裁决（AT-27）：开关关闭必须返回空数组——海图因此不残留
+## 任何真值图元；main_ui 只允许经此取真值，禁止旁路直调 provider。
+static func truth_snapshot(world: World, show_truth: bool) -> Array:
+	if not show_truth:
+		return []
+	return TruthDebugProvider.collect_truth(world)
 
 
 ## Dot Stack 等价计算（从 main_ui 拆出，控行数）：只用 inlier 测量 + 最优解。
@@ -453,15 +459,15 @@ static func contact_label(t: Track) -> String:
 	var m: Measurement = t.latest_measurement()
 	var parts: Array = [t.track_id]
 	if m != null:
-		parts.append("Brg %.0f°" % m.measured_bearing_deg)
+		parts.append("方位 %.0f°" % m.measured_bearing_deg)
 		if m.has_range():
-			parts.append("Rng %.0fm" % m.measured_range_m)
+			parts.append("距离 %.0fm" % m.measured_range_m)
 	else:
-		parts.append("no meas")
+		parts.append("无测量")
 	var badge := association_badge(t)
 	if badge != "":
 		parts.append(badge)
-	parts.append("(%d meas)" % t.measurement_history.size())
+	parts.append("（%d 条测量）" % t.measurement_history.size())
 	return "  ".join(parts)
 
 

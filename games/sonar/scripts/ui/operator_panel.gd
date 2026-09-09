@@ -36,6 +36,7 @@ var _autocrew: CheckBox = null
 var _lbl_class: Label = null
 var _lbl_demon: Label = null
 var _arr_opt: OptionButton = null  # 阵列选择（无拖曳硬件时禁用 TOWED 项，S1-03）
+var _arr_ids: Array = []  # 阵列内部 id（显示为中文，逻辑用 id）
 var _tow_ctl: VBoxContainer = null  # TOWED 长度命令区（S1-03）
 var _btn_tow_deploy: Button = null
 var _btn_tow_retract: Button = null
@@ -51,27 +52,30 @@ var _last_array_id: String = ""  # S1-03B：切阵列时即使行数相同也强
 func _init() -> void:
 	var row := HBoxContainer.new()
 	var arr_lbl := Label.new()
-	arr_lbl.text = "Array:"
+	arr_lbl.text = UiText.t("array")
 	arr_lbl.add_theme_font_size_override("font_size", 14)
 	row.add_child(arr_lbl)
 	var arr_opt := OptionButton.new()
+	var arr_ids: Array = []
 	for aid in OperatorSonar.ARRAY_DEFS:
-		arr_opt.add_item(aid)
+		arr_ids.append(str(aid))
+		arr_opt.add_item(UiText.arr(str(aid)))
 	arr_opt.item_selected.connect(
 		func(i: int):
 			# REQ-B6-02：每个阵列独立噪声底跟踪状态（阵列间增益互不污染）。
-			wf_bb.set_display_key("bb_" + arr_opt.get_item_text(i))
-			array_changed.emit(arr_opt.get_item_text(i))
+			wf_bb.set_display_key("bb_" + str(_arr_ids[i]))
+			array_changed.emit(str(_arr_ids[i]))
 	)
+	_arr_ids = arr_ids
 	_arr_opt = arr_opt
 	row.add_child(arr_opt)
 	_autocrew = CheckBox.new()
-	_autocrew.text = "Autocrew (off)"
+	_autocrew.text = UiText.t("st_autocrew_off")
 	_autocrew.button_pressed = false  # 默认关闭自动 Mark/建 Track
 	_autocrew.add_theme_font_size_override("font_size", 14)
 	_autocrew.toggled.connect(
 		func(on: bool):
-			_autocrew.text = "Autocrew (on)" if on else "Autocrew (off)"
+			_autocrew.text = UiText.t("st_autocrew_on") if on else UiText.t("st_autocrew_off")
 			autocrew_toggled.emit(on)
 	)
 	row.add_child(_autocrew)
@@ -86,15 +90,15 @@ func _init() -> void:
 	tow_btns.add_theme_constant_override("separation", 4)
 	_tow_ctl.add_child(tow_btns)
 	_btn_tow_deploy = Button.new()
-	_btn_tow_deploy.text = "Stream"
+	_btn_tow_deploy.text = UiText.t("btn_stream")
 	_btn_tow_deploy.pressed.connect(func(): towed_deploy_requested.emit())
 	tow_btns.add_child(_btn_tow_deploy)
 	_btn_tow_hold = Button.new()
-	_btn_tow_hold.text = "Hold"
+	_btn_tow_hold.text = UiText.t("btn_hold")
 	_btn_tow_hold.pressed.connect(func(): towed_hold_requested.emit())
 	tow_btns.add_child(_btn_tow_hold)
 	_btn_tow_retract = Button.new()
-	_btn_tow_retract.text = "Retrieve"
+	_btn_tow_retract.text = UiText.t("btn_retract")
 	_btn_tow_retract.pressed.connect(func(): towed_retract_requested.emit())
 	tow_btns.add_child(_btn_tow_retract)
 	_len_slider = HSlider.new()
@@ -123,7 +127,7 @@ func _init() -> void:
 		)
 		preset_row.add_child(pb)
 	_lbl_tow = Label.new()
-	_lbl_tow.text = "Towed: STOWED"
+	_lbl_tow.text = UiText.t("towed") + UiText.t("towed_stowed")
 	_lbl_tow.add_theme_font_size_override("font_size", 12)
 	_lbl_tow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tow_ctl.add_child(_lbl_tow)
@@ -154,18 +158,18 @@ func _init() -> void:
 	bb_mode_row.add_theme_constant_override("separation", 4)
 	add_child(bb_mode_row)
 	_lbl_bb_mode = Label.new()
-	_lbl_bb_mode.text = "RELATIVE (bow=0°)"
+	_lbl_bb_mode.text = UiText.t("bb_relative")
 	_lbl_bb_mode.add_theme_font_size_override("font_size", 12)
 	bb_mode_row.add_child(_lbl_bb_mode)
 	var bb_mode_opt := OptionButton.new()
-	bb_mode_opt.add_item("RELATIVE")
-	bb_mode_opt.add_item("TRUE STABILIZED")
+	bb_mode_opt.add_item(UiText.t("bb_mode_relative"))
+	bb_mode_opt.add_item(UiText.t("bb_mode_true"))
 	bb_mode_opt.select(0)
 	bb_mode_opt.item_selected.connect(
 		func(i: int):
 			var mode: String = "rel" if i == 0 else "true"
 			wf_bb.set_bearing_mode(mode)
-			_lbl_bb_mode.text = "RELATIVE (bow=0°)" if i == 0 else "TRUE STABILIZED (north-up)"
+			_lbl_bb_mode.text = UiText.t("bb_relative") if i == 0 else UiText.t("bb_true")
 	)
 	bb_mode_row.add_child(bb_mode_opt)
 
@@ -210,7 +214,7 @@ func _init() -> void:
 	)
 	disp_row.add_child(dr_spin)
 	var reset_btn := Button.new()
-	reset_btn.text = "Reset Display"
+	reset_btn.text = UiText.t("btn_reset_display")
 	reset_btn.pressed.connect(
 		func():
 			wf_bb.reset_display()
@@ -231,13 +235,13 @@ func _init() -> void:
 	)
 	add_child(wf_bb)
 
-	add_child(_mk_label("Narrowband / LOFAR (freq-time)"))
+	add_child(_mk_label(UiText.t("nb_lofar_title")))
 	# REQ-09/验收11：窄带频段切换（0-500 / 500-3000 / 8000-16000 Hz）。
 	var nb_band_row := HBoxContainer.new()
 	nb_band_row.add_theme_constant_override("separation", 6)
 	add_child(nb_band_row)
 	_lbl_nb_band = Label.new()
-	_lbl_nb_band.text = "NB band: 0-500 Hz"
+	_lbl_nb_band.text = UiText.t("nb_band") + " 0-500 Hz"
 	_lbl_nb_band.add_theme_font_size_override("font_size", 12)
 	nb_band_row.add_child(_lbl_nb_band)
 	var nb_band_opt := OptionButton.new()
@@ -252,7 +256,7 @@ func _init() -> void:
 				var band: Vector2 = OperatorSonar.NB_BANDS[preset]
 				wf_nb.x_min = band.x
 				wf_nb.x_max = band.y
-				_lbl_nb_band.text = "NB band: %d-%d Hz" % [int(band.x), int(band.y)]
+				_lbl_nb_band.text = UiText.t("nb_band") + " %d-%d Hz" % [int(band.x), int(band.y)]
 	)
 	nb_band_row.add_child(nb_band_opt)
 	wf_nb = WaterfallView.new()
@@ -262,7 +266,7 @@ func _init() -> void:
 	wf_nb.custom_minimum_size = Vector2(0, 100)
 	add_child(wf_nb)
 
-	add_child(_mk_label("DEMON envelope (blade harmonics)"))
+	add_child(_mk_label(UiText.t("demon_env_title")))
 	wf_demon = WaterfallView.new()
 	wf_demon.axis_mode = "envelope"
 	wf_demon.x_min = 0.0
@@ -270,9 +274,9 @@ func _init() -> void:
 	wf_demon.custom_minimum_size = Vector2(0, 100)
 	add_child(wf_demon)
 
-	_lbl_class = _mk_label("Classification: -")
+	_lbl_class = _mk_label(UiText.t("classification_dash"))
 	add_child(_lbl_class)
-	_lbl_demon = _mk_label("DEMON: -")
+	_lbl_demon = _mk_label(UiText.t("demon_dash"))
 	add_child(_lbl_demon)
 
 
@@ -289,10 +293,10 @@ func set_towed_available(avail: bool) -> void:
 	if _arr_opt == null:
 		return
 	for i in range(_arr_opt.item_count):
-		if _arr_opt.get_item_text(i) == "TOWED":
+		if i < _arr_ids.size() and str(_arr_ids[i]) == "TOWED":
 			_arr_opt.set_item_disabled(i, not avail)
 	if not avail and _lbl_tow != null:
-		_lbl_tow.text = "Towed: not installed"
+		_lbl_tow.text = UiText.t("towed_absent")
 
 
 ## 主 UI 设置 TOWED 状态显示文本（含 ACT→CMD 长度/阵航向/可用度）。
@@ -311,14 +315,18 @@ func update_towed_controls(t: TowedArray) -> void:
 		return
 	_btn_tow_deploy.disabled = t.actual_tow_length_m >= t.max_tow_length_m - 1e-6
 	_btn_tow_deploy.tooltip_text = (
-		"" if not _btn_tow_deploy.disabled else "Already at full length"
+		"" if not _btn_tow_deploy.disabled else str(UiText.t("tow_tip_full"))
 	)
 	_btn_tow_retract.disabled = t.actual_tow_length_m <= 1e-6
-	_btn_tow_retract.tooltip_text = ("" if not _btn_tow_retract.disabled else "Already stowed")
+	_btn_tow_retract.tooltip_text = (
+		"" if not _btn_tow_retract.disabled else str(UiText.t("tow_tip_stowed"))
+	)
 	_btn_tow_hold.disabled = (
 		t.state == TowedArray.State.HOLD_PARTIAL or t.state == TowedArray.State.STOWED
 	)
-	_btn_tow_hold.tooltip_text = ("" if not _btn_tow_hold.disabled else "Already holding")
+	_btn_tow_hold.tooltip_text = (
+		"" if not _btn_tow_hold.disabled else str(UiText.t("tow_tip_holding"))
+	)
 	if _len_slider != null and not _len_slider.has_focus():
 		if t.max_tow_length_m > 0.0:
 			_len_slider.set_value_no_signal(t.commanded_tow_length_m / t.max_tow_length_m)
@@ -363,7 +371,7 @@ func refresh(op: OperatorSonar) -> void:
 	wf_nb.markers = mks
 	if not de.is_empty():
 		_lbl_demon.text = (
-			"DEMON: shaft %.2f±%.2f Hz  blades %s  speed %.1f±%.1f kn"
+			UiText.t("demon_fmt")
 			% [
 				float(de["rpm_hz"]),
 				float(de["rpm_sigma_hz"]),
@@ -375,7 +383,9 @@ func refresh(op: OperatorSonar) -> void:
 	if not op.classification.is_empty():
 		var best: String = str(op.classification.get("best", "-"))
 		var bp: float = float(op.classification.get(best, 0.0))
-		_lbl_class.text = "Classification: %s (%.0f%%)" % [best, bp * 100.0]
+		_lbl_class.text = (
+			UiText.t("classification") + "：%s（%.0f%%）" % [UiText.klass(best), bp * 100.0]
+		)
 
 
 func autocrew_on() -> bool:
