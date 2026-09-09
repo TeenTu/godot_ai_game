@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "repository": "E:/Github/godot_ai_game",
+  "manager": {
+    "mutex": "Local/godot_ai_game_worktree_manager_v1",
+    "prune_requires_confirmation": true
+  },
+  "worktrees": [
+    {
+      "name": "main",
+      "path": "E:/Github/godot_ai_game",
+      "branch": "main",
+      "role": "integrator",
+      "owner": "Codex CLI",
+      "lifecycle": "permanent",
+      "protected": false
+    },
+    {
+      "name": "boom",
+      "path": "E:/Github/worktrees/boom",
+      "branch": "boom-dev",
+      "role": "game-agent",
+      "owner": "Boom Agent",
+      "lifecycle": "permanent",
+      "protected": true
+    },
+    {
+      "name": "sonar",
+      "path": "E:/Github/worktrees/sonar",
+      "branch": "sonar-dev",
+      "role": "game-agent",
+      "owner": "Sonar Agent",
+      "lifecycle": "permanent",
+      "protected": true
+    }
+  ]
+}
