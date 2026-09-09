@@ -10,26 +10,13 @@ const BASE_MAX_HP: int = 50
 const RADIUS: float = 0.55
 const MOVE_SPEED: float = 5.4
 const INVULN_TIME: float = 0.9
+const FACING_HYSTERESIS: float = 1.18
+const WeaponBinding = preload("res://scripts/core/boom_weapon_binding.gd")
 
 ## 2D 帧条规格（design §6.0）：单帧 256×256、横向无缝拼接、透明底。
 const FRAME_PX: int = 256
 const STRIP_DIR: String = "res://assets/images/characters/night_patrol/"
-const WEAPON_STRIP_DIR: String = "res://assets/images/weapons/night_patrol/"
-## 武器层动作只关心动作语义，不复制身体的四向移动条；每条与对应身体动作共享帧数。
-const WEAPON_STRIPS: Dictionary = {
-	"bubble":
-	{
-		"idle": ["night_ruler_idle", 4],
-		"move": ["night_ruler_move", 6],
-		"recoil": ["night_ruler_recoil", 3],
-	},
-	"sword":
-	{
-		"idle": ["ink_brush_idle", 4],
-		"move": ["ink_brush_move", 6],
-		"swing": ["ink_brush_swing", 5],
-	},
-}
+## 武器素材/比例/握柄/缺失动作策略全部来自 WeaponBinding.CONFIGS[visual_id]。
 const _ANIM_FPS: Dictionary = {
 	"idle": 6.0,
 	"move": 12.0,
@@ -87,7 +74,8 @@ var hp: int = BASE_MAX_HP
 var radius: float = RADIUS
 var move_speed: float = MOVE_SPEED
 var weapon_id: String = ""
-var anim_form: String = "bubble"  # 逻辑形态：bubble=镇夜灯·镇尺，sword=墨线判笔
+var anim_form: String = "bubble"  # 动画形态：bubble=镇夜灯·镇尺，sword=墨线判笔
+var visual_id: String = "night_ruler"  # 视觉配置 ID（WeaponBinding.CONFIGS 的 key）
 
 var invuln_left: float = 0.0
 var move_vec: Vector2 = Vector2.ZERO
@@ -105,6 +93,8 @@ var _sprite_frames: SpriteFrames = null
 var _weapon_socket: Node3D = null
 var _weapon_anim: AnimatedSprite3D = null
 var _weapon_frames: SpriteFrames = null
+var _hand_anim: AnimatedSprite3D = null
+var _hand_frames: SpriteFrames = null
 var _transient_anim: bool = false
 var _flicker_t: float = 0.0
 var _flash_energy: float = 0.0
@@ -217,13 +207,16 @@ func _build_form_art() -> void:
 	_anim.name = "PlayerAnim2D"
 	_anim.sprite_frames = _sprite_frames
 	_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_anim.pixel_size = 0.0076  # 256px 画布 ≈1.95 世界单位高（≈1.9 含呆毛，§6.0 换算）
+	_anim.pixel_size = WeaponBinding.BODY_PIXEL  # 256px 画布 ≈1.95 世界单位高（§6.0 换算）
 	_anim.position = Vector3(0.0, 0.92, 0.0)
 	_anim.render_priority = 2
 	add_child(_anim)
 	_anim.play("idle_down")
 	_anim.animation_finished.connect(_on_anim_finished)
 	_build_weapon_art()
+	_build_hand_art()
+	_anim.frame_changed.connect(_sync_weapon_animation)
+	_sync_weapon_animation()
 	_sync_visual_layers()
 
 
@@ -279,14 +272,16 @@ func _build_sprite_frames() -> SpriteFrames:
 
 ## 构建独立武器层：武器挂在 WeaponSocket，不烘焙进人物身体帧条。
 func _build_weapon_art() -> void:
-	var specs: Dictionary = WEAPON_STRIPS.get(anim_form, {})
+	var cfg: Dictionary = WeaponBinding.config(visual_id)
+	var specs: Dictionary = cfg.get("strips", {})
+	var strip_dir: String = cfg.get("weapon_dir", "")
 	if specs.is_empty():
 		return
 	var sf := SpriteFrames.new()
 	var built := false
 	for action in specs:
 		var spec: Array = specs[action]
-		var path: String = WEAPON_STRIP_DIR + (spec[0] as String) + ".png"
+		var path: String = strip_dir + (spec[0] as String) + ".png"
 		if not ResourceLoader.exists(path):
 			continue
 		var tex := load(path) as Texture2D
@@ -310,12 +305,13 @@ func _build_weapon_art() -> void:
 		_weapon_socket = Node3D.new()
 		_weapon_socket.name = "WeaponSocket"
 		add_child(_weapon_socket)
-	_weapon_socket.position = Vector3(0.34 if anim_form == "bubble" else 0.25, 0.96, 0.0)
+	# 与身体共用中心；屏幕内握持偏移由 sprite offset 表达，避免自动瞄准旋转挂点。
+	_weapon_socket.position = _anim.position
 	_weapon_anim = AnimatedSprite3D.new()
 	_weapon_anim.name = "WeaponAnim2D"
 	_weapon_anim.sprite_frames = _weapon_frames
 	_weapon_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-	_weapon_anim.pixel_size = 0.0058 if anim_form == "bubble" else 0.0070
+	_weapon_anim.pixel_size = cfg.get("weapon_pixel", 0.006)
 	_weapon_anim.position = Vector3.ZERO
 	_weapon_anim.render_priority = 3
 	_weapon_socket.add_child(_weapon_anim)
@@ -327,34 +323,112 @@ func _build_weapon_art() -> void:
 	_weapon_anim.play(initial_action)
 
 
+## 手部前景层：从同一帧身体贴图裁 HAND_RECTS 区域，垫回 256x256 画布原位，
+## 以高于武器的优先级重绘——与底层身体逐像素重合、零接缝，等效手指包住握柄。
+func _build_hand_art() -> void:
+	_hand_frames = null
+	if _anim == null or _sprite_frames == null:
+		return
+	var sf := SpriteFrames.new()
+	var built := false
+	for action in FORM_STRIPS[anim_form]:
+		if not WeaponBinding.HAND_RECTS.has(action):
+			continue
+		var rects: Array = WeaponBinding.HAND_RECTS[action]
+		var spec: Array = FORM_STRIPS[anim_form][action]
+		var count: int = spec[1]
+		if rects.size() != count:
+			continue
+		var path := STRIP_DIR + (spec[0] as String) + ".png"
+		if not ResourceLoader.exists(path):
+			continue
+		var strip := Image.load_from_file(ProjectSettings.globalize_path(path))
+		if strip == null:
+			continue
+		sf.add_animation(action)
+		sf.set_animation_loop(action, action.begins_with("idle_") or action.begins_with("move_"))
+		sf.set_animation_speed(action, float(_ANIM_FPS.get(action, 12.0)))
+		for i in count:
+			var rect: Rect2 = rects[i]
+			var frame_img := strip.get_region(Rect2(i * 256, 0, 256, 256))
+			var crop := frame_img.get_region(Rect2i(rect))
+			var padded := Image.create(256, 256, false, Image.FORMAT_RGBA8)
+			padded.blend_rect(
+				crop, Rect2i(0, 0, crop.get_width(), crop.get_height()), Vector2i(rect.position)
+			)
+			sf.add_frame(action, ImageTexture.create_from_image(padded))
+			built = true
+	if not built:
+		return
+	_hand_frames = sf
+	_hand_anim = AnimatedSprite3D.new()
+	_hand_anim.name = "HandFrontAnim2D"
+	_hand_anim.sprite_frames = _hand_frames
+	_hand_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_hand_anim.pixel_size = WeaponBinding.BODY_PIXEL
+	_hand_anim.position = _anim.position
+	_hand_anim.render_priority = 4
+	_hand_anim.visible = false
+	add_child(_hand_anim)
+
+
 func _clear_weapon_art() -> void:
 	if _weapon_anim != null:
 		_weapon_anim.queue_free()
 	_weapon_anim = null
 	_weapon_frames = null
+	if _hand_anim != null:
+		_hand_anim.queue_free()
+	_hand_anim = null
+	_hand_frames = null
 
 
 ## 将身体动画的动作语义/帧进度镜像到武器层，保证握持与挥击同拍。
 func _sync_weapon_animation() -> void:
 	if _anim == null or _weapon_anim == null or _weapon_frames == null:
 		return
-	var desired := "idle"
-	var body_action: String = _anim.animation
-	if body_action == "recoil" and _weapon_frames.has_animation("recoil"):
-		desired = "recoil"
-	elif body_action == "swing" and _weapon_frames.has_animation("swing"):
-		desired = "swing"
-	elif body_action.begins_with("move_") and _weapon_frames.has_animation("move"):
-		desired = "move"
+	var binding: Dictionary = WeaponBinding.resolve(
+		visual_id, String(_anim.animation), _anim.frame, _anim.pixel_size, _weapon_anim.pixel_size
+	)
+	_weapon_anim.visible = binding["visible"]
+	if not _weapon_anim.visible:
+		return
+	var desired: String = binding["action"]
 	if not _weapon_frames.has_animation(desired):
 		return
 	if _weapon_anim.animation != desired:
-		_weapon_anim.play(desired)
+		_weapon_anim.animation = desired
+	# 武器无独立时钟：身体换帧信号与物理更新共同驱动。
+	_weapon_anim.pause()
+	_weapon_anim.offset = binding["offset"]
+	_weapon_anim.flip_h = binding["flip_h"]
+	_weapon_anim.render_priority = binding["priority"]
+	_weapon_anim.modulate = _anim.modulate
 	var frame_count: int = _weapon_frames.get_frame_count(desired)
 	if frame_count <= 0:
 		return
-	_weapon_anim.frame = mini(_anim.frame, frame_count - 1)
-	_weapon_anim.frame_progress = _anim.frame_progress
+	_weapon_anim.set_frame_and_progress(mini(_anim.frame, frame_count - 1), _anim.frame_progress)
+	_sync_hand_layer()
+
+
+## 手部前景层只在"武器可见且该动作有完整手部矩形"时出现。
+func _sync_hand_layer() -> void:
+	if _hand_anim == null or _hand_frames == null or _anim == null:
+		return
+	var action := String(_anim.animation)
+	var has_rects: bool = (
+		WeaponBinding.HAND_RECTS.has(action)
+		and WeaponBinding.HAND_RECTS[action].size() == _anim.sprite_frames.get_frame_count(action)
+	)
+	_hand_anim.visible = _weapon_anim != null and _weapon_anim.visible and has_rects
+	if not _hand_anim.visible:
+		return
+	if _hand_anim.animation != action:
+		_hand_anim.animation = action
+	_hand_anim.pause()
+	_hand_anim.flip_h = false
+	_hand_anim.modulate = _anim.modulate
+	_hand_anim.set_frame_and_progress(_anim.frame, _anim.frame_progress)
 
 
 ## 切换程序化/2D 层的可见性（同源两形态共用一套闪烁/受击逻辑，R4）。
@@ -373,14 +447,18 @@ func _sync_visual_layers() -> void:
 
 
 ## 由 BoomGame 在切换武器时注入武器 def：机体数值 + 形态（design §3.3/§4.1）。
-func apply_weapon(def: BoomWeaponDef) -> void:
+func apply_weapon(def: BoomWeaponDef, visual_override: String = "") -> void:
 	weapon_id = def.id
 	move_speed = MOVE_SPEED * def.move_mult
 	max_hp = maxi(1, BASE_MAX_HP + def.max_hp_bonus)
 	hp = max_hp
 	radius = def.radius
-	var new_form := "sword" if def.kind == BoomWeaponDef.AttackKind.MELEE else "bubble"
-	if new_form != anim_form or _anim == null:
+	var vid := visual_override
+	if vid.is_empty():
+		vid = WeaponBinding.visual_for_combat(def.id)
+	var new_form: String = WeaponBinding.config(vid).get("form", "bubble")
+	if vid != visual_id or new_form != anim_form or _anim == null:
+		visual_id = vid
 		anim_form = new_form
 		_clear_art()
 		_build_form_art()
@@ -400,7 +478,13 @@ func set_move(v: Vector2) -> void:
 	move_vec = v
 	if v.length_squared() <= 0.01:
 		return
-	if absf(v.x) > absf(v.y):
+	# 已经面向的轴在对角线附近保留，避免微小摇杆噪声来回切换贴图。
+	var horizontal: bool = facing_anim in ["left", "right"]
+	if absf(v.x) > absf(v.y) * FACING_HYSTERESIS:
+		horizontal = true
+	elif absf(v.y) > absf(v.x) * FACING_HYSTERESIS:
+		horizontal = false
+	if horizontal:
 		facing_anim = "right" if v.x > 0.0 else "left"
 	else:
 		facing_anim = "down" if v.y > 0.0 else "up"
@@ -414,6 +498,21 @@ func play_anim_once(action: String) -> void:
 		return
 	_anim.play(action)
 	_transient_anim = true
+
+
+## 近战五帧由战斗阶段驱动：两帧蓄力、一帧出手、两帧收招。
+func sync_swing_phase(first: int, count: int, progress: float) -> void:
+	if _anim == null or _anim.animation != "swing":
+		return
+	_anim.pause()
+	var phase: float = clampf(progress, 0.0, 0.9999) * count
+	_anim.set_frame_and_progress(first + int(phase), fmod(phase, 1.0))
+	_sync_weapon_animation()
+
+
+func finish_swing_visual() -> void:
+	if _anim != null and _anim.animation == "swing":
+		_on_anim_finished()
 
 
 func _base_anim_name() -> String:
@@ -476,7 +575,18 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 		if not _transient_anim:
 			var want := _base_anim_name()
 			if _sprite_frames.has_animation(want) and _anim.animation != want:
+				# 同一行走周期转向时保留步相，避免摇杆斜向抖动反复重播第一帧。
+				var preserve_step: bool = (
+					String(_anim.animation).begins_with("move_") and want.begins_with("move_")
+				)
+				var previous_frame: int = _anim.frame
+				var previous_progress: float = _anim.frame_progress
 				_anim.play(want)
+				if preserve_step:
+					_anim.set_frame_and_progress(
+						mini(previous_frame, _sprite_frames.get_frame_count(want) - 1),
+						previous_progress
+					)
 		_sync_weapon_animation()
 	else:
 		_procedural_root.position.y = sin(bob_t) * 0.03

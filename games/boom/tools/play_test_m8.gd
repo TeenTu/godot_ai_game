@@ -30,6 +30,7 @@ func run_all() -> void:
 	test_levelup()
 	test_levelup_ui()
 	test_stats_panel()
+	test_motion()
 
 
 # ------------------------------------------------------------------ 属性容器
@@ -336,6 +337,112 @@ func test_stats_panel() -> void:
 	host._check((m.get("_stats_panel") as Control).visible, "属性面板已显示")
 	m.call("_on_stats_panel_closed")
 	host._check(not m.get_tree().paused, "关闭面板后战斗恢复")
+
+
+# ------------------------------------------------------------------ 动作连续性
+
+
+## [m8-motion] 真实战斗状态机驱动的动作连续性：命中落在视觉出手阶段、
+## 攻速强化保持阶段同步、受击不被普攻立即覆盖、挥击中切枪复位干净。
+func test_motion() -> void:
+	print("[m8-motion]")
+	seed(20260902)
+	# --- 命中时机：前摇零命中，恰好 1 次命中发生在 ACTIVE，swing 逐帧与 FSM 同步。
+	var g: BoomGame = host._new_game()
+	g.set_weapon("greatsword")
+	g.player.invuln_left = 10.0  # 屏蔽接触伤害，专注挥击 FSM
+	var jelly := g.spawn_enemy_at(Vector3(0.0, 0.0, -2.7))
+	var hit_states: Array = []
+	g.enemy_hit.connect(
+		func(_p: Vector3, _d: int, _c: bool) -> void: hit_states.append(g._swing_state)
+	)
+	var anim = g.player.get("_anim")
+	var saw_windup := false
+	var saw_active := false
+	var saw_recover := false
+	var vis_ok := true
+	var windup_steps: int = 0
+	for i in 300:
+		g.step(DT)
+		var st: int = g._swing_state
+		if st == g.SwingState.WINDUP:
+			saw_windup = true
+			windup_steps += 1
+		elif st == g.SwingState.ACTIVE:
+			saw_active = true
+		elif st == g.SwingState.RECOVER:
+			saw_recover = true
+		if anim != null and anim.animation == "swing":
+			var f: int = anim.frame
+			if st == g.SwingState.WINDUP and f > 1:
+				vis_ok = false
+			elif st == g.SwingState.ACTIVE and f != 2:
+				vis_ok = false
+			elif st == g.SwingState.RECOVER and f < 3:
+				vis_ok = false
+		if st == g.SwingState.NONE and saw_active and saw_recover:
+			break
+	host._check(saw_windup and saw_active and saw_recover, "挥击 FSM 三阶段全部出现")
+	host._check(vis_ok, "swing 逐帧与 FSM 阶段同步（前摇 0-1 / 出手 2 / 收招 3-4）")
+	host._check(
+		hit_states.size() == 1 and int(hit_states[0]) == g.SwingState.ACTIVE,
+		"命中恰好 1 次且落在 ACTIVE 窗口 (n=%d)" % hit_states.size()
+	)
+	host._check(jelly.is_dead(), "弧斩命中击杀 W1 目标")
+	g.free()
+	# --- 攻速强化：前摇按攻速缩短，命中仍在 ACTIVE 边界出手。
+	var g2: BoomGame = host._new_game()
+	g2.set_weapon("greatsword")
+	g2.player.invuln_left = 10.0
+	g2.stats.aspd_stacks = 2  # 攻速 ×1.2 → 前摇 0.24/1.2 = 0.2s
+	g2.spawn_enemy_at(Vector3(0.0, 0.0, -2.7))
+	var hit2: Array = []
+	g2.enemy_hit.connect(func(_p: Vector3, _d: int, _c: bool) -> void: hit2.append(g2._swing_state))
+	var windup_steps2: int = 0
+	for i in 300:
+		g2.step(DT)
+		if g2._swing_state == g2.SwingState.WINDUP:
+			windup_steps2 += 1
+		if hit2.size() > 0:
+			break
+	host._check(
+		windup_steps2 > 0 and windup_steps2 < windup_steps,
+		"攻速 ×1.2 前摇步数缩短 (%d → %d)" % [windup_steps, windup_steps2]
+	)
+	host._check(hit2.size() == 1 and int(hit2[0]) == g2.SwingState.ACTIVE, "攻速强化下命中仍落在 ACTIVE")
+	g2.free()
+	# --- 受击不被普攻立即覆盖：hurt 播放后下一逻辑帧仍保持 hurt。
+	var g3: BoomGame = host._new_game()
+	g3.set_weapon("greatsword")
+	g3.spawn_enemy_at(Vector3(0.0, 0.0, -2.7))
+	var anim3 = g3.player.get("_anim")
+	host._check(anim3 != null, "玩家 2D 动画层已构建")
+	var entered := false
+	for i in 60:
+		g3.step(DT)
+		if g3._swing_state == g3.SwingState.WINDUP:
+			entered = true
+			break
+	host._check(entered, "敌人进入挥程 → 前摇已启动")
+	g3.player.invuln_left = 0.0
+	var hp3: int = g3.player.hp
+	g3._damage_player(Vector3.ZERO)
+	host._check(g3.player.hp < hp3, "前摇中受击扣血")
+	if anim3 != null:
+		host._check(anim3.animation == "hurt", "受击切换 hurt 动画")
+		g3.step(DT)
+		host._check(anim3.animation == "hurt", "下一逻辑帧 hurt 未被挥击帧覆盖")
+	# --- 挥击中切枪：FSM 复位 + 视觉层重建无残留。
+	g3.set_weapon("bubble")
+	host._check(g3._swing_state == g3.SwingState.NONE, "切枪复位挥击 FSM")
+	host._check(
+		g3.player.anim_form == "bubble" and g3.player.visual_id == "night_ruler",
+		"切枪后形态/视觉配置回归 bubble/night_ruler"
+	)
+	if anim3 != null:
+		host._check(anim3.animation != "swing", "swing 动画无滞留")
+	host._check(g3.player.get("_weapon_anim") != null, "武器视觉层已按新配置重建")
+	g3.free()
 
 
 ## 兼容 m7 分册风格：把节点挂到 SceneTree root（测试后由调用方 free）。
