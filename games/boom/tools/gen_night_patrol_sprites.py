@@ -104,11 +104,23 @@ def frame_crops(image: Image.Image, frame_count: int) -> list[Image.Image]:
         left = round(index * image.width / frame_count)
         right = round((index + 1) * image.width / frame_count)
         cell = image.crop((left, 0, right, image.height))
-        bounds = cell.getchannel("A").getbbox()
+        bounds = _strong_alpha_bounds(cell)
         if bounds is None:
             raise ValueError(f"Frame {index} has no visible pixels")
-        crops.append(remove_orphan_fragments(cell.crop(bounds)))
+        cleaned = remove_orphan_fragments(cell.crop(bounds))
+        # 清理断开的 AI 小碎片后，按实心像素重新收紧透明边；否则被删掉的脚/披风
+        # 会留下不可见底边，后续按高度缩放时造成每帧脚底上下漂移。
+        cleaned_bounds = _strong_alpha_bounds(cleaned)
+        if cleaned_bounds is None:
+            raise ValueError(f"Frame {index} has no visible pixels after cleanup")
+        crops.append(cleaned.crop(cleaned_bounds))
     return crops
+
+
+def _strong_alpha_bounds(image: Image.Image) -> tuple[int, int, int, int] | None:
+    """Ignore sub-64 alpha fringes when establishing the planted-foot bounds."""
+    alpha = image.getchannel("A").point(lambda value: 255 if value >= 64 else 0)
+    return alpha.getbbox()
 
 
 def remove_orphan_fragments(image: Image.Image) -> Image.Image:
@@ -159,6 +171,13 @@ def build_strip(source: Path, destination: Path, frame_count: int, has_checker: 
         x = index * FRAME_PX + (FRAME_PX - resized.width) // 2
         y = BASELINE_Y - resized.height
         strip.alpha_composite(resized, (x, y))
+    # 缩放会把原本相连的细小边缘重新采样成独立噪点；在最终帧画布上
+    # 再清一次，避免实机看到披风/手脚旁漂浮的孤立像素。
+    remove_orphan_fragments(strip)
+    # 低于此阈值的残余只是生成边缘的半透明毛刺，不承载角色轮廓；
+    # 清掉它们可避免相邻帧之间出现闪烁的细线。
+    alpha = strip.getchannel("A").point(lambda value: value if value >= 48 else 0)
+    strip.putalpha(alpha)
     palette = strip.quantize(colors=256, method=Image.Quantize.FASTOCTREE, dither=Image.Dither.NONE)
     destination.parent.mkdir(parents=True, exist_ok=True)
     palette.save(destination, optimize=True)

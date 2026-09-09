@@ -31,6 +31,9 @@ enum AttackKind { RANGED, MELEE }
 @export var swing_dmg: int = 3
 @export var swing_knock: float = 6.0  # 斩击击退初速（> jelly.KNOCK_SPEED=4.6）
 @export var swing_freeze: float = 0.065  # 斩中顿帧（0.5s 门控）
+## 三段近战连招。每项为 action/windup/active/recover/arc_deg/max_targets/damage_mult；
+## range 始终复用 swing_range，禁止通过连招偷加武器范围。
+@export var melee_combo: Array[Dictionary] = []
 # ---- 机体数值 ----
 @export var move_mult: float = 1.0  # 移动速度倍率（BoomPlayer.MOVE_SPEED=5.4 之上）
 @export var max_hp_bonus: int = 0  # HP 上限增量（M8：泡泡 0 → 50；大剑 +20 → 70，§4.1）

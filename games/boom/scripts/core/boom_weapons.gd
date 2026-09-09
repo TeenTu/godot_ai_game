@@ -55,6 +55,46 @@ static func _greatsword_def() -> BoomWeaponDef:
 	def.swing_dmg = def.base_attack  # 与统一结算入口同源（M8 §5.2）
 	def.swing_knock = 6.0
 	def.swing_freeze = 0.065
+	# 双手大剑模板：左右两记压迫横扫 → 同距离 360° 大回旋收尾。
+	# 只有收尾提高覆盖面/目标数；全段斩距严格锁定为 2.9m。
+	def.melee_combo = [
+		{
+			"action": "swing_left",
+			"windup": 0.22,
+			"active": 0.07,
+			"recover": 0.20,
+			"arc_deg": 130.0,
+			"max_targets": 8,
+			"damage_mult": 1.0,
+			"windup_frames": 2,
+			"active_frames": 1,
+			"recover_frames": 1,
+		},
+		{
+			"action": "swing_right",
+			"windup": 0.22,
+			"active": 0.07,
+			"recover": 0.20,
+			"arc_deg": 130.0,
+			"max_targets": 8,
+			"damage_mult": 1.0,
+			"windup_frames": 2,
+			"active_frames": 1,
+			"recover_frames": 1,
+		},
+		{
+			"action": "swing_whirl",
+			"windup": 0.30,
+			"active": 0.14,
+			"recover": 0.38,
+			"arc_deg": 360.0,
+			"max_targets": 12,
+			"damage_mult": 1.20,
+			"windup_frames": 2,
+			"active_frames": 2,
+			"recover_frames": 2,
+		},
+	]
 	def.move_mult = 0.85
 	def.max_hp_bonus = 20  # M8 近战生存补偿：50 + 20 = 70（§4.1）
 	def.skill_kit_id = "core"

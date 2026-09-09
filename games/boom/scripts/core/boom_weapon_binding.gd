@@ -95,8 +95,18 @@ const HANDS: Dictionary = {
 		Vector2(145, 117)
 	],
 	"recoil": [Vector2(75, 139), Vector2(64, 77), Vector2(112, 137)],
-	"swing":
-	[Vector2(90, 43), Vector2(81, 65), Vector2(80, 77), Vector2(100, 86), Vector2(81, 139)],
+	# 判笔采用双手重剑模板；锚点落在两手交叠的下方掌心，法器层以此锁定。
+	"swing_left": [Vector2(87, 142), Vector2(117, 123), Vector2(99, 104), Vector2(88, 141)],
+	"swing_right": [Vector2(91, 143), Vector2(111, 85), Vector2(159, 103), Vector2(154, 139)],
+	"swing_whirl":
+	[
+		Vector2(87, 143),
+		Vector2(105, 69),
+		Vector2(105, 66),
+		Vector2(126, 147),
+		Vector2(163, 120),
+		Vector2(118, 146),
+	],
 }
 ## 握柄逐帧锚点，按视觉配置 ID 索引（CONFIGS.grips 指向这里的 key）。
 const GRIPS: Dictionary = {
@@ -132,13 +142,16 @@ const GRIPS: Dictionary = {
 			Vector2(161, 102),
 			Vector2(161, 102)
 		],
-		"swing":
+		"swing_left": [Vector2(115, 100), Vector2(115, 100), Vector2(115, 100), Vector2(115, 100)],
+		"swing_right": [Vector2(115, 100), Vector2(115, 100), Vector2(115, 100), Vector2(115, 100)],
+		"swing_whirl":
 		[
 			Vector2(115, 100),
-			Vector2(112, 101),
-			Vector2(136, 96),
-			Vector2(135, 94),
-			Vector2(102, 104)
+			Vector2(115, 100),
+			Vector2(115, 100),
+			Vector2(115, 100),
+			Vector2(115, 100),
+			Vector2(115, 100),
 		],
 	},
 }
@@ -164,15 +177,23 @@ const HAND_RECTS: Dictionary = {
 		Rect2(44, 56, 44, 32),
 		Rect2(98, 126, 40, 28),
 	],
-	## swing 五帧（R1 返工后新帧 f4 已复验）：框住持械手/袖口，
-	## 让加粗后的判笔杆被手指包握（前景层原位重绘）。
-	"swing":
+	"swing_left":
+	[Rect2(68, 120, 46, 36), Rect2(96, 104, 46, 36), Rect2(78, 86, 46, 36), Rect2(67, 120, 46, 36)],
+	"swing_right":
 	[
-		Rect2(70, 30, 40, 28),
-		Rect2(61, 52, 40, 28),
-		Rect2(60, 64, 40, 28),
-		Rect2(80, 73, 40, 28),
-		Rect2(61, 125, 40, 28),
+		Rect2(70, 121, 46, 36),
+		Rect2(89, 65, 46, 36),
+		Rect2(136, 84, 46, 36),
+		Rect2(131, 119, 46, 36)
+	],
+	"swing_whirl":
+	[
+		Rect2(66, 120, 46, 38),
+		Rect2(82, 48, 48, 40),
+		Rect2(82, 45, 48, 40),
+		Rect2(103, 129, 48, 38),
+		Rect2(140, 102, 48, 38),
+		Rect2(95, 128, 48, 38),
 	],
 }
 
@@ -200,13 +221,20 @@ const CONFIGS: Dictionary = {
 		"form": "sword",
 		"weapon_dir": "res://assets/images/weapons/night_patrol/",
 		"weapon_pixel": 0.0070,
-		"effect_strip": ["res://assets/images/effects/ink_brush_swing_fx.png", 5],
+		"effect_strips":
+		{
+			"swing_left": ["res://assets/images/effects/ink_brush_swing_left_fx.png", 4],
+			"swing_right": ["res://assets/images/effects/ink_brush_swing_right_fx.png", 4],
+			"swing_whirl": ["res://assets/images/effects/ink_brush_swing_whirl_fx.png", 6],
+		},
 		"effect_pixel": 0.0084,
 		"strips":
 		{
 			"idle": ["ink_brush_idle", 4],
 			"move": ["ink_brush_move", 6],
-			"swing": ["ink_brush_swing", 5],
+			"swing_left": ["ink_brush_swing_left", 4],
+			"swing_right": ["ink_brush_swing_right", 4],
+			"swing_whirl": ["ink_brush_swing_whirl", 6],
 		},
 		"grips": "ink_brush",
 		"missing_action_policy": "stow",

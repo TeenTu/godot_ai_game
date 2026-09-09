@@ -415,11 +415,12 @@ func _capture_strips(output: String) -> void:
 					elif weapon.frame != body.frame:
 						_fail("%s/%s/%d: body/weapon frame mismatch" % [form, action, frame])
 				var swing_fx: AnimatedSprite3D = player._weapon_fx_anim
-				if action == "swing" and WeaponBinding.config(vid).has("effect_strip"):
+				var effect_strips: Dictionary = WeaponBinding.config(vid).get("effect_strips", {})
+				if effect_strips.has(action):
 					if swing_fx == null or not swing_fx.visible:
-						_fail("%s/swing/%d: independent swing VFX hidden" % [form, frame])
+						_fail("%s/%s/%d: independent melee VFX hidden" % [form, action, frame])
 					elif swing_fx.frame != body.frame:
-						_fail("%s/swing/%d: body/VFX frame mismatch" % [form, frame])
+						_fail("%s/%s/%d: body/VFX frame mismatch" % [form, action, frame])
 				actors.append(player)
 			await process_frame
 			await RenderingServer.frame_post_draw

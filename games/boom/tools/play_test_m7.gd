@@ -67,10 +67,10 @@ func test_assets() -> void:
 	g.set_weapon("greatsword")
 	var melee_layer := g.player.get("_weapon_anim") as AnimatedSprite3D
 	host._check(melee_layer != null, "墨线判笔武器层已挂入 WeaponSocket")
-	g.player.play_anim_once("swing")
+	g.player.play_anim_once("swing_left")
 	g.player.physics_update(DT, 9.0, 5.0)
 	if melee_layer != null:
-		host._check(melee_layer.animation == "swing", "近战身体/武器动作同帧切换 swing")
+		host._check(melee_layer.animation == "swing_left", "近战身体/武器动作同帧切换 swing_left")
 	g.free()
 	var seal_bullet := BoomBullet.new()
 	host._check(seal_bullet.get("_anim") != null, "灯火灵印雪碧层已接入投射物对象池")

@@ -188,6 +188,15 @@ func _test_smoke() -> void:
 		"res://assets/images/weapons/night_patrol/ink_brush_move.png",
 		"res://assets/images/weapons/night_patrol/ink_brush_swing.png",
 		"res://assets/images/effects/ink_brush_swing_fx.png",
+		"res://assets/images/characters/night_patrol/hero_melee_left_body.png",
+		"res://assets/images/characters/night_patrol/hero_melee_right_body.png",
+		"res://assets/images/characters/night_patrol/hero_melee_whirl_body.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_left.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_right.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_whirl.png",
+		"res://assets/images/effects/ink_brush_swing_left_fx.png",
+		"res://assets/images/effects/ink_brush_swing_right_fx.png",
+		"res://assets/images/effects/ink_brush_swing_whirl_fx.png",
 		"res://assets/images/characters/paper_doll_move_down.png",
 		"res://assets/images/characters/paper_doll_move_up.png",
 		"res://assets/images/characters/paper_doll_move_left.png",
@@ -716,8 +725,13 @@ func _test_m5_weapons() -> void:
 			and absf(sword.swing_windup - 0.32) < 0.001
 			and absf(sword.swing_active - 0.08) < 0.001
 			and absf(sword.swing_recover - 0.36) < 0.001
+			and sword.melee_combo.size() == 3
+			and sword.melee_combo[0]["action"] == "swing_left"
+			and sword.melee_combo[1]["action"] == "swing_right"
+			and sword.melee_combo[2]["action"] == "swing_whirl"
+			and absf(float(sword.melee_combo[2]["arc_deg"]) - 360.0) < 0.001
 		),
-		"判笔重剑参数 30伤/12敌/2.9m/150° + 0.32/0.08/0.36 节奏",
+		"判笔三段双手连招：左挥/右挥/360°回旋，均锁定 2.9m 斩距",
 	)
 	_check(
 		sword != null and sword.max_hp_bonus == 20 and absf(sword.move_mult - 0.85) < 0.001,

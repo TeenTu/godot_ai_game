@@ -372,7 +372,7 @@ func test_motion() -> void:
 			saw_active = true
 		elif st == g.SwingState.RECOVER:
 			saw_recover = true
-		if anim != null and anim.animation == "swing":
+		if anim != null and anim.animation == "swing_left":
 			var f: int = anim.frame
 			if st == g.SwingState.WINDUP and f > 1:
 				vis_ok = false
@@ -440,7 +440,7 @@ func test_motion() -> void:
 		"切枪后形态/视觉配置回归 bubble/night_ruler"
 	)
 	if anim3 != null:
-		host._check(anim3.animation != "swing", "swing 动画无滞留")
+		host._check(not String(anim3.animation).begins_with("swing_"), "近战动画无滞留")
 	host._check(g3.player.get("_weapon_anim") != null, "武器视觉层已按新配置重建")
 	g3.free()
 
