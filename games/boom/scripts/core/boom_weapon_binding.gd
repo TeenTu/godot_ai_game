@@ -160,6 +160,8 @@ const CONFIGS: Dictionary = {
 		"form": "sword",
 		"weapon_dir": "res://assets/images/weapons/night_patrol/",
 		"weapon_pixel": 0.0070,
+		"effect_strip": ["res://assets/images/effects/ink_brush_swing_fx.png", 5],
+		"effect_pixel": 0.0084,
 		"strips":
 		{
 			"idle": ["ink_brush_idle", 4],

@@ -23,6 +23,8 @@ signal prop_broken(pos: Vector3, coin_value: int)
 signal skill_bullet_hit(pos: Vector3, skill_id: String)
 ## M5 大剑弧斩命中（§4.2/§4.3）：pos=命中点，dmg=单目标伤害（=swing_dmg）；不走 enemy_damaged 飘字管线，表现层按此信号做重击反馈。
 signal blade_hit(pos: Vector3, dmg: int)
+## 判笔每次出手只发一次，用于刀光、音效和震屏；避免怪海中逐目标重复触发表现。
+signal swing_released(pos: Vector3, facing: Vector3, hit_count: int)
 ## M7 经验入账（击杀后广播，amount 为本次获得经验）。
 signal exp_gained(amount: int)
 ## M7 升级（BoomExperience.leveled_up 转发；升级点进入 pending_upgrades）。
@@ -67,13 +69,15 @@ const RESULT_STAR_WAVE_2: int = 4
 const RESULT_STAR_WAVE_3: int = 6
 
 # ---- M4 波次系统（design_m4_waves.md §3/§4/§6，全部数值常量化调参不改逻辑）----
-const WAVE_QUOTA_EARLY_BASE: int = 2  # W≤4：quota = 2+n → 3/4/5/6（教学段）
+const WAVE_QUOTA_EARLY_BASE: int = 8  # W≤4：quota = 8+4n → 12/16/20/24
 const WAVE_QUOTA_EARLY_END: int = 4
-const WAVE_QUOTA_MID_BASE: int = 9  # W5–9：9+2*(n-5) → 9/11/13/15/17（§3.2 列值 + §7.2 断言）
+const WAVE_QUOTA_MID_BASE: int = 30  # W5–9：30+6*(n-5) → 30/36/42/48/54
 const WAVE_QUOTA_MID_END: int = 9
-const WAVE_QUOTA_LATE_BASE: int = 18  # W≥10：18+2*(n-10)，W10 台阶
-const WAVE_QUOTA_STEP: int = 2
-const WAVE_QUOTA_CAP: int = 30  # 配额封顶（性能红线：同屏 ≤12）
+const WAVE_QUOTA_LATE_BASE: int = 64  # W≥10：64+8*(n-10)，W10 怪海台阶
+const WAVE_QUOTA_EARLY_STEP: int = 4
+const WAVE_QUOTA_MID_STEP: int = 6
+const WAVE_QUOTA_STEP: int = 8
+const WAVE_QUOTA_CAP: int = 96
 # 每 5 波一档（W1-4/W5-9/W10-14/W15-19/W20-24/W25+）→ 有效 HP 3/4/5/6/7/8。
 const WAVE_HP_MULTS: Array[float] = [1.0, 1.34, 1.67, 2.0, 2.34, 2.67]
 # 速度系数分段（W1-9/W10-14/W15-19/W20+）；1.3 为硬红线：再快前摇冲撞不可躲。
@@ -96,7 +100,14 @@ const ELITE_SCALE: float = 1.4  # 精英体型
 const ELITE_SPEED_MULT: float = 0.85  # 精英更慢（更大更肉但好打）
 const ELITE_COIN_COUNT: int = 8  # 死亡金币雨枚数
 const ELITE_COIN_VALUE: int = 5  # 单枚金币值（雨合计 40）
-const MAX_ALIVE_CAP: int = 12  # 同屏上限封顶 9→12（§6 联动）
+const MAX_ALIVE_CAP: int = 48  # Web 目标的怪海上限；分离计算按 4 帧轮转
+const MAX_ALIVE_BASE: int = 12
+const MAX_ALIVE_PER_WAVE: int = 4
+const SPAWN_INTERVAL_START: float = 0.47
+const SPAWN_INTERVAL_MIN: float = 0.16
+const SPAWN_INTERVAL_STEP: float = 0.03
+const SPAWN_BURST_MAX: int = 4
+const CROWD_SEPARATION_STRIDE: int = 4
 
 # ---- M7 成长系统（design_m7_progression.md）----
 const RING_COUNT: int = 12  # ring 环形弹幕发数
@@ -154,6 +165,7 @@ var _swing_t: float = 0.0
 ## 挥出瞬间的朝向快照（前摇期内不再转向新目标，宽容判定按挥出瞬间算，§4.2）。
 var _swing_facing: Vector3 = Vector3.FORWARD
 var _last_swing_freeze: float = -10.0  # 斩中顿帧 0.5s 门控
+var _crowd_tick: int = 0
 ## R3 死亡表现窗：已死 jelly 移出 enemies 后仍挂树演 0.2s 压扁/淡出（不阻塞结算）。
 var _corpses: Array = []
 
@@ -228,6 +240,7 @@ func restart() -> void:
 	_swing_t = 0.0
 	_swing_facing = player.facing
 	_last_swing_freeze = -10.0
+	_crowd_tick = 0
 	match_started = false
 	player.hp = player.max_hp
 	player.invuln_left = 0.0
@@ -466,6 +479,7 @@ func _execute_swing() -> void:
 	if hit_any and game_time - _last_swing_freeze >= 0.5:
 		_last_swing_freeze = game_time
 		_freeze_left = maxf(_freeze_left, weapon_cfg.swing_freeze)
+	swing_released.emit(player.position, _swing_facing, hit_count)
 
 
 ## 目标决议：加权最优为候选；锁定窗口内不换目标（防抖），窗口结束后新目标与旧锁夹角 ≤±8° 时吸附续锁。
@@ -849,11 +863,21 @@ func _elite_coin_rain(pos: Vector3) -> void:
 
 
 func _tick_enemies(delta: float) -> void:
-	for e in enemies:
-		var jelly := e as BoomJelly
+	_crowd_tick = (_crowd_tick + 1) % CROWD_SEPARATION_STRIDE
+	for index in enemies.size():
+		var jelly := enemies[index] as BoomJelly
 		if jelly == null:
 			continue
-		jelly.physics_update(delta, player.position, enemies, ENEMY_BOUND_X, ENEMY_BOUND_Z)
+		jelly.physics_update(
+			delta,
+			player.position,
+			enemies,
+			ENEMY_BOUND_X,
+			ENEMY_BOUND_Z,
+			index,
+			_crowd_tick,
+			CROWD_SEPARATION_STRIDE
+		)
 
 
 func spawn_enemy_at(pos: Vector3, elite: bool = false) -> BoomJelly:
@@ -908,11 +932,20 @@ func _spawn_edge_enemy(elite: bool = false) -> void:
 
 
 func _max_alive() -> int:
-	return clampi(2 + wave, 2, MAX_ALIVE_CAP)
+	return clampi(MAX_ALIVE_BASE + wave * MAX_ALIVE_PER_WAVE, 16, MAX_ALIVE_CAP)
 
 
 func _spawn_interval() -> float:
-	return clampf(1.7 - wave * 0.15, 0.7, 1.7)
+	return clampf(
+		SPAWN_INTERVAL_START - float(wave - 1) * SPAWN_INTERVAL_STEP,
+		SPAWN_INTERVAL_MIN,
+		SPAWN_INTERVAL_START
+	)
+
+
+@warning_ignore("integer_division")
+func _spawn_burst() -> int:
+	return clampi(2 + (wave - 1) / 3, 2, SPAWN_BURST_MAX)
 
 
 func _begin_wave() -> void:
@@ -950,8 +983,12 @@ func _tick_spawns(delta: float) -> void:
 		_spawn_cd -= delta
 		if _spawn_cd <= 0.0:
 			_spawn_cd = _spawn_interval()
-			_spawned_total += 1
-			_spawn_edge_enemy(_is_elite_spawn())
+			var room: int = _max_alive() - enemies.size()
+			var remaining: int = _quota_current - _spawned_total
+			var count: int = mini(_spawn_burst(), mini(room, remaining))
+			for _index in count:
+				_spawned_total += 1
+				_spawn_edge_enemy(_is_elite_spawn())
 
 
 ## §4 精英周期：每 ELITE_EVERY_N 波的最后一只刷出为精英（W5/10/15…）。

@@ -324,6 +324,7 @@ func _connect_signals() -> void:
 	sim.game_over.connect(_on_game_over)
 	sim.prop_broken.connect(_on_prop_broken)
 	sim.skill_bullet_hit.connect(_on_skill_bullet_hit)
+	sim.swing_released.connect(_on_swing_released)
 	sim.level_up.connect(_on_level_up)
 	sim.player_healed.connect(_on_player_healed)
 	skill_sys.skill_fired.connect(_on_skill_fired)
@@ -394,6 +395,16 @@ func _on_enemy_damaged(pos: Vector3, _dir: Vector3) -> void:
 	fx.puff(pos, COL_SPIRIT_SEAL, 6)
 	audio.play("hit", -9.0)
 	cam.add_trauma(0.05)
+
+
+## 一次挥击只做一次重反馈；怪海多目标不会把音效/震屏叠加十二遍。
+func _on_swing_released(pos: Vector3, facing: Vector3, hit_count: int) -> void:
+	if hit_count <= 0:
+		return
+	var impact_pos := pos + facing * minf(1.6, sim.weapon_cfg.swing_range * 0.55)
+	fx.puff(impact_pos + Vector3(0.0, 0.35, 0.0), Color("5fc5ad"), mini(20, 8 + hit_count))
+	audio.play("hit", -5.0)
+	cam.add_trauma(minf(0.52, 0.24 + float(hit_count) * 0.025))
 
 
 ## M8（§6.3）：伤害数字走统一结算广播——暴击数字放大并用朱砂红高亮，

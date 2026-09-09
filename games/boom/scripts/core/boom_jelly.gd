@@ -61,6 +61,8 @@ var _spawn_ttl: float = 0.0
 var _flash_left: float = 0.0
 var _dying: bool = false
 var _death_t: float = 0.0
+static var _paper_frames: SpriteFrames = null
+static var _mist_frames: SpriteFrames = null
 
 
 func _init() -> void:
@@ -70,6 +72,14 @@ func _init() -> void:
 
 
 func _build_visuals(palette: Color) -> void:
+	# 正常运行只建 2D 敌人和预警圈，省掉每只怪 5 个永远隐藏的回退网格。
+	_add_character_art()
+	if _art != null:
+		body_mat = StandardMaterial3D.new()
+		body_mat.emission_enabled = true
+		body_mat.emission_energy_multiplier = 0.2
+		_build_telegraph()
+		return
 	var body_sphere := SphereMesh.new()
 	body_sphere.radius = 0.55
 	body_sphere.height = 1.05
@@ -86,8 +96,6 @@ func _build_visuals(palette: Color) -> void:
 	_body.material_override = body_mat
 	_body.position.y = 0.55
 	add_child(_body)
-	_add_character_art()
-
 	# 呆萌大眼睛（眼睛朝 +Z，追人时会自动面向玩家）。
 	var white_mat := StandardMaterial3D.new()
 	white_mat.albedo_color = Color(0.98, 0.98, 1.0)
@@ -98,10 +106,6 @@ func _build_visuals(palette: Color) -> void:
 	pupil_mat.albedo_color = Color(0.06, 0.09, 0.1)
 	_add_eye(Vector3(-0.2, 0.76, 0.54), 0.06, pupil_mat)
 	_add_eye(Vector3(0.2, 0.76, 0.54), 0.06, pupil_mat)
-	if _art != null:
-		for child in get_children():
-			if child is MeshInstance3D:
-				(child as MeshInstance3D).visible = false
 	_build_telegraph()
 
 
@@ -129,6 +133,10 @@ func _add_character_art() -> void:
 
 
 func _build_enemy_frames() -> SpriteFrames:
+	if _is_mist_spirit and _mist_frames != null:
+		return _mist_frames
+	if not _is_mist_spirit and _paper_frames != null:
+		return _paper_frames
 	var frames := SpriteFrames.new()
 	var strips: Dictionary = (
 		{"float": "mist_spirit_float"}
@@ -155,6 +163,10 @@ func _build_enemy_frames() -> SpriteFrames:
 			atlas.atlas = texture
 			atlas.region = Rect2(float(index) * 256.0, 0.0, 256.0, 256.0)
 			frames.add_frame(action, atlas)
+	if _is_mist_spirit:
+		_mist_frames = frames
+	else:
+		_paper_frames = frames
 	return frames
 
 
@@ -292,7 +304,14 @@ func take_damage(dmg: int, knock_dir: Vector3, knock_speed_override: float = -1.
 
 ## 由 BoomGame 每物理帧驱动；others 用于相遇分离（简化为两两推开）。
 func physics_update(
-	delta: float, player_pos: Vector3, others: Array, bounds_half_x: float, bounds_half_z: float
+	delta: float,
+	player_pos: Vector3,
+	others: Array,
+	bounds_half_x: float,
+	bounds_half_z: float,
+	crowd_index: int = 0,
+	crowd_tick: int = 0,
+	crowd_stride: int = 1
 ) -> void:
 	if _dead:
 		return
@@ -370,17 +389,18 @@ func physics_update(
 			# 精英 telegraph 放大一档（§4：体型差 + 圈放大，复用同一网格）。
 			_telegraph.scale = Vector3(ring_scale, 1.0, ring_scale) * base_scale
 
-	# 相遇分离：把挤压自己的邻居推开一点，别叠成一坨。
-	for other in others:
-		var j := other as BoomJelly
-		if j == null or j == self or j.is_dead():
-			continue
-		var d: Vector3 = position - j.position
-		d.y = 0.0
-		var min_d: float = radius + j.radius
-		var dlen := d.length()
-		if dlen > 0.0001 and dlen < min_d:
-			position += d / dlen * (min_d - dlen) * 0.5
+	# 怪海优化：移动/攻击仍逐帧，O(n²) 的软分离按 4 帧轮转到不同敌人。
+	if (crowd_index + crowd_tick) % maxi(1, crowd_stride) == 0:
+		for other in others:
+			var j := other as BoomJelly
+			if j == null or j == self or j.is_dead():
+				continue
+			var d: Vector3 = position - j.position
+			d.y = 0.0
+			var min_d: float = radius + j.radius
+			var dlen := d.length()
+			if dlen > 0.0001 and dlen < min_d:
+				position += d / dlen * (min_d - dlen) * 0.5
 
 	# 面向玩家（CHASE / WINDUP 都盯着人看）。
 	if toward.length_squared() > 0.001:
