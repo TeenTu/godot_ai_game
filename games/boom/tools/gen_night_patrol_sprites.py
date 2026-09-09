@@ -321,6 +321,13 @@ def main() -> None:
         print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")
     build_review_preview(generated)
     print("generated assets/review/night_patrol_hero_animation_preview.png")
+    # Approved R1-R4 corrections are a deterministic final stage. Keeping this in
+    # the canonical generator prevents old reference strips from restoring drift,
+    # baked VFX, or the opposite-hand recovery pose on the next regeneration.
+    from apply_asset_rework import apply_runtime
+
+    apply_runtime()
+    print("applied and validated tools/ASSET_REWORK.md corrections")
 
 
 if __name__ == "__main__":

@@ -379,29 +379,33 @@ func _tick_melee(delta: float) -> void:
 	match _swing_state:
 		SwingState.WINDUP:
 			_swing_t -= delta
-			# 前摇期朝向冻结（不可转向新目标）。
+			player.sync_swing_phase(
+				0, 2, 1.0 - _swing_t / (weapon_cfg.swing_windup / stats.aspd_mult())
+			)
 			player.face_toward(_swing_facing)
 			if _swing_t <= 0.0:
 				_swing_state = SwingState.ACTIVE
 				_swing_t = weapon_cfg.swing_active
+				player.sync_swing_phase(2, 1, 0.0)
 				_execute_swing()
 		SwingState.ACTIVE:
 			_swing_t -= delta
-			# 判定窗锁移动。
+			player.sync_swing_phase(2, 1, 1.0 - _swing_t / weapon_cfg.swing_active)
 			player.lock_move_left = _swing_t
 			if _swing_t <= 0.0:
 				_swing_state = SwingState.RECOVER
 				_swing_t = weapon_cfg.swing_recover
+				player.sync_swing_phase(3, 2, 0.0)
 		SwingState.RECOVER:
 			_swing_t -= delta
-			# 后摇可走可转向。
+			player.sync_swing_phase(3, 2, 1.0 - _swing_t / weapon_cfg.swing_recover)
 			var mv := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
 			if player.move_vec.length_squared() > 0.01 and _nearest_enemy() == null:
 				player.face_toward(mv)
 			if _swing_t <= 0.0:
 				_swing_state = SwingState.NONE
+				player.finish_swing_visual()
 		_:
-			# 待机：只追最近敌的朝向，进入斩程即起手。
 			var target := _nearest_enemy()
 			if target == null:
 				var mv2 := Vector3(player.move_vec.x, 0.0, player.move_vec.y)
@@ -415,8 +419,9 @@ func _tick_melee(delta: float) -> void:
 					_swing_state = SwingState.WINDUP
 					_swing_t = weapon_cfg.swing_windup / stats.aspd_mult()
 					_swing_facing = player.facing
-					# 动作在前摇起帧启动；ACTIVE 边界执行命中，正好落在第 3~4 帧墨弧。
+					# 动画逐阶段跟随 FSM；攻速改变前摇时仍在 ACTIVE 边界出手。
 					player.play_anim_once("swing")
+					player.sync_swing_phase(0, 2, 0.0)
 	player.physics_update(delta, PLAYER_BOUND_X, PLAYER_BOUND_Z)
 
 

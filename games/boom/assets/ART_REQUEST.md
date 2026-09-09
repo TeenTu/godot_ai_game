@@ -1,4 +1,4 @@
-# Boom art request — 百怪夜巡（新国风轻 Q 原生 3D）
+# Boom art request — 百怪夜巡（新国风轻 Q 2D 分层帧动画）
 
 Raster assets are resized for Web and kept below the repository's 512 KB per-image gate
 (default; character strip sheets & icons may reach 1536 KB under the repository CI rule documented in `.github/workflows/deploy.yml`).
@@ -135,9 +135,23 @@ Collision and damage remain in `BoomGame`; only the visual layer changed.
 Review sheets: `assets/review/night_patrol_weapon_actions_preview.png` and
 `assets/review/night_patrol_weapon_binding_preview.png`.
 
+### Weapon binding asset rework (2026-09-09)
+
+- `images/effects/ink_brush_swing_fx.png`: 5×1 strip, 256×256 per frame,
+  transparent background, teal-green spirit-ink slash (`#5FC5AD`) with no weapon,
+  character, text, or UI. This is an independent timing/VFX layer; it must never be
+  baked back into `ink_brush_swing.png`.
+- `ink_brush_swing.png` is now a weapon-only five-frame strip. The source edits are
+  archived under `assets/references/rework/`; `tools/apply_asset_rework.py` performs
+  deterministic alpha restoration, normalization, fixed-canvas corrections, and
+  an exact frame-equality drift check for the move/idle strips.
+- Generation mode: Codex built-in ImageGen, followed by deterministic Pillow
+  post-processing. The canonical sprite generator reapplies this approved rework as
+  its final stage so regeneration cannot restore the rejected assets.
+
 ## Current style invariants
 
-- 百怪夜巡采用新国风轻 Q 原生 3D：墨夜蓝环境、米纸/布/深木/旧铜材质、暖灯琥珀玩家高光。
+- 百怪夜巡采用新国风轻 Q 2D 分层帧动画：墨夜蓝环境、米纸/布/深木/旧铜绘制质感、暖灯琥珀玩家高光；场景中的 `AnimatedSprite3D` 只承载 2D 精灵，不生成原生 3D 角色模型。
 - 玩家是背方灯匣的年轻女灯使；黑发红绳、额间朱砂、靛蓝短披风、米白短衣、朱红腰绳为必备识别件。
 - 场景和角色均以俯视三分之四、小屏剪影可读为最高优先级；实机角色为约 2.75–3 头身。
 - 角色和图标要求透明底；场景背景允许不透明。任何无武器基础角色图必须双手空置。
@@ -187,4 +201,4 @@ Mode: Codex built-in ImageGen。M5 玩家动画的 prompt 骨架见 `design_m5_w
 
 ### M5 动画幅度返工（2026-09-04）
 仅返工 player_bubble_move、player_sword_move、player_sword_swing、player_bubble_recoil，其余 M5 资产保持不动。move 使用 ±10px 正弦重心起伏并加入左右短腿交替抬步；swing 使用 8 个唯一剑位/角度与逐帧身体倾斜；recoil 使用后仰→半程→归位三态。最终逐帧指标见本次交付回报。
-> **状态（2026-09-07）**：本文件中的早期 M5 糖果/泡泡素材清单与提示词均为历史归档，不得据此生成或更新运行时素材。当前素材必须遵循 `docs/art_bible_boom.md` 与 `shared/assets/styles/boom-3d/contract.yaml`；仅保留用于追溯的旧记录。
+> **状态（2026-09-09）**：本文件中的早期 M5 糖果/泡泡素材清单与提示词均为历史归档，不得据此生成或更新运行时素材。当前素材必须遵循 `docs/art_bible_boom.md` 与 `shared/assets/styles/boom-night-2d/contract.yaml`；仅保留用于追溯的旧记录。
