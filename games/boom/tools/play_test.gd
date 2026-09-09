@@ -170,6 +170,7 @@ func _test_smoke() -> void:
 		"res://assets/images/weapons/night_patrol/ink_brush_idle.png",
 		"res://assets/images/weapons/night_patrol/ink_brush_move.png",
 		"res://assets/images/weapons/night_patrol/ink_brush_swing.png",
+		"res://assets/images/effects/ink_brush_swing_fx.png",
 		"res://assets/images/characters/paper_doll_move_down.png",
 		"res://assets/images/characters/paper_doll_move_up.png",
 		"res://assets/images/characters/paper_doll_move_left.png",
@@ -517,12 +518,12 @@ func _test_m4_waves() -> void:
 	print("[m4-wave]")
 	# §7.2 配额分段公式边界值。
 	var g := _new_game()
-	_check(BoomCombatMath.wave_quota(1) == 3, "quota W1 = 3（2+n 教学段）")
-	_check(BoomCombatMath.wave_quota(4) == 6, "quota W4 = 6")
-	_check(BoomCombatMath.wave_quota(5) == 9, "quota W5 = 9（中段起步）")
-	_check(BoomCombatMath.wave_quota(9) == 17, "quota W9 = 17")
-	_check(BoomCombatMath.wave_quota(10) == 18, "quota W10 = 18（台阶）")
-	_check(BoomCombatMath.wave_quota(99) == 30, "quota W99 封顶 30")
+	_check(BoomCombatMath.wave_quota(1) == 12, "quota W1 = 12（怪海起步）")
+	_check(BoomCombatMath.wave_quota(4) == 24, "quota W4 = 24")
+	_check(BoomCombatMath.wave_quota(5) == 30, "quota W5 = 30（中段起步）")
+	_check(BoomCombatMath.wave_quota(9) == 54, "quota W9 = 54")
+	_check(BoomCombatMath.wave_quota(10) == 64, "quota W10 = 64（怪海台阶）")
+	_check(BoomCombatMath.wave_quota(99) == 96, "quota W99 封顶 96")
 	# §3.4 间歇阶梯查表。
 	_check(is_equal_approx(BoomCombatMath.wave_rest(1), 2.5), "rest W1 = 2.5s")
 	_check(is_equal_approx(BoomCombatMath.wave_rest(4), 2.5), "rest W4 = 2.5s")
@@ -535,14 +536,31 @@ func _test_m4_waves() -> void:
 	_check(BoomCombatMath.wave_bonus(9) == 110, "bonus W9 = 110")
 	_check(BoomCombatMath.wave_bonus(10) == 240, "bonus W10 = 240（台阶 ×2）")
 	_check(BoomCombatMath.wave_bonus(20) == 440, "bonus W20 = 440（台阶 ×2）")
-	# §6 同屏上限 9→12。
+	# 怪海同屏曲线：W1=16 / W5=32 / W9 起封顶 48。
 	g.wave = 8
-	_check(g._max_alive() == 10, "max_alive W8 = 10")
+	_check(g._max_alive() == 44, "max_alive W8 = 44")
 	g.wave = 10
-	_check(g._max_alive() == 12, "max_alive W10 = 12")
+	_check(g._max_alive() == 48, "max_alive W10 = 48")
 	g.wave = 50
-	_check(g._max_alive() == 12, "max_alive W50 封顶 12")
+	_check(g._max_alive() == 48, "max_alive W50 封顶 48")
 	g.free()
+	# 一次刷新批量入场；高波次每次最多 4 只，仍受同屏/配额双上限约束。
+	var gh := BoomGame.new()
+	gh.wave = 10
+	gh.begin_match()
+	gh._spawn_cd = 0.0
+	gh.step(DT)
+	_check(gh.enemies.size() == 4, "W10 单次 burst 刷入 4 只")
+	_check(gh._spawned_total == 4, "burst 正确累计配额")
+	# 性能结构：2D 敌人不再创建隐藏回退网格；48 敌分离按四帧轮转。
+	var sample := gh.enemies[0] as BoomJelly
+	var mesh_count := 0
+	for child in sample.get_children():
+		if child is MeshInstance3D:
+			mesh_count += 1
+	_check(mesh_count == 1, "2D 敌人仅保留 1 个预警圈网格（无隐藏回退网格）")
+	_check(BoomGame.CROWD_SEPARATION_STRIDE == 4, "怪群 O(n²) 分离按四帧轮转")
+	gh.free()
 	# §7.4 属性阶梯：HP 30→40→50、W40 封顶 80；速度 1.0→1.1→1.3 封顶（硬红线）。
 	var g2 := _new_game()
 	_check(g2.spawn_enemy_at(Vector3(0.0, 0.0, -5.0)).hp == 30, "W1 敌 HP = 30（M8 30 点制）")
@@ -645,11 +663,14 @@ func _test_m5_weapons() -> void:
 			sword != null
 			and sword.swing_dmg == 30
 			and sword.base_attack == 30
-			and sword.swing_max_targets == 6
+			and sword.swing_max_targets == 12
 			and absf(sword.swing_range - 2.9) < 0.001
 			and absf(sword.swing_arc_deg - 150.0) < 0.001
+			and absf(sword.swing_windup - 0.32) < 0.001
+			and absf(sword.swing_active - 0.08) < 0.001
+			and absf(sword.swing_recover - 0.36) < 0.001
 		),
-		"大剑弧斩参数 30伤/6敌/2.9m/150°（M8 base_attack=30）",
+		"判笔重剑参数 30伤/12敌/2.9m/150° + 0.32/0.08/0.36 节奏",
 	)
 	_check(
 		sword != null and sword.max_hp_bonus == 20 and absf(sword.move_mult - 0.85) < 0.001,
@@ -696,7 +717,11 @@ func _test_m5_weapons() -> void:
 	for p in targets:
 		g.spawn_enemy_at(p)
 	var blade_box: Array = [0]
+	var release_box: Array = []
 	g.blade_hit.connect(func(_pos: Vector3, _dmg: int) -> void: blade_box[0] += 1)
+	g.swing_released.connect(
+		func(_pos: Vector3, _facing: Vector3, count: int) -> void: release_box.append(count)
+	)
 	var guard := 0
 	while guard < MAX_FRAMES and not g.enemies.is_empty():
 		guard += 1
@@ -705,7 +730,9 @@ func _test_m5_weapons() -> void:
 	_check(g.enemies.is_empty(), "弧斩清空扇区 4 敌")
 	_check(g.kills == 4, "弧斩致死计数 4 (kills=%d)" % g.kills)
 	_check(blade_box[0] >= 4, "blade_hit 命中 ≥4 次 (hits=%d)" % blade_box[0])
+	_check(release_box.size() == 1 and release_box[0] == 4, "整次挥击只发 1 次重反馈（4 命中）")
 	_check(g.combo == 4, "弧斩多杀 combo 累积到 4")
+	_check(g.player.get("_weapon_fx_anim") != null, "判笔独立五帧墨迹层已构建")
 	g.free()
 
 	# 5) 选武器 UX（main 层）：选单默认泡泡 → 确认开战/隐藏/血条上限自适应。

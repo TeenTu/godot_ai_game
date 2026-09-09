@@ -93,6 +93,7 @@ var _sprite_frames: SpriteFrames = null
 var _weapon_socket: Node3D = null
 var _weapon_anim: AnimatedSprite3D = null
 var _weapon_frames: SpriteFrames = null
+var _weapon_fx_anim: AnimatedSprite3D = null
 var _hand_anim: AnimatedSprite3D = null
 var _hand_frames: SpriteFrames = null
 var _transient_anim: bool = false
@@ -321,6 +322,38 @@ func _build_weapon_art() -> void:
 		else String(_weapon_frames.get_animation_names()[0])
 	)
 	_weapon_anim.play(initial_action)
+	_build_weapon_effect(cfg)
+
+
+## 判笔挥击的墨迹是独立视觉层：与五帧身体同拍，但不参与握柄偏移和命中判定。
+func _build_weapon_effect(cfg: Dictionary) -> void:
+	var spec: Array = cfg.get("effect_strip", [])
+	if spec.size() != 2:
+		return
+	var path: String = spec[0]
+	if not ResourceLoader.exists(path):
+		return
+	var texture := load(path) as Texture2D
+	if texture == null:
+		return
+	var frames := SpriteFrames.new()
+	frames.add_animation("swing")
+	frames.set_animation_loop("swing", false)
+	frames.set_animation_speed("swing", _ANIM_FPS["swing"])
+	for index in int(spec[1]):
+		var atlas := AtlasTexture.new()
+		atlas.atlas = texture
+		atlas.region = Rect2(float(index) * FRAME_PX, 0.0, FRAME_PX, FRAME_PX)
+		frames.add_frame("swing", atlas)
+	_weapon_fx_anim = AnimatedSprite3D.new()
+	_weapon_fx_anim.name = "WeaponSwingFx2D"
+	_weapon_fx_anim.sprite_frames = frames
+	_weapon_fx_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_weapon_fx_anim.pixel_size = cfg.get("effect_pixel", 0.0084)
+	_weapon_fx_anim.position = Vector3.ZERO
+	_weapon_fx_anim.render_priority = 1
+	_weapon_fx_anim.visible = false
+	_weapon_socket.add_child(_weapon_fx_anim)
 
 
 ## 手部前景层：从同一帧身体贴图裁 HAND_RECTS 区域，垫回 256x256 画布原位，
@@ -373,6 +406,9 @@ func _build_hand_art() -> void:
 
 
 func _clear_weapon_art() -> void:
+	if _weapon_fx_anim != null:
+		_weapon_fx_anim.queue_free()
+	_weapon_fx_anim = null
 	if _weapon_anim != null:
 		_weapon_anim.queue_free()
 	_weapon_anim = null
@@ -392,6 +428,8 @@ func _sync_weapon_animation() -> void:
 	)
 	_weapon_anim.visible = binding["visible"]
 	if not _weapon_anim.visible:
+		_sync_weapon_effect()
+		_sync_hand_layer()
 		return
 	var desired: String = binding["action"]
 	if not _weapon_frames.has_animation(desired):
@@ -408,7 +446,21 @@ func _sync_weapon_animation() -> void:
 	if frame_count <= 0:
 		return
 	_weapon_anim.set_frame_and_progress(mini(_anim.frame, frame_count - 1), _anim.frame_progress)
+	_sync_weapon_effect()
 	_sync_hand_layer()
+
+
+func _sync_weapon_effect() -> void:
+	if _weapon_fx_anim == null or _anim == null:
+		return
+	_weapon_fx_anim.visible = _anim.animation == "swing"
+	if not _weapon_fx_anim.visible:
+		return
+	_weapon_fx_anim.pause()
+	_weapon_fx_anim.flip_h = false
+	_weapon_fx_anim.modulate = Color.WHITE
+	var frame_count: int = _weapon_fx_anim.sprite_frames.get_frame_count("swing")
+	_weapon_fx_anim.set_frame_and_progress(mini(_anim.frame, frame_count - 1), _anim.frame_progress)
 
 
 ## 手部前景层只在"武器可见且该动作有完整手部矩形"时出现。

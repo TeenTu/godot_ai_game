@@ -1,6 +1,10 @@
 ; Engine configuration file.
 ; It's best edited using the editor UI and not directly,
 ; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -20,19 +24,17 @@ TestHook="*res://scripts/test_hook.gd"
 window/size/viewport_width=720
 window/size/viewport_height=1280
 window/stretch/mode="canvas_items"
-window/stretch/aspect="keep"
-
-[gui]
-
-theme/custom_font="res://assets/fonts/ui_subset.ttf"
 
 [game_kit]
 
 asset_style="boom-3d"
 
+[gui]
+
+theme/custom_font="res://assets/fonts/ui_subset.ttf"
+
 [input_devices]
 
-pointing/emulate_mouse_from_touch=true
 pointing/emulate_touch_from_mouse=true
 
 [rendering]

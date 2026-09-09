@@ -37,14 +37,14 @@ static func enemy_raw_attack(p_wave: int) -> int:
 # ---- M4 波次纯数学（从 BoomGame 拆出；常量仍归 BoomGame 所有）----
 
 
-## §3.2 配额分段：教学段 2+n → 中段每波 +2 → W10 台阶 18 起，封顶 30。
+## 怪海配额：首波 12 只，W5 起每波 +6，W10 跳到 64，最终封顶 96。
 static func wave_quota(n: int) -> int:
 	if n <= BoomGame.WAVE_QUOTA_EARLY_END:
-		return BoomGame.WAVE_QUOTA_EARLY_BASE + n
+		return BoomGame.WAVE_QUOTA_EARLY_BASE + BoomGame.WAVE_QUOTA_EARLY_STEP * n
 	if n <= BoomGame.WAVE_QUOTA_MID_END:
 		return (
 			BoomGame.WAVE_QUOTA_MID_BASE
-			+ BoomGame.WAVE_QUOTA_STEP * (n - BoomGame.WAVE_QUOTA_EARLY_END - 1)
+			+ BoomGame.WAVE_QUOTA_MID_STEP * (n - BoomGame.WAVE_QUOTA_EARLY_END - 1)
 		)
 	return mini(
 		(

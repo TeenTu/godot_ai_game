@@ -1,0 +1,30 @@
+id: boom-night-2d
+anchor: anchor.png
+name: 百怪夜巡·新国风轻 Q 2D 分层帧动画
+description: >-
+  为竖屏俯视割草动作《百怪夜巡》定制的新国风轻 Q 2D 游戏美术。角色、怪物、法器和特效
+  均为透明底 2D 分层帧动画；Godot 可将它们以 AnimatedSprite3D billboard 置于三维场景中，
+  但不得生成、替换或要求原生 3D 角色模型。冷墨夜(#18233B)与石板灰构成雨夜环境，暖灯琥珀
+  (#F2B84B)标识玩家/安全，朱砂红(#B84235)用于封印与危险，灵雾青绿(#5FC5AD)用于妖力。
+  主角是背方灯匣的年轻女灯使；基础身体条不持武器，武器与攻击特效必须是独立层。禁止糖果
+  嘉年华、果冻气球、全屏暖橙、真实枪械、文字水印、黑色粗描边和照片级写实。
+prompt_template: >-
+  新国风轻 Q 2D 游戏精灵素材，{subject}，以 anchor.png 的女灯使比例、柔和材质与清晰剪影
+  为准，俯视三分之四视角，约 2.75–3 头身，米纸、布、深木、旧铜与薄雾质感，墨夜蓝(#18233B)
+  冷环境光，暖灯琥珀(#F2B84B)局部光源，朱砂红(#B84235)和灵雾青绿(#5FC5AD)仅作功能点缀。
+  游戏内缩略图可读、边缘干净、透明背景、无文字无水印；不要 3D 模型渲染、低模网格、糖果塑料、
+  果冻气球、真实枪械、黑色粗描边或照片写实。
+# 各分类在 prompt_template 后追加的指令：
+#   characters / enemies : "全身或全形，透明底；按 256px 单帧横向动画条交付，所有帧共用画布、基线和缩放"
+#   weapons              : "仅法器本体，透明底；与同名身体动画帧数、画布和握持锚点一一对应，不绘入身体层"
+#   effects / projectiles: "独立透明底短条；发光核心克制，不遮挡主角或敌人预警"
+#   props / icons         : "单一可读主体，透明底，保留小屏辨识度"
+#   backgrounds           : "竖向雨夜古镇；中央战斗区留白，允许不透明背景"
+#   floors                : "俯视无缝湿石板/木地面纹理，边缘严格循环"
+image_params:
+  size: 1024x1024
+  quality: high
+  background: transparent
+  runtime_frame: 256x256
+  animation_layout: horizontal_strip
+categories: [characters, enemies, weapons, effects, projectiles, props, icons, backgrounds, floors]

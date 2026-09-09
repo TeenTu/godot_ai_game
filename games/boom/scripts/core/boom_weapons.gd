@@ -44,16 +44,17 @@ static func _greatsword_def() -> BoomWeaponDef:
 	def.icon_path = "res://assets/images/icons/weapon_ink_judge_brush.png"
 	def.blurb = "挥墨成弧，势大力沉"
 	def.kind = BoomWeaponDef.AttackKind.MELEE
-	def.swing_windup = 0.24
-	def.swing_active = 0.12
-	def.swing_recover = 0.34
+	# 重剑节奏：明显蓄势 → 极短释放 → 带重量的收势。斩距保持 2.9m，不做范围成长。
+	def.swing_windup = 0.32
+	def.swing_active = 0.08
+	def.swing_recover = 0.36
 	def.swing_arc_deg = 150.0
 	def.swing_range = 2.9
-	def.swing_max_targets = 6
+	def.swing_max_targets = 12
 	def.base_attack = 30  # M8 基础攻击力：每个弧斩命中 30 点（一刀杀 W1 30HP）
 	def.swing_dmg = def.base_attack  # 与统一结算入口同源（M8 §5.2）
 	def.swing_knock = 6.0
-	def.swing_freeze = 0.05
+	def.swing_freeze = 0.065
 	def.move_mult = 0.85
 	def.max_hp_bonus = 20  # M8 近战生存补偿：50 + 20 = 70（§4.1）
 	def.skill_kit_id = "core"

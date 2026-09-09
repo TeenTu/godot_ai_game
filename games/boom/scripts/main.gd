@@ -324,6 +324,7 @@ func _connect_signals() -> void:
 	sim.game_over.connect(_on_game_over)
 	sim.prop_broken.connect(_on_prop_broken)
 	sim.skill_bullet_hit.connect(_on_skill_bullet_hit)
+	sim.swing_released.connect(_on_swing_released)
 	sim.level_up.connect(_on_level_up)
 	sim.player_healed.connect(_on_player_healed)
 	skill_sys.skill_fired.connect(_on_skill_fired)
@@ -396,6 +397,16 @@ func _on_enemy_damaged(pos: Vector3, _dir: Vector3) -> void:
 	cam.add_trauma(0.05)
 
 
+## 一次挥击只做一次重反馈；怪海多目标不会把音效/震屏叠加十二遍。
+func _on_swing_released(pos: Vector3, facing: Vector3, hit_count: int) -> void:
+	if hit_count <= 0:
+		return
+	var impact_pos := pos + facing * minf(1.6, sim.weapon_cfg.swing_range * 0.55)
+	fx.puff(impact_pos + Vector3(0.0, 0.35, 0.0), Color("5fc5ad"), mini(20, 8 + hit_count))
+	audio.play("hit", -5.0)
+	cam.add_trauma(minf(0.52, 0.24 + float(hit_count) * 0.025))
+
+
 ## M8（§6.3）：伤害数字走统一结算广播——暴击数字放大并用朱砂红高亮，
 ## 普通伤害维持白色；不额外触发屏幕闪白（只增加轻微打击反馈）。
 func _on_enemy_hit(pos: Vector3, dmg: int, crit: bool) -> void:
@@ -453,7 +464,10 @@ func _on_level_up(new_level: int) -> void:
 		while sim.pending_upgrades > 0:
 			sim.apply_level_upgrade(BoomStats.KIND_DMG)
 		return
-	_level_panel.open_for(sim)
+	# §11.3：注入对局 → 暂停战斗 → 弹 3 张卡；面板消费完 pending 后自行恢复。
+	_level_panel.sim = sim
+	get_tree().paused = true
+	_level_panel.open_with(float(sim.player.hp) / float(sim.player.max_hp))
 
 
 ## M8 闪避成功反馈（§8）：不扣血/不受击红屏/不受击音效，仅短暂 "DODGE" 提示。

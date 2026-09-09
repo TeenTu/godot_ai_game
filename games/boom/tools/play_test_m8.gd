@@ -394,7 +394,7 @@ func test_motion() -> void:
 	var g2: BoomGame = host._new_game()
 	g2.set_weapon("greatsword")
 	g2.player.invuln_left = 10.0
-	g2.stats.aspd_stacks = 2  # 攻速 ×1.2 → 前摇 0.24/1.2 = 0.2s
+	g2.stats.aspd_stacks = 2  # 攻速 ×1.2 → 前摇 0.32/1.2 ≈ 0.267s
 	g2.spawn_enemy_at(Vector3(0.0, 0.0, -2.7))
 	var hit2: Array = []
 	g2.enemy_hit.connect(func(_p: Vector3, _d: int, _c: bool) -> void: hit2.append(g2._swing_state))
