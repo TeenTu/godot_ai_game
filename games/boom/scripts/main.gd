@@ -464,7 +464,10 @@ func _on_level_up(new_level: int) -> void:
 		while sim.pending_upgrades > 0:
 			sim.apply_level_upgrade(BoomStats.KIND_DMG)
 		return
-	_level_panel.open_for(sim)
+	# §11.3：注入对局 → 暂停战斗 → 弹 3 张卡；面板消费完 pending 后自行恢复。
+	_level_panel.sim = sim
+	get_tree().paused = true
+	_level_panel.open_with(float(sim.player.hp) / float(sim.player.max_hp))
 
 
 ## M8 闪避成功反馈（§8）：不扣血/不受击红屏/不受击音效，仅短暂 "DODGE" 提示。
