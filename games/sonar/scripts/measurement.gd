@@ -7,7 +7,8 @@ extends RefCounted
 var measurement_id: int = 0
 var timestamp: float = 0.0
 var sensor_id: String = ""
-var target_id: String = ""  # 对应 Truth 实体（仅供内部统计/测试钩子，不进玩家信息流）
+# S109 P0-06：玩法层 Measurement 结构性不含 target_id / 内部身份。Truth 对照
+# 需求走测量发生器的 identity_by_evidence 调试台账（Debrief/测试专用）。
 var measurement_type: String = "PASSIVE_BEARING"  # PASSIVE_BEARING / ACTIVE_RANGE_BEARING
 var ping_id: int = -1  # 主动回波所属 PingSession（被动为 -1）
 var available_time: float = -1.0  # 对接收机"可用"时刻（主动回波=到达时刻；被动=timestamp）

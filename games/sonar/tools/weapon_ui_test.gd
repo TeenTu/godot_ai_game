@@ -48,7 +48,8 @@ func _uiw_01_02_in_water_panel(fails: Array) -> void:
 	p.sync()
 	var lbl: Label = p._sections[str(tp.torpedo_id)]["lbl"]
 	# UI-02：正交状态全部可见。
-	for token in ["WIRE_RUN", "PASSIVE_LISTEN", "TX OFF", "WIRE_ONLY", "Wire CONNECTED"]:
+	# S109 Batch 7：显示层已中文化（内部枚举不变，展示经 UiText）。
+	for token in ["线导航行", "被动监听", "发射机 关机", "仅线导", "导线 已连接"]:
 		if not lbl.text.contains(token):
 			fails.append("UIW-01a status missing %s in: %s" % [token, lbl.text])
 	_assert_bool(
@@ -76,7 +77,7 @@ func _uiw_01_02_in_water_panel(fails: Array) -> void:
 		absf(NavUtils.wrap180(tp.course_deg - before)) < 0.01,
 		true
 	)
-	_assert_bool(fails, "UIW-02d rejection reason shown", p._note.text.contains("CUT"), true)
+	_assert_bool(fails, "UIW-02d rejection reason shown", p._note.text.contains("已切断"), true)
 	p.free()
 
 
@@ -86,12 +87,12 @@ func _uiw_03_countermeasures(fails: Array) -> void:
 	var p := CountermeasurePanel.new()
 	p.bind(w)
 	p.sync()
-	_assert_bool(fails, "UIW-03a rounds shown", p._lbl_state.text.contains("Rounds 2"), true)
+	_assert_bool(fails, "UIW-03a rounds shown", p._lbl_state.text.contains("弹药 2"), true)
 	p._launch(DecoyProgram.TYPE_MOBILE)
 	_assert_bool(fails, "UIW-03b decoy launched", w.decoys.size() == 1, true)
 	w.run_steps(60)  # 激活 + 推进
 	p.sync()
-	_assert_bool(fails, "UIW-03c rounds decremented", p._lbl_state.text.contains("Rounds 1"), true)
+	_assert_bool(fails, "UIW-03c rounds decremented", p._lbl_state.text.contains("弹药 1"), true)
 	# 库存耗尽 → 按钮禁用。
 	w.countermeasures.ready_rounds = 0
 	p.sync()
@@ -132,6 +133,7 @@ func _uiw_04_alerts(fails: Array) -> void:
 				"side_hint": "OWN_FACT",
 				"alert": "DETONATION_HEARD",
 				"emission_kind": AcousticEmissionEvent.EXPLOSION,
+				"evidence_kind": "DETONATION",
 				"bearing_deg": 45.5,
 				"confidence": 1.0,
 				"own_emitter_ref": "T01",
@@ -141,9 +143,9 @@ func _uiw_04_alerts(fails: Array) -> void:
 	)
 	p.sync()
 	var txt: String = p._lbl.text
-	_assert_bool(fails, "UIW-04a intercept alert rendered", txt.contains("POSSIBLE_TORPEDO"), true)
-	_assert_bool(fails, "UIW-04b probable kill annotated", txt.contains("PROBABLE_KILL"), true)
-	_assert_bool(fails, "UIW-04c confidence shown", txt.contains("conf"), true)
+	_assert_bool(fails, "UIW-04a intercept alert rendered", txt.contains("疑似鱼雷"), true)
+	_assert_bool(fails, "UIW-04b probable kill annotated", txt.contains("可能击沉"), true)
+	_assert_bool(fails, "UIW-04c confidence shown", txt.contains("置信"), true)
 	for bad in ["target_id", "damage_state", "position_east"]:
 		if txt.contains(bad):
 			fails.append("UIW-04d alert leaks %s" % bad)
@@ -174,9 +176,7 @@ func _uiw_06_weapon_log(fails: Array) -> void:
 	# 模拟命中事件（旧契约键 target_id 已废除）：日志不得出现 id。
 	w.weapons.weapon_event.emit("T01", "DETONATION", {"min_distance_m": 8.0, "target_id": "X"})
 	p.refresh()
-	_assert_bool(
-		fails, "UIW-06a detonation logged", p._lbl_weapons.text.contains("DETONATION"), true
-	)
+	_assert_bool(fails, "UIW-06a detonation logged", p._lbl_weapons.text.contains("起爆"), true)
 	_assert_bool(fails, "UIW-06b no target_id in log", not p._lbl_weapons.text.contains("X "), true)
 	p.free()
 

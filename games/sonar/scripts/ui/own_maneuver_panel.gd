@@ -24,12 +24,12 @@ func _init() -> void:
 
 func _build() -> void:
 	var title := Label.new()
-	title.text = "Own Ship Maneuver"
+	title.text = UiText.t("own_maneuver")
 	title.add_theme_font_size_override("font_size", 15)
 	add_child(title)
-	_spin_course = _add_spin("Own Course (°)", 0, 359, 1, 0)
-	_spin_speed = _add_spin("Own Speed (kn)", 0, 30, 0.5, 0)
-	_spin_depth = _add_spin("Own Depth (m)", 0, 400, 1, 0)
+	_spin_course = _add_spin(UiText.t("spin_own_course"), 0, 359, 1, 0)
+	_spin_speed = _add_spin(UiText.t("spin_own_speed"), 0, 30, 0.5, 0)
+	_spin_depth = _add_spin(UiText.t("spin_own_depth"), 0, 400, 1, 0)
 	_lbl_cmd = Label.new()
 	_lbl_cmd.add_theme_font_size_override("font_size", 13)
 	add_child(_lbl_cmd)
@@ -41,11 +41,11 @@ func _build() -> void:
 	row_band.add_theme_constant_override("separation", 4)
 	add_child(row_band)
 	var b_up := Button.new()
-	b_up.text = "▲ Upper"
+	b_up.text = UiText.t("btn_upper")
 	b_up.pressed.connect(_on_band.bind("UPPER"))
 	row_band.add_child(b_up)
 	var b_dn := Button.new()
-	b_dn.text = "▼ Lower"
+	b_dn.text = UiText.t("btn_lower")
 	b_dn.pressed.connect(_on_band.bind("LOWER"))
 	row_band.add_child(b_dn)
 	var row_turn := HBoxContainer.new()

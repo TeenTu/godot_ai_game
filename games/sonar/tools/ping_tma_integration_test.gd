@@ -608,16 +608,14 @@ func _c5c_residual_kind_rows(fails: Array) -> void:
 			b_rows += 1
 	_assert_eq(fails, "C5C rows = 8 bearing + 1 range", str(b_rows + r_rows), "9")
 	var txt: String = TmaUiData.summary(r, track)
-	_assert_true(fails, "C5C summary Rows B", txt.contains("Rows B used"))
-	_assert_true(fails, "C5C summary R used", txt.contains("R used"))
-	_assert_true(fails, "C5C summary RANGE AIDED", txt.contains("RANGE AIDED"))
+	_assert_true(fails, "C5C summary Rows B", txt.contains("方位 用%d 弃0" % b_rows))
+	_assert_true(fails, "C5C summary R used", txt.contains("距离 用%d 弃0" % r_rows))
+	_assert_true(fails, "C5C summary RANGE AIDED", txt.contains("测距辅助"))
+	_assert_true(fails, "C5C summary B used %d rej 0" % b_rows, txt.contains("行：方位"))
 	_assert_true(
-		fails, "C5C summary B used %d rej 0" % b_rows, txt.contains("B used %d rej 0" % b_rows)
+		fails, "C5C summary R used %d rej 0" % r_rows, txt.contains("| 距离 用%d 弃0" % r_rows)
 	)
-	_assert_true(
-		fails, "C5C summary R used %d rej 0" % r_rows, txt.contains("R used %d rej 0" % r_rows)
-	)
-	_assert_true(fails, "C5C summary Ev %d phys" % n_phys, txt.contains("Ev %d phys" % n_phys))
+	_assert_true(fails, "C5C summary Ev %d phys" % n_phys, txt.contains("证据 %d 条" % n_phys))
 	# 单位分离：bearing 行 deg、range 行 m（不得混单位）。
 	for row in r["residuals"]:
 		if str(row.get("kind", "bearing")) == "range":
@@ -713,9 +711,9 @@ func _c5d_visual_badges(fails: Array) -> void:
 	track.last_association_mode = "range"
 	var lab: String = TmaUiData.contact_label(track)
 	_assert_true(fails, "C5D label has track id", lab.contains(track.track_id))
-	_assert_true(fails, "C5D label has Rng", lab.contains("Rng %.0fm" % active_m.measured_range_m))
+	_assert_true(fails, "C5D label has Rng", lab.contains("距离 %.0fm" % active_m.measured_range_m))
 	_assert_true(fails, "C5D label has R.90", lab.contains("R.90"))
-	_assert_true(fails, "C5D label has meas count", lab.contains("(%d meas)" % n_phys))
+	_assert_true(fails, "C5D label has meas count", lab.contains("（%d 条测量）" % n_phys))
 	# range ring 数据：中心=测量时刻观测位，半径=measured_range，σ/方位随附。
 	var ring: Dictionary = TmaUiData.range_ring_data(
 		track, active_m.timestamp, Color(0.4, 1.0, 0.6)
@@ -810,7 +808,7 @@ func _e2e_controller_to_fit(fails: Array) -> void:
 		if m.measurement_type == "ACTIVE_RANGE_BEARING" and m.has_range():
 			has_active = true
 	_assert_true(fails, "E2E P track history has ACTIVE range", has_active)
-	_assert_true(fails, "E2E summary mentions range", ctrl.last_summary.contains("rng"))
+	_assert_true(fails, "E2E summary mentions range", ctrl.last_summary.contains("距离"))
 
 	# 主 UI REFIT 语义：4 被动 + 1 主动 range 的 Track → solve → RANGE AIDED 文本
 	var own := _own_at(Vector2.ZERO, 45.0, 8.0)
@@ -825,7 +823,7 @@ func _e2e_controller_to_fit(fails: Array) -> void:
 		fails.append("E2E fit failed: status=" + str(r.get("status", "?")))
 		return
 	var txt: String = TmaUiData.summary(r)
-	_assert_true(fails, "E2E summary shows RANGE AIDED", txt.contains("RANGE AIDED"))
+	_assert_true(fails, "E2E summary shows RANGE AIDED", txt.contains("测距辅助"))
 	_assert_true(fails, "E2E summary has no Truth id", not txt.contains("tgt"))
 
 

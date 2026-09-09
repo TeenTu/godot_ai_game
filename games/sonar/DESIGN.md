@@ -515,6 +515,65 @@ main=0d8809f / sonar-dev=47e6c18）。全部批次以 TDD 落地，全量回归 
 
 ---
 
+## 0.8 S109 来袭鱼雷强制自动化链 + 右栏四页 + 海图右键菜单 + 界面全中文化（Batch 1..7，2026-09-09）
+
+需求文档：腾讯文档 fuRAFflhuCzb《S109》。按 §12 批次推进；每批独立
+headless CI 全绿后合并。要点：
+
+- **Batch 1 信息边界**：`AcousticObservation` 净化 DTO（禁 target_id /
+  emission_kind / Truth 字段，`info_boundary_scan_test` 静态扫描）；玩家/
+  敌方共用 `TorpedoClassifier` 可观测特征分类；敌方截获走单程传播队列 +
+  doctrine 反应延迟；`EnemyTrackManager` 改 `last_decay_t` 增量衰减。
+- **Batch 2 强制识别与 ThreatTrack**：`ThreatAutomationController` 三态
+  自动化下始终运行（不发 Ping/武器/诱饵）；`OwnAssetRegistry` 友方排除
+  （非 id 前缀猜测）；ThreatTrack TTxxx 生命周期
+  TENTATIVE/TRACKING/RANGE_AIDED/COASTING/LOST；普通 Mark/TMA 零污染。
+- **Batch 3 位置滤波 + 主动回波融合**：`TorpedoThreatEstimator` 4×4
+  CV-EKF（[e,n,ve,vn]）+ IEKF 3 迭代方位更新（修正横线性化偏置）；
+  Q_VEL=0.005 m²/s³ 校准（更大 Q_VEL 触发"冻结相对几何"脊→协方差塌向
+  错误模式，Monte Carlo 覆盖归零，见 AT-11 场景：正横穿越机动）；真实
+  World Ping→净化→门控→同一 TT 自动收紧（门层 `GATE_MIN_RANGE_SIGMA_M=900`
+  防估计过度自信拒收真回波，估计器方差地板保持 0）；多回波独立
+  ActiveReturnRecord；主动回波绝不抢 selected_track_id。
+- **Batch 4 威胁 UI + Show Truth**：`ThreatChartOverlay`（收敛=符号+95%
+  椭圆+速度向量；未收敛=中心十字；COASTING 半透明外推标注；RANGE_AIDED
+  短时高亮）；`TruthDebugProvider`/`DebugTruthOverlay` 显示双方水雷真值+
+  真方位细线+水印，只进绘制层（AT-26 双跑 digest 一致证明 bit-for-bit
+  隔离）。
+- **Batch 5 右栏四页**：`right_sidebar_pager.gd`——固定顶栏（任务时间/
+  暂停/倍速 + 选中摘要 + 告警条 banner + ButtonGroup 四页按钮，≥440px
+  一行、否则 2×2）+ 声呐/航迹/武器/本艇四页，每页独立 ScrollContainer；
+  切页只切 visible（业务对象不重建）、滚动位置由 pager 记忆恢复
+  （AT-29）；航迹页按钮红点=非 LOST 威胁数（隐藏页也更新，AT-30）。
+  `UiSection` 折叠区块抽公共件；`ThreatHud` 拆 banner-only/list-only 两
+  实例。页面横向滚动始终禁用，实际宽 = max(UiContract 钳制, 内容固有宽)。
+- **Batch 6 海图右键菜单（§9）**：`chart_hit_test.gd` 纯静态命中
+  （优先级 THREAT > OWN_TORPEDO > CONTACT(Fit best 现位置/System/Trial) >
+  THREAT_LOB > EMPTY，14px 容差；坐标全部来自 ChartView 注入 DTO，禁读
+  Truth）；`chart_context_menu.gd`（PopupMenu，中文条目按 hit_kind 生成，
+  零业务写入；危险动作「主动确认 Ping…/切断导线…」先换确认条目，确认
+  后才发 `action_chosen`）；`chart_context_actions.gd` 动作执行器只做相机
+  居中/右栏切页预填/经既有命令门发命令（Ping→request_ping→issue_ping
+  命令链，切断导线→`Torpedo.cut_wire()`；「预填概略射击」只填 Trial
+  方位+切武器页，绝不发射，AT-34）。菜单开启期间海图暂停拖曳但仿真
+  不暂停（`context_menu_open`）；headless 下 `popup()` 会挂起无头显示
+  服务器，`_open_popup()` 以 `about_to_popup` 手动补发驱动拖曳锁。
+- **Batch 7 界面全中文化（§10）**：`ui_text.gd` 集中文案目录——`t(key)`
+  取静态文案（缺键运行时记入 `missing_keys`，AT-35e 断言为空），内部
+  枚举/英文值不改，仅显示层经映射函数翻译（seeker/tx/auth/steer/
+  speed_mode/src/miss/arr/ping_mode/exposure/roe/wire/mission/tp_state/
+  event/group/class_state/depth_preset/enmode/fuze/pattern 等，未映射
+  值原样透传 AT-36c）；`mark_status()` 用替换对翻译 mark_flow 自由状
+  态句（AT-37）。字体：`tools/make_font_subset.py` 从系统微软雅黑子集
+  化 `assets/fonts/ui_subset.ttf`（字符集=代码字符串字面量非 ASCII +
+  ASCII + 旧 cmap 保底，缺字形出报告；AT-37b 断言 cmap 全覆盖），emoji
+  缺字形符号替换为 ‖ ← → √ ▼▲ 等 BMP 符号。`zh_cn_ui_test.gd`：
+  AT-35 渲染文本英文黑名单+关键中文串+缺键为空，AT-36 枚举显示映射，
+  AT-37 字体覆盖，AT-38 UI 层无英文源字面量直显。main_ui 借抽出
+  `UiText.mark_status` / `UiSection.spin_row` 保持 <1200 行。
+
+---
+
 ## 1. 单位与坐标约定（全局唯一，禁止改）
 
 - 内部距离：**米**；地图坐标：二维笛卡尔，**x 向东，y 向北**。

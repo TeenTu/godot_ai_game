@@ -33,8 +33,7 @@ var ping_hardware: bool = false  # 场景显式配置主动阵才为 true
 var ping_coverage_sector: Vector2 = Vector2(0, 360)
 var ping_baffle_sector: Vector2 = Vector2(0, 0)
 # ---- S1-04C-REQ-05 / §9.1 声学事件：emission_bus 统一落事件 ----
-# 每次显式发射记一条 AcousticEmissionEvent（本艇发射事实，非 Truth）；
-# active_emissions 为总线兼容视图；敌方感知层只消费净化后样本。
+# 每次显式发射记一条 AcousticEmissionEvent；敌方感知层只消费净化后样本。
 var emission_bus: AcousticEmissionBus = null
 var active_emissions: Array = []
 
@@ -48,6 +47,8 @@ var player_evidence: Array = []  # 净化证据（告警/爆炸/本艇武器事�
 # 评审 P1-11：威胁航迹关联（LAUNCH_TRANSIENT→RUNNING_NOISE→ACTIVE_PING
 # 同一威胁卡升级，抑制每秒一条告警的洪泛）。load_scenario 重置。
 var threat_tracks := ThreatTrackManager.new()
+var own_assets := OwnAssetRegistry.new()  # S109 §2.4 己方合法事实登记表
+var threat_automation := ThreatAutomationController.new()  # §3.1 始终运行
 
 var enemy_ai: EnemyDoctrineController = null
 var enemy_weapons: WeaponSystem = null
@@ -75,13 +76,28 @@ var _enemy_perception_acs: Dictionary = {}
 
 # ---- S1-07 §10（Commit 10）：引信引擎 / 净化战果证据 / Debrief ----
 var _detonations: Array = []  # 内核 Debrief 记录（含 internal target 引用）
-var _fuze_min_pass: Dictionary = {}  # torpedo_id -> 最近通过距离（内核台账）
-var _fuze_alive: Dictionary = {}
+## 引信引擎（REQ-08/REQ-11/S109 AT-41）状态与推进抽到 FuzeEngine；下方属性
+## 转发保持 `world._fuze_min_pass/_fuze_debug` 既有读点（UI 面板/测试）不变。
+var _fuze_engine: FuzeEngine = FuzeEngine.new()
+var _fuze_min_pass: Dictionary:
+	get:
+		return _fuze_engine.min_pass
+var _fuze_alive: Dictionary:
+	get:
+		return _fuze_engine.alive
 ## REQ-11：引信调试台账（内核侧，仅 Debrief/调试面板）。
-var _fuze_debug: Dictionary = {}  # torpedo_id -> {h_m, v_m, d3_m, t, ...}
-var _fuze_prev_tp: Dictionary = {}
-var _fuze_prev_contact: Dictionary = {}
-var _fuze_safety_latched: Dictionary = {}  # torpedo_id -> bool（本 tick 曾在水的记号）
+var _fuze_debug: Dictionary:
+	get:
+		return _fuze_engine.debug
+var _fuze_prev_tp: Dictionary:
+	get:
+		return _fuze_engine._prev_tp
+var _fuze_prev_contact: Dictionary:
+	get:
+		return _fuze_engine._prev_contact
+var _fuze_safety_latched: Dictionary:
+	get:
+		return _fuze_engine._safety_latched
 
 
 ## 从场景 JSON 构建并初始化世界。
@@ -90,6 +106,8 @@ func load_scenario(scenario: Dictionary) -> void:
 	sim_time = 0.0
 	measurements.clear()
 	weapons = WeaponSystem.new()
+	# S109 AT-40：玩家鱼雷线导命令接 World 任务门（终局后 MISSION_ENDED）。
+	weapons.mission_gate = command_reject_reason
 	torpedo_ctx = TorpedoContext.new()
 	torpedo_ctx.env = world.get("env", null)
 	torpedo_ctx.depth_model = world.get("depth_model", null)
@@ -127,11 +145,11 @@ func load_scenario(scenario: Dictionary) -> void:
 	)
 	player_evidence.clear()
 	threat_tracks.reset()
+	own_assets.reset()
+	threat_automation.reset()
+	threat_automation.bind_store(threat_tracks)
 	_detonations.clear()
-	_fuze_min_pass.clear()
-	_fuze_alive.clear()
-	_fuze_prev_tp.clear()
-	_fuze_prev_contact.clear()
+	_fuze_engine.reset()
 	_sensor_timers.clear()
 	for s in world["sensors"]:
 		_sensor_timers[s.sensor_id] = 0.0
@@ -198,9 +216,8 @@ func tick() -> void:
 	_advance_ping_session()
 	# 5) 敌方感知/Doctrine（Commit 9）：证据 → 航迹 → 状态机 → 动作。
 	_advance_enemy_ai(dt)
-	# 5b) REQ-09：统一声场无条件同步——无敌方 AI 场景中玩家鱼雷也必须进入
-	# 声场（旧实现 _sync_torpedo_shadows 藏在 _advance_enemy_ai 末尾，
-	# enemy_ai == null 提前返回导致玩家鱼雷声学影子永不产生）。
+	# 5b) REQ-09：统一声场无条件同步——无敌方 AI 场景玩家鱼雷也须进声场
+	# （旧实现藏在 _advance_enemy_ai 末尾，enemy_ai==null 时永不产生影子）。
 	_sync_torpedo_shadows()
 	# 6) 引信引擎（Commit 10）：几何触发 → 起爆 → Truth 伤害 → 净化证据。
 	_advance_fuze_engine(dt)
@@ -224,9 +241,8 @@ func _advance_only() -> void:
 	_advance_player_evidence()
 
 
-## 推进活动诱饵：激活记 DECOY_ACTIVATION 并进入武器采样集（激活前静默），
-## 到期移除（§8.6）。REQ-CM-01/03：同步注册/注销 seeker contact_acs 画像；
-## token 按接收方：己方诱饵=FRIENDLY，敌方诱饵=""（须声学竞争，无豁免）。
+## 推进活动诱饵：激活记 DECOY_ACTIVATION/到期移除（§8.6）；REQ-CM-01/03：同步
+## 注册 seeker 画像；token 按接收方：己方=FRIENDLY，敌方=""（须声学竞争）。
 func _advance_decoys(dt: float) -> void:
 	var rng: RandomNumberGenerator = world.get("rng", null)
 	var expired: Array = []
@@ -333,9 +349,8 @@ func _hold_depth_for(band: String) -> float:
 	return 70.0
 
 
-# S1-07 §9（Commit 9）：出生=EnemySpawnGenerator（独立 RNG+校验）；感知=
-# EnemySensorAdapter；航迹=EnemyTrackManager；Doctrine=延迟+概率状态机。
-# AI 鱼雷独立 WeaponSystem（BEARING_ONLY 宽扇区）；绝不读 Truth（§9.8）。
+# S1-07 §9：出生=EnemySpawnGenerator；感知=EnemySensorAdapter；航迹=
+# EnemyTrackManager；Doctrine=延迟+概率状态机；AI 鱼雷绝不读 Truth（§9.8）。
 
 
 ## 场景含 enemy_spawn 块时启用敌方 AI（旧场景零行为变化）。
@@ -680,9 +695,8 @@ func end_mission(state: int, reason: String) -> bool:
 			}
 		)
 	)
-	# 终局 tick 内完成爆炸证据的最终结算：命中本艇的爆炸距接收端仅引信
-	# 量级（R/c < 下一 tick），物理上属于本次命中事实，允许 UI 在终局层
-	# 完成显示（REQ-B5-03「当前爆炸/终局事件的显示」）；下一 tick 仍冻结。
+	# 终局 tick 完成爆炸证据结算：爆炸距接收端仅引信量级（R/c<下一 tick），
+	# 属本次命中事实，允许 UI 终局层显示（REQ-B5-03）；下一 tick 仍冻结。
 	_advance_player_evidence(sim_time + maxf(float(world.get("dt", 0.5)), 0.01))
 	return true
 
@@ -877,8 +891,7 @@ func next_echo_in() -> float:
 
 
 ## 结算所有已到达回波并取走新结果摘要（UI 每帧轮询即可，无需信号）。
-## 返回 [{target_id, ping_id, detected, se_db, pd, bearing_deg, range_m,
-##        range_sigma_m, measurement}]；测量时刻=回波到达时刻；结算在 tick()/本函数幂等触发（settled 去重）；结果缓冲独立于会话存活。
+## 返回 [{ping_id,detected,se,pd,bearing,range,range_sigma,measurement}]（S109：无身份；幂等）。
 func take_arrived_echoes() -> Array:
 	if not _ping_session.is_empty():
 		_settle_due_echoes()
@@ -956,8 +969,8 @@ func _settle_due_echoes() -> void:
 		e["bearing_deg"] = m.measured_bearing_deg
 		e["range_m"] = m.measured_range_m
 		e["range_sigma_m"] = m.range_sigma_m
+		# S109 P0-06：摘要 DTO 结构性不含 target_id（内核身份仅在会话 echoes 内部）。
 		var summary := {
-			"target_id": str(target.id),
 			"ping_id": ping_id,
 			"detected": detected,
 			"se_db": m.signal_excess_db,
@@ -971,6 +984,12 @@ func _settle_due_echoes() -> void:
 		if detected:
 			_ping_session["returned_count"] = int(_ping_session["returned_count"]) + 1
 			measurements.append(m)
+			# S109 §4.4/P0-04：净化回波进威胁链并自动距离—方位融合（AT-13/14）。
+			player_evidence.append(
+				threat_tracks.fuse_active_measurement(
+					m, float(own.position_east_m), float(own.position_north_m), sim_time
+				)
+			)
 
 
 ## 本次 ping 使用的主动阵：场景 sensors 含 array_type=="active" 则复用它；
@@ -1006,170 +1025,10 @@ func _ping_sensor() -> SensorArray:
 # （敌=sunk/本艇=damaged）；玩法层只收净化 EvidenceEvent；CONFIRMED_KILL 只经 debrief_summary()（调试通道）。
 
 
-## 引信引擎（每 tick）。REQ-08：tick 起始对 prev 位置做不可变快照，全部雷 检查完后统一提交缓存（不受遍历顺序影响）。
+## 引信引擎（每 tick）：状态与推进在 FuzeEngine（REQ-08 快照提交、AT-41 诱饵吸雷）。
 func _advance_fuze_engine(dt: float = 0.0) -> void:
-	var prev_contact: Dictionary = _fuze_prev_contact.duplicate()
-	var prev_tp: Dictionary = _fuze_prev_tp.duplicate()
-	var new_prev_tp: Dictionary = {}
-	var touched_contact: Dictionary = {}
-	if weapons != null:
-		for tp in weapons.torpedoes:
-			_fuze_step_torpedo(
-				tp, world["targets"], true, prev_contact, prev_tp, new_prev_tp, touched_contact, dt
-			)
-	if enemy_weapons != null:
-		for tp in enemy_weapons.torpedoes:
-			_fuze_step_torpedo(
-				tp, [world["own"]], false, prev_contact, prev_tp, new_prev_tp, touched_contact, dt
-			)
-	# 全部检查完成后统一更新缓存（REQ-08：不在检查中途覆写 prev）。
-	for cid in touched_contact:
-		_fuze_prev_contact[cid] = touched_contact[cid]
-	for tid in new_prev_tp:
-		_fuze_prev_tp[tid] = new_prev_tp[tid]
-
-
-func _fuze_step_torpedo(
-	tp: RefCounted,
-	contacts: Array,
-	from_player: bool,
-	prev_contact: Dictionary,
-	prev_tp: Dictionary,
-	new_prev_tp: Dictionary,
-	touched_contact: Dictionary,
-	dt: float,
-) -> void:
-	if tp.is_dead() or not tp._in_water():
-		_fuze_alive.erase(str(tp.torpedo_id))
-		_fuze_prev_tp.erase(str(tp.torpedo_id))
-		return
-	# P1-08/REQ-08：prev 从 tick 起始不可变快照读，末态写暂存，检查完统一提交。
-	var tid: String = str(tp.torpedo_id)
-	var tp_now := Vector3(float(tp.pos_east_m), float(tp.pos_north_m), float(tp.actual_depth_m))
-	var tp_prev: Vector3 = tp_now
-	if prev_tp.has(tid):
-		tp_prev = prev_tp[tid]
-	new_prev_tp[tid] = tp_now
-	_fuze_alive[tid] = true
-	# 引信解保（§10.2 双保险；REQ-08 与 Torpedo 侧统一）。
-	var since_launch: float = sim_time - float(tp._launch_t)
-	var fc := FuzeController.new()
-	var prog: WeaponProgram = tp.program
-	fc.configure(prog.fuze_mode, prog.warhead_arm_distance_m)
-	if not fc.is_armed(tp.traveled_m, since_launch):
-		if (
-			tp.fuze_state == tp.FuzeState.SAFE
-			and tp.traveled_m >= prog.warhead_arm_distance_m
-			and since_launch >= FuzeController.FUZE_MIN_ARM_TIME_S
-		):
-			tp.fuze_state = tp.FuzeState.ARMED
-			tp.event_occurred.emit(tp.torpedo_id, "FUZE_ARMED", {"traveled_m": tp.traveled_m})
-		return
-	var dbg: Dictionary = _fuze_debug.get(tid, {})  # REQ-11 调试台账
-	dbg["fuze_mode"] = fc.fuze_mode
-	dbg["armed"] = true
-	dbg["sat_time_s"] = float(dbg.get("sat_time_s", 0.0)) + (dt if bool(tp.turn_saturated) else 0.0)
-	var min_d: float = INF
-	var min_v: float = INF
-	var min_d3: float = INF
-	for c in contacts:
-		if str(c.damage_state) == "sunk":
-			continue
-		var c_now := Vector3(float(c.position_east_m), float(c.position_north_m), float(c.depth_m))
-		var c_prev: Vector3 = c_now
-		if prev_contact.has(str(c.id)):
-			c_prev = prev_contact[str(c.id)]
-		touched_contact[str(c.id)] = c_now
-		var rel0 := c_prev - tp_prev
-		var rel1 := c_now - tp_now
-		var h0 := Vector2(rel0.x, rel0.y)
-		var h1 := Vector2(rel1.x, rel1.y)
-		var hd: float = FuzeController.swept_min_distance_h_m(h0, h1)
-		min_d = minf(min_d, hd)
-		min_d3 = minf(min_d3, FuzeController.swept_min_distance_m(rel0, rel1))
-		var t_ca: float = FuzeController.swept_closest_t(h0, h1)
-		min_v = minf(min_v, absf(lerpf(rel0.z, rel1.z, t_ca)))
-	if min_d < float(_fuze_min_pass.get(str(tp.torpedo_id), INF)):
-		_fuze_min_pass[str(tp.torpedo_id)] = min_d
-	if min_d3 < float(dbg.get("d3_m", INF)):
-		dbg["d3_m"] = min_d3
-		dbg["h_m"] = min_d
-		dbg["v_m"] = min_v
-		dbg["t"] = sim_time
-	_fuze_debug[tid] = dbg
-	# P1-12.4：引信独立安全保险——对发射方本侧平台绝不起爆。
-	var safety_c: RefCounted = null
-	if from_player:
-		safety_c = world["own"]
-	elif enemy_ai != null:
-		safety_c = enemy_ai.entity
-	if safety_c != null:
-		var s_now := Vector3(
-			float(safety_c.position_east_m),
-			float(safety_c.position_north_m),
-			float(safety_c.depth_m),
-		)
-		var s_prev: Vector3 = s_now
-		if prev_contact.has(str(safety_c.id)):
-			s_prev = prev_contact[str(safety_c.id)]
-		var sh0 := Vector2(s_prev.x - tp_prev.x, s_prev.y - tp_prev.y)
-		var sh1 := Vector2(s_now.x - tp_now.x, s_now.y - tp_now.y)
-		var sd: float = FuzeController.swept_min_distance_h_m(sh0, sh1)
-		var sv: float = absf(s_now.z - tp_now.z)
-		if sd <= fc.trigger_radius_m() and sv <= FuzeController.FUZE_VERTICAL_GATE_M:
-			if not _fuze_safety_latched.has(tid):
-				_fuze_safety_latched[tid] = true
-				tp.event_occurred.emit(tid, "FUZE_SAFETY_INHIBIT", {"reason": "OWN_SIDE"})
-			return
-	# 几何触发判定（swept 连续碰撞；REQ-08：同一时刻水平+垂直同判）。
-	var res: Dictionary = fc.check_trigger_swept(
-		tp_now, tp_prev, contacts, prev_contact, fc.trigger_radius_m()
-	)
-	if not bool(res["triggered"]):
-		return
-	var contact: RefCounted = res["contact"]
-	# REQ-08：起爆成功后才结算伤害/战果（detonate 二次查 ARMED，双保险）。
-	if not tp.detonate({"min_distance_m": float(res["min_distance_m"])}):
-		return
-	# 爆炸结算：EXPLOSION 声学事件 + Truth 伤害。
-	(
-		emission_bus
-		. record(
-			AcousticEmissionEvent.EXPLOSION,
-			str(tp.torpedo_id),
-			sim_time,
-			Vector3(tp.pos_east_m, tp.pos_north_m, tp.actual_depth_m),
-			500.0,
-			4000.0,
-			180.0,
-			2.0,
-		)
-	)
-	if not from_player:
-		# 敌方鱼雷命中本艇（REQ-B5-02 唯一合法触发点：仅当接触=本艇；
-		# 敌雷命中诱饵绝不触发）。原子顺序：EXPLOSION → sunk → end_mission →
-		# mission_ended（信号在 end_mission 内发出）；同 tick 后续事件幂等。
-		if contact == world["own"]:
-			world["own"].damage_state = "sunk"
-			end_mission(MissionState.PLAYER_DEFEATED, "TORPEDO_HIT")
-	else:
-		contact.damage_state = "sunk"
-	(
-		_detonations
-		. append(
-			{
-				"time": sim_time,
-				"torpedo_id": str(tp.torpedo_id),
-				"target_internal_ref": contact,
-				"target_id_internal": str(contact.id),  # 仅 Debrief/调试通道
-				"min_pass_distance_m": float(_fuze_min_pass.get(str(tp.torpedo_id), min_d)),
-				"detonated": true,
-				"from_player": from_player,
-			}
-		)
-	)
-	_fuze_alive.erase(tid)
-	_fuze_prev_tp.erase(tid)
+	_fuze_engine.bind_world(self)  # 幂等
+	_fuze_engine.advance(sim_time, dt)
 
 
 ## 消费新声学事件 → 净化证据（DETONATION_HEARD/鱼雷告警/本艇武器事实）。
@@ -1178,19 +1037,14 @@ func _advance_player_evidence(now_override: float = -1.0) -> void:
 	if emission_sanitizer == null:
 		return
 	var now: float = sim_time if now_override < 0.0 else now_override
-	var refs := {"own": true}
-	if weapons != null:
-		for tp in weapons.torpedoes:
-			refs[str(tp.torpedo_id)] = true
-	for d in decoys:
-		if str(d.side) == "blue":
-			refs[str(d.id)] = true
-	var evs: Array = emission_sanitizer.consume_events(emission_bus.events, world["own"], now, refs)
+	own_assets.sync_from_world(weapons, decoys)  # S109 §2.4（非 id 前缀猜测）
+	var evs: Array = emission_sanitizer.consume_events(
+		emission_bus.events, world["own"], now, own_assets.refs_dict()
+	)
 	for e in evs:
 		player_evidence.append(e)
-		# P1-11：INTERCEPT 威胁证据关联到 ThreatTrack（写回 threat_track_id）。
-		if str(e.get("side_hint", "")) == "INTERCEPT":
-			threat_tracks.ingest(e, sim_time)
+	threat_automation.process_evidence(evs, sim_time)  # S109 §3.1（始终运行）
+	threat_tracks.advance(sim_time)
 	while player_evidence.size() > 256:
 		player_evidence.pop_front()
 

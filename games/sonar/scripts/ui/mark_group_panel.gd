@@ -32,15 +32,15 @@ func _init() -> void:
 
 	var row1 := HBoxContainer.new()
 	var lbl1 := Label.new()
-	lbl1.text = "Add Mark to:"
+	lbl1.text = UiText.t("add_mark_to")
 	lbl1.add_theme_font_size_override("font_size", 12)
 	row1.add_child(lbl1)
 	_opt_group = OptionButton.new()
-	_opt_group.add_item("(auto)")
+	_opt_group.add_item(UiText.t("auto_pick"))
 	_opt_group.item_selected.connect(_on_group_selected)
 	row1.add_child(_opt_group)
 	var btn_new := Button.new()
-	btn_new.text = "+ New Group"
+	btn_new.text = UiText.t("btn_new_group")
 	btn_new.add_theme_font_size_override("font_size", 12)
 	btn_new.pressed.connect(_on_new_group)
 	row1.add_child(btn_new)
@@ -48,12 +48,12 @@ func _init() -> void:
 
 	var row2 := HBoxContainer.new()
 	var lbl2 := Label.new()
-	lbl2.text = "Association:"
+	lbl2.text = UiText.t("assoc_label")
 	lbl2.add_theme_font_size_override("font_size", 12)
 	row2.add_child(lbl2)
 	_opt_assoc = OptionButton.new()
 	for m in ["LOCKED", "SUGGEST", "AUTO"]:
-		_opt_assoc.add_item(m)
+		_opt_assoc.add_item(UiText.assoc(m))
 	_opt_assoc.select(0)
 	_opt_assoc.item_selected.connect(_on_assoc_selected)
 	row2.add_child(_opt_assoc)
@@ -61,18 +61,18 @@ func _init() -> void:
 
 	var row3 := HBoxContainer.new()
 	_btn_apply = Button.new()
-	_btn_apply.text = "Apply suggestion"
+	_btn_apply.text = UiText.t("btn_apply_suggest")
 	_btn_apply.add_theme_font_size_override("font_size", 12)
 	_btn_apply.disabled = true
 	_btn_apply.pressed.connect(_on_apply)
 	row3.add_child(_btn_apply)
 	var btn_rm := Button.new()
-	btn_rm.text = "Remove Last Mark"
+	btn_rm.text = UiText.t("btn_remove_last")
 	btn_rm.add_theme_font_size_override("font_size", 12)
 	btn_rm.pressed.connect(_on_remove)
 	row3.add_child(btn_rm)
 	var btn_undo := Button.new()
-	btn_undo.text = "Undo"
+	btn_undo.text = UiText.t("btn_undo")
 	btn_undo.add_theme_font_size_override("font_size", 12)
 	btn_undo.pressed.connect(_on_undo)
 	row3.add_child(btn_undo)
@@ -96,7 +96,7 @@ func _on_group_selected(i: int) -> void:
 
 
 func _on_assoc_selected(i: int) -> void:
-	association_mode = _opt_assoc.get_item_text(i)
+	association_mode = ["LOCKED", "SUGGEST", "AUTO"][i]
 	association_changed.emit(association_mode)
 
 
@@ -135,7 +135,7 @@ func _on_undo() -> void:
 func set_groups(track_ids: Array) -> void:
 	var cur: String = active_group_id
 	_opt_group.clear()
-	_opt_group.add_item("(auto)")
+	_opt_group.add_item(UiText.t("auto_pick"))
 	for tid in track_ids:
 		_opt_group.add_item(str(tid))
 	var idx: int = 0
@@ -148,7 +148,7 @@ func set_groups(track_ids: Array) -> void:
 
 
 func show_suggestion(tid: String) -> void:
-	_lbl_suggest.text = ("Suggestion: associate to %s" % tid) if tid != "" else ""
+	_lbl_suggest.text = (str(UiText.t("suggestion_fmt")) % tid) if tid != "" else ""
 	_btn_apply.disabled = tid == ""
 
 

@@ -16,6 +16,7 @@ extends Control
 signal tick_selected(time: float)
 signal threat_selected(evidence_id: int)  # P0-07：点击威胁 LOB → 联动告警卡
 signal torpedo_selected(torpedo_id: String)  # P1-02：点击鱼雷/空白选择
+signal context_requested(context: Dictionary)  # S109 §9.1：右键命中上下文
 
 const PRED_HORIZON_S: float = 600.0
 const BACK_HORIZON_S: float = 900.0
@@ -95,9 +96,11 @@ var torpedoes: Array = []
 # P0-07 威胁证据 LOB：[{evidence_id, threat_track_id, observer, bearing_deg,
 #   sigma_deg, kind, time, length_m}]（observer = 接收时刻本艇位置快照）。
 var threat_lobs: Array = []
+var threat_snapshots: Array = []  # ThreatTrackManager.ui_snapshots() 输出（§4.5）
 var selected_torpedo_id: String = ""  # 地图点击选中（P1-02 命中测试）
 var selected_evidence_id: int = -1  # 选中威胁证据（地图/告警交叉联动，P0-07.4）
 var now_time: float = 0.0  # 当前仿真时刻（脉冲动画/龄期衰减）
+var context_menu_open: bool = false  # S109 §9.3：菜单开启时暂停拖曳（不暂停仿真）
 
 var _font: Font = null
 var _dragging: bool = false
@@ -189,18 +192,23 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			_zoom_at(mb.position, 1.15)
 		elif mb.button_index == MOUSE_BUTTON_LEFT:
-			if mb.pressed:
+			if mb.pressed and not context_menu_open:
 				_dragging = true
 				_drag_from = mb.position
 				_cam_at_press = cam_center
 			else:
 				_dragging = false
-				if mb.position.distance_to(_drag_from) < 4.0:
+				if mb.position.distance_to(_drag_from) < 4.0 and not context_menu_open:
 					_on_click(mb.position)
+		elif mb.button_index == MOUSE_BUTTON_RIGHT and mb.pressed:
+			# S109 §9.1：右键→命中测试（ChartHitTest）→发上下文；菜单由
+			# ChartContextActions 弹出，菜单动作复用现有命令门。
+			_dragging = false
+			context_requested.emit(ChartHitTest.pick(self, mb.position))
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		_mouse_pos = mm.position
-		if _dragging:
+		if _dragging and not context_menu_open:
 			var d: Vector2 = (mm.position - _drag_from) / _scale_px()
 			cam_center = _cam_at_press - Vector2(d.x, -d.y)
 			queue_redraw()
@@ -266,6 +274,7 @@ func _draw() -> void:
 		_draw_truth()
 	if bool(layers.get("threat", true)):
 		_draw_threat_lobs()
+		ThreatChartOverlay.draw(self, threat_snapshots, now_time)
 	_draw_torpedoes()
 	_draw_hover_link()
 	_draw_camera_overlays()
@@ -728,10 +737,7 @@ func _draw_system() -> void:
 
 
 func _draw_truth() -> void:
-	for t in truth_positions:
-		var s := world_to_screen(t["pos"])
-		draw_rect(Rect2(s - Vector2(6, 6), Vector2(12, 12)), Color(1.0, 0.25, 0.25, 0.9))
-		_draw_label(s + Vector2(9, -4), str(t.get("id", "?")), Color(1, 0.5, 0.5), 14)
+	DebugTruthOverlay.draw(self, truth_positions, own_pos, _font)
 
 
 ## 悬停联动：高亮 o_i（本艇位置）、LOB、p_i（拟合目标位置），显示数值。
@@ -853,22 +859,12 @@ func _threat_color(kind: String) -> Color:
 
 ## 威胁 LOB 屏幕点击点（纯函数，供 _on_click 与测试读取绘图输入数据）。
 func threat_click_points() -> Array:
-	var out: Array = []
-	for e in threat_lobs:
-		out.append({"pos": world_to_screen(e["observer"]), "evidence_id": int(e["evidence_id"])})
-	return out
+	return ChartHitTest.threat_lob_points(self)
 
 
-## 鱼雷头部屏幕点击点（P1-02 命中测试；纯函数）。
+## 鱼雷头部屏幕点击点（P1-02 命中测试；实现已抽至 ChartHitTest）。
 func torpedo_click_points() -> Array:
-	var out: Array = []
-	for tp in torpedoes:
-		var pts: Array = tp.get("trail", [])
-		if pts.is_empty():
-			continue
-		var head := Vector2(float(pts[-1]["e"]), float(pts[-1]["n"]))
-		out.append({"pos": world_to_screen(head), "torpedo_id": str(tp.get("torpedo_id", ""))})
-	return out
+	return ChartHitTest.torpedo_points(self)
 
 
 ## 威胁证据 LOB（REQ-B3-01/02）：唯一方向换算（世界点 + 世界方向），有限长度
@@ -1170,15 +1166,15 @@ func _draw_camera_overlays() -> void:
 	# 图例（右下）——含 REQ-B3-02 威胁图层图例。
 	var lg := Vector2(size.x - 190.0, size.y - 92.0)
 	var items := [
-		["Launch Transient", COL_THREAT_LAUNCH],
-		["Torpedo Noise", COL_THREAT_NOISE],
-		["Active Ping", COL_THREAT_PING],
-		["Active Return", COL_THREAT_PING],
-		["Best Fit", COL_BEST],
-		["Alt A/B/C", ALT_COLORS[0]],
-		["Trial", COL_TRIAL],
-		["System", COL_SYSTEM],
-		["Outlier", COL_OUTLIER],
+		[UiText.t("legend_launch"), COL_THREAT_LAUNCH],
+		[UiText.t("legend_noise"), COL_THREAT_NOISE],
+		[UiText.t("legend_ping"), COL_THREAT_PING],
+		[UiText.t("legend_return"), COL_THREAT_PING],
+		[UiText.t("legend_best"), COL_BEST],
+		[UiText.t("legend_alt"), ALT_COLORS[0]],
+		[UiText.t("legend_trial"), COL_TRIAL],
+		[UiText.t("legend_system"), COL_TRIAL],
+		[UiText.t("legend_outlier"), COL_OUTLIER],
 	]
 	var ly: float = lg.y - 4.0 * 18.0  # 威胁图例占额外 4 行
 	for it in items:

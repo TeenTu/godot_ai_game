@@ -19,7 +19,7 @@ var _btn_jammer: Button = null
 
 func _init() -> void:
 	var title := Label.new()
-	title.text = "Countermeasures"
+	title.text = UiText.t("countermeasures")
 	title.add_theme_font_size_override("font_size", 15)
 	add_child(title)
 	_lbl_state = Label.new()
@@ -29,7 +29,7 @@ func _init() -> void:
 	row.add_theme_constant_override("separation", 4)
 	add_child(row)
 	var lbl_brg := Label.new()
-	lbl_brg.text = "Brg(°)"
+	lbl_brg.text = UiText.t("brg_deg")
 	lbl_brg.add_theme_font_size_override("font_size", 12)
 	row.add_child(lbl_brg)
 	_spin_brg = SpinBox.new()
@@ -43,12 +43,12 @@ func _init() -> void:
 	row2.add_theme_constant_override("separation", 4)
 	add_child(row2)
 	_btn_mobile = Button.new()
-	_btn_mobile.text = "Launch MOBILE"
+	_btn_mobile.text = UiText.t("btn_mobile")
 	_btn_mobile.add_theme_font_size_override("font_size", 12)
 	_btn_mobile.pressed.connect(func(): _launch(DecoyProgram.TYPE_MOBILE))
 	row2.add_child(_btn_mobile)
 	_btn_jammer = Button.new()
-	_btn_jammer.text = "Launch JAMMER"
+	_btn_jammer.text = UiText.t("btn_jammer")
 	_btn_jammer.add_theme_font_size_override("font_size", 12)
 	_btn_jammer.pressed.connect(func(): _launch(DecoyProgram.TYPE_JAMMER))
 	row2.add_child(_btn_jammer)
@@ -84,10 +84,10 @@ func sync() -> void:
 				lines
 				. append(
 					(
-						"%s %s spd %.1f/%.1fkn dep %.0f/%.0fm life %.0fs"
+						"%s %s 速度 %.1f/%.1f节 深度 %.0f/%.0fm 寿命 %.0fs"
 						% [
 							str(d.id),
-							"JAM" if d.decoy_type == DecoyProgram.TYPE_JAMMER else "MOB",
+							"干扰" if d.decoy_type == DecoyProgram.TYPE_JAMMER else "诱饵",
 							float(d.speed_kn),
 							float(d.commanded_speed_kn),
 							float(d.depth_m),
@@ -100,19 +100,18 @@ func sync() -> void:
 		else:
 			lines.append(
 				(
-					"%s arming %.1fs"
+					"%s 引信化 %.1fs"
 					% [str(d.id), maxf(float(d.activation_delay_s) - float(d.age_s), 0.0)]
 				)
 			)
 	var state: String = (
-		"Rounds %d | Inv %d | CD %.0fs | Own decoys %d"
-		% [cm.ready_rounds, cm.inventory, cd, lines.size()]
+		"弹药 %d | 库存 %d | 冷却 %.0fs | 己方诱饵 %d" % [cm.ready_rounds, cm.inventory, cd, lines.size()]
 	)
 	# REQ-UI-03 频带提示：JAMMER 配置的干扰频带（发射前即可见，本艇事实）。
 	var jam: Dictionary = cm.profile_for(DecoyProgram.TYPE_JAMMER)
 	if not jam.is_empty() and float(jam.get("band_max_hz", 0.0)) > 0.0:
 		state += (
-			"\nJAMMER band %.0f–%.0f Hz"
+			"\n干扰器频段 %.0f–%.0f Hz"
 			% [
 				float(jam.get("band_min_hz", 800.0)),
 				float(jam.get("band_max_hz", 1200.0)),
@@ -161,10 +160,10 @@ func _launch(decoy_type: String) -> void:
 	if not ok:
 		var reason: String = _world.last_decoy_reject_reason
 		if reason == "":
-			reason = "unknown"
-		status.emit("Decoy rejected: %s" % reason)
+			reason = str(UiText.t("decoy_unknown"))
+		status.emit(UiText.t("decoy_reject") % UiText.reject(reason))
 	else:
-		status.emit("Decoy launched %s @%.0f°" % [decoy_type, prog.launch_bearing_deg])
+		status.emit(UiText.t("decoy_launch") % [UiText.decoy(decoy_type), prog.launch_bearing_deg])
 
 
 func _band_for_own() -> String:

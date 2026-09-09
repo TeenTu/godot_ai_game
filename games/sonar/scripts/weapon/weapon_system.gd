@@ -39,6 +39,8 @@ var emission_bus: AcousticEmissionBus = null
 ## 按前缀/集合判定本艇事实 vs 敌方截获）。
 var id_prefix: String = "T"
 var _next_id: int = 1
+# S109 AT-40：World 任务门（非空时注入每条新鱼雷；终局后线导命令统一拒绝）。
+var mission_gate: Callable = Callable()
 
 
 func _init() -> void:
@@ -155,6 +157,8 @@ func fire_program(
 	_next_id += 1
 	var tp := Torpedo.new()
 	tp.launch(tid, program, own_e, own_n, own_depth_m, sim_time)
+	if mission_gate.is_valid():
+		tp.mission_gate = mission_gate
 	# Commit 5（§9.2）：出管瞬态声源（发射平台位置/深度，一次；不保证被发现）。
 	if emission_bus != null and tp.acoustic_profile != null:
 		var t: Dictionary = tp.acoustic_profile.tube_launch_transient

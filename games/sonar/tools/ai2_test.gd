@@ -153,15 +153,12 @@ func _ai_2_filter_neutral_counterfire(fails: Array) -> void:
 	var own2 := _mk_entity("own", 0.0, 0.0, 50.0)
 	var ev := _mk_event(AcousticEmissionEvent.DECOY_ACTIVATION, 60.0, 2000.0, 168.0)
 	var out: Array = ad.intercept_events([ev], own2, 100.0)
+	_assert_bool(fails, "AI-2b pending before R/c", out.is_empty(), true)
+	out = ad.intercept_events([ev], own2, 102.0)
 	_assert_bool(fails, "AI-2b decoy transient intercepted", out.size() == 1, true)
 	if not out.is_empty():
 		var e: Dictionary = out[0]
-		_assert_bool(
-			fails,
-			"AI-2b kind neutralized",
-			str(e.get("emission_kind", "")) == "UNKNOWN_TRANSIENT",
-			true
-		)
+		_assert_bool(fails, "AI-2b no event enum leak", not e.has("emission_kind"), true)
 		_assert_bool(
 			fails, "AI-2b class not DECOY", str(e.get("source_class", "")) != "DECOY", true
 		)
@@ -303,8 +300,9 @@ func _ai_4_teaching_vs_combat(fails: Array) -> void:
 		if not fired and not wc.enemy_weapons.torpedoes.is_empty():
 			fired = true
 		if fired:
+			var gen_identity: Dictionary = wc.world["generator"].identity_by_evidence
 			for m in wc.measurements:
-				if str(m.target_id).begins_with("ET"):
+				if str(gen_identity.get(str(m.evidence_id), "")).begins_with("ET"):
 					et_meas = true
 					break
 		if et_meas:

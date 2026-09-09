@@ -223,9 +223,10 @@ func _initialize() -> void:
 	# ---- 验收 8（UI 接线）：威胁图层开关 + 图例 + Selected-only 控件 ----
 	var ui_src: String = (load("res://scripts/ui/main_ui.gd") as Script).source_code
 	_assert(fails, ui_src.find('"threat"') >= 0, "threat layer toggle wired in main_ui")
-	_assert(fails, ui_src.find("Selected Track Only") >= 0, "Selected Track Only toggle wired")
+	# S109 Batch 7：文案已集中到 UiText（按目录键断言接线存在）。
+	_assert(fails, ui_src.find("chk_sel_only") >= 0, "Selected Track Only toggle wired")
 	var cv_src2: String = cv_src.source_code
-	for legend_key in ["Launch Transient", "Torpedo Noise", "Active Ping", "Active Return"]:
+	for legend_key in ["legend_launch", "legend_noise", "legend_ping", "legend_return"]:
 		_assert(fails, cv_src2.find(legend_key) >= 0, "threat legend entry: %s" % legend_key)
 
 	_finish(fails)

@@ -53,6 +53,9 @@ func _pa_01_enemy_bearing_geometry(fails: Array) -> void:
 	var ad2 := _mk_adapter()
 	var ev := _mk_event(AcousticEmissionEvent.PLATFORM_ACTIVE_PING, 220.0, 2000.0, 210.0)
 	var out2: Array = ad2.intercept_events([ev], obs, 100.0)
+	# S109 §6.2：单程传播 2000m → ~1.33s，到点结算。
+	if out2.is_empty():
+		out2 = ad2.intercept_events([ev], obs, 102.0)
 	_assert_bool(fails, "PA-01d intercept detected", out2.size() == 1, true)
 	if not out2.is_empty():
 		var e2: Dictionary = out2[0]

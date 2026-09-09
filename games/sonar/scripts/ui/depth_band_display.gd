@@ -55,10 +55,10 @@ func _draw() -> void:
 	draw_rect(Rect2(x0, y_th0, bar_w, y_th1 - y_th0), Color(0.5, 0.3, 0.0, 0.85))
 	var f := get_theme_default_font()
 	for cfg in [
-		[y_of.call(0.0), "SURF", Color(0.7, 0.9, 1.0)],
-		[y_of.call(upper_hold), "UP", Color(0.6, 0.8, 0.6)],
-		[y_of.call(lower_hold), "LOW", Color(0.6, 0.6, 0.9)],
-		[y_of.call(z_max), "BOT", Color(0.8, 0.7, 0.5)],
+		[y_of.call(0.0), str(UiText.t("band_surf")), Color(0.7, 0.9, 1.0)],
+		[y_of.call(upper_hold), str(UiText.t("band_up")), Color(0.6, 0.8, 0.6)],
+		[y_of.call(lower_hold), str(UiText.t("band_low")), Color(0.6, 0.6, 0.9)],
+		[y_of.call(z_max), str(UiText.t("band_bot")), Color(0.8, 0.7, 0.5)],
 	]:
 		draw_line(Vector2(x0 - 4.0, cfg[0]), Vector2(x0 + bar_w + 4.0, cfg[0]), cfg[2], 1.0)
 		draw_string(

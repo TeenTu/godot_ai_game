@@ -664,7 +664,7 @@ func latest_peaks() -> Array:
 func create_mark(
 	bearing_deg: float,
 	sim_time: float,
-	target_id: String = "",
+	_target_id: String = "",
 	as_true: bool = false,
 	row: Dictionary = {}
 ) -> Measurement:
@@ -708,7 +708,7 @@ func create_mark(
 	var m: Measurement = Measurement.new()
 	m.timestamp = r_t
 	m.sensor_id = "OP_" + src_array
-	m.target_id = target_id  # 仅测试统计；玩家流程不使用
+	# S109 P0-06：玩法层 Measurement 不携带 target_id（参数仅为旧调用方兼容）。
 	# S1-00：操作员 Mark 是一次玩家确认的探测（detected=true），每次物理
 	# 到达发唯一 evidence_id（镜像对在 create_mark_group 中共享）。
 	m.detected = true
@@ -790,7 +790,6 @@ func create_mark_group(
 	var sibling: Measurement = Measurement.new()
 	sibling.timestamp = primary.timestamp
 	sibling.sensor_id = primary.sensor_id
-	sibling.target_id = primary.target_id
 	sibling.observer_east_m = primary.observer_east_m
 	sibling.observer_north_m = primary.observer_north_m
 	sibling.measured_bearing_deg = theta_mirror

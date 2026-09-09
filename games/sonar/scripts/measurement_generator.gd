@@ -11,6 +11,10 @@ extends RefCounted
 ##
 ## 所有随机走注入的 RNG，固定种子 → 固定测量流。
 
+## S109 P0-06：内核内部身份台账（evidence_id → 源实体 id）。仅供 Debrief/
+## 调试/测试通道；测量对象与玩法 DTO 不再携带 target_id。
+var identity_by_evidence: Dictionary = {}
+
 var _rng: RandomNumberGenerator = null
 var _env: RefCounted = null  # EnvironmentModel
 var _own_profile: RefCounted = null  # 本艇 AcousticProfile（用于自噪由传感器侧自理，这里无需）
@@ -86,11 +90,11 @@ func generate_passive(
 	_measurement_counter += 1
 	m.timestamp = timestamp
 	m.sensor_id = sensor.sensor_id
-	m.target_id = target.id
 	m.measurement_type = "PASSIVE_BEARING"
 	m.available_time = timestamp
 	m.detected = detected
 	m.evidence_id = _next_evidence_id()
+	identity_by_evidence[str(m.evidence_id)] = str(target.id)
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing
@@ -154,12 +158,12 @@ func generate_active(
 	_measurement_counter += 1
 	m.timestamp = timestamp
 	m.sensor_id = sensor.sensor_id
-	m.target_id = target.id
 	m.measurement_type = "ACTIVE_RANGE_BEARING"
 	m.ping_id = ping_id
 	m.available_time = timestamp
 	m.detected = detected
 	m.evidence_id = _next_evidence_id()
+	identity_by_evidence[str(m.evidence_id)] = str(target.id)
 	m.observer_east_m = observer.position_east_m
 	m.observer_north_m = observer.position_north_m
 	m.measured_bearing_deg = true_bearing

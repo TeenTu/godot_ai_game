@@ -91,3 +91,14 @@ mc_hit_rate_test
 enemy_hit_gameover_test
 waterfall_display_test
 at_e2e_test
+info_boundary_scan_test
+enemy_sensor_fairness_test
+threat_auto_track_test
+threat_classifier_no_truth_test
+threat_estimator_test
+threat_active_fusion_e2e_test
+threat_multi_return_test
+truth_torpedo_overlay_test
+sidebar_pager_test
+chart_context_menu_test
+zh_cn_ui_test

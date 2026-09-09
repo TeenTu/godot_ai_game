@@ -151,8 +151,9 @@ func _d1_no_miss_in_world(fails: Array) -> void:
 			fails.append("D1 miss leaked into world.measurements (id=%d)" % m.measurement_id)
 			break
 	var far_count: int = 0
+	var gen_identity: Dictionary = w.world["generator"].identity_by_evidence
 	for m in w.measurements:
-		if m.target_id == "far":
+		if str(gen_identity.get(str(m.evidence_id), "")) == "far":
 			far_count += 1
 	_assert_eq(
 		fails, "D1 far(miss-dominated) target contributed 0 measurements", str(far_count), "0"
@@ -243,18 +244,21 @@ func _d4_active_single_evidence(fails: Array) -> void:
 	_assert_eq(fails, "D4 active detection_count=1", str(tr.detection_count()), "1")
 
 
-## D5：to_dict 携带 detected/evidence_id，且不含 target_id（Truth 隔离）。
+## D5：to_dict 携带 detected/evidence_id，且结构性不含内部身份/Truth 字段
+## （S109 P0-06：Measurement 无 target_id 属性；序列化禁字段校验）。
 func _d5_to_dict_truth_isolation(fails: Array) -> void:
 	var m := Measurement.new()
 	m.measurement_id = 42
 	m.timestamp = 5.0
-	m.target_id = "secret_target"
 	m.evidence_id = "ev_D501"
 	m.detected = false
 	var d: Dictionary = m.to_dict()
 	_assert_eq(fails, "D5 to_dict.evidence_id", str(d.get("evidence_id", "?")), "ev_D501")
 	_assert_eq(fails, "D5 to_dict.detected", str(d.get("detected", "?")), "false")
-	_assert_bool(fails, "D5 to_dict hides target_id", d.has("target_id"), false)
+	for bad in [
+		"target_id", "internal_token", "emission_kind", "position_east_m", "position_north_m"
+	]:
+		_assert_bool(fails, "D5 to_dict hides %s" % bad, d.has(bad), false)
 
 
 ## D6：大离群方位注入后，TMA robust refit 的 inlier 二次拟合假设必须胜出

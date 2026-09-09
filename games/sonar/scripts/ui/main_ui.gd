@@ -24,6 +24,10 @@ var mark_panel: MarkGroupPanel = null
 var selected_track_id: String = ""
 var op: OperatorSonar = null  # Sonar Operator Layer（Truth 只进这里）
 var _op_panel: OperatorPanel = null
+var _pager: RightSidebarPager = null  # S109 §8 右栏分页（固定顶栏+四页）
+var _ctx_actions: ChartContextActions = null  # S109 §9.3 海图右键菜单动作
+var _threat_hud: ThreatHud = null  # §8.3 顶栏固定告警条（banner-only）
+var _threat_list: ThreatHud = null  # 航迹页威胁列表（list-only）
 var _ping_ctrl: ActivePingController = null  # S1-04 主动 Ping 接线（拆出，控行数）
 
 var _chart: ChartView = null
@@ -32,8 +36,8 @@ var _bt_plot: BearingTimePlot = null
 var _res_plot: ResidualPlot = null
 var _diag_box: VBoxContainer = null  # 包裹两个诊断图的底部容器
 var _diag_mode: int = DIAG_BT  # 默认只显示 BT（需求§一.1）
-var _panel: VBoxContainer = null
-var _sidebar_scroll: ScrollContainer = null  # P1-03.1 侧栏宽度契约目标
+var _contact_rows_box: VBoxContainer = null  # 接触按钮动态容器（航迹页）
+var _lbl_time: Label = null  # S109 §8.1 顶栏任务时间
 
 var _btn_pause: Button = null
 var _lbl_status: Label = null
@@ -104,7 +108,7 @@ func _ready() -> void:
 	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
 	_ping_ctrl.on_assoc_undone = func(_tid: String):
 		_dirty = true
-		_update_status("Active echo association undone — REFIT REQUIRED")
+		_update_status(UiText.t("st_undo"))
 
 	world.auto_measurements = false
 	op = OperatorSonar.new()
@@ -146,7 +150,7 @@ func _ready() -> void:
 			_game_over.show_result(result, _scenario_name, UiContract.resolve_seed_override())
 	)
 
-	_update_status("ready: click a contact, then Auto Fit TMA")
+	_update_status(UiText.t("st_ready"))
 
 
 func _on_game_restart() -> void:
@@ -186,62 +190,68 @@ func _build_ui() -> void:
 	_depth_bar = DepthBandDisplay.new()
 	main_row.add_child(_depth_bar)
 
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(UiContract.SIDEBAR_PREF_W, 0)
-	scroll.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_sidebar_scroll = scroll
-	main_row.add_child(scroll)
+	# S109 §8：右栏 = 固定顶栏 + 四页（P1-03.1 宽度契约鈐制在 _process 里施加于 _pager）。
+	_pager = RightSidebarPager.new()
+	_pager.custom_minimum_size = Vector2(UiContract.SIDEBAR_PREF_W, 0)
+	_pager.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_pager.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main_row.add_child(_pager)
 
-	_panel = VBoxContainer.new()
-	_panel.custom_minimum_size = Vector2(UiContract.SIDEBAR_MIN_W, 0)
-	_panel.size_flags_horizontal = Control.SIZE_FILL  # 不 EXPAND：内容不撑宽侧栏
-	_panel.add_theme_constant_override("separation", 5)
-	scroll.add_child(_panel)
-
-	_build_panel()
+	_build_sidebar()
+	_ctx_actions = ChartContextActions.new()  # S109 §9：右键菜单（复用命令门）
+	_ctx_actions.setup(self, _chart, _pager)
 	_build_bottom(root)
 
 
-func _build_panel() -> void:
+## S109 §8 右栏：固定顶栏（时间/暂停/倍速 + 选中摘要 + 告警条）+ 四页。
+func _build_sidebar() -> void:
 	var title := Label.new()
-	title.text = "Submarine Sonar / TMA"
+	title.text = UiText.t("app_title")
 	title.add_theme_font_size_override("font_size", 18)
-	_panel.add_child(title)
-
-	var row0 := HBoxContainer.new()
-	row0.add_theme_constant_override("separation", 6)
-	_panel.add_child(row0)
+	_pager.top_bar.add_child(title)
+	_lbl_time = Label.new()
+	_lbl_time.text = "T+0s"
+	_pager.time_row.add_child(_lbl_time)
 	_btn_pause = Button.new()
-	_btn_pause.text = "⏸ Pause"
+	_btn_pause.text = UiText.t("pause")
 	_btn_pause.pressed.connect(_on_pause)
-	row0.add_child(_btn_pause)
-	_btn_mark = Button.new()
-	_btn_mark.text = "Mark"
-	_btn_mark.pressed.connect(_on_mark)
-	row0.add_child(_btn_mark)
+	_pager.time_row.add_child(_btn_pause)
 	var spd_lbl := Label.new()
-	spd_lbl.text = "Speed"
-	row0.add_child(spd_lbl)
+	spd_lbl.text = UiText.t("speed")
+	_pager.time_row.add_child(spd_lbl)
 	var opt_speed := OptionButton.new()
 	for s in [1, 2, 4, 8]:
 		opt_speed.add_item("%dx" % s)
 	opt_speed.select(1)
 	opt_speed.item_selected.connect(_on_speed)
-	row0.add_child(opt_speed)
+	_pager.time_row.add_child(opt_speed)
+	# §8.3 固定信息：选中摘要 + 最高优先级来袭鱼雷告警条（不随切页消失）。
+	_lbl_selected = Label.new()
+	_lbl_selected.text = UiText.t("selected_none")
+	_lbl_selected.add_theme_font_size_override("font_size", 16)
+	_pager.selection_slot.add_child(_lbl_selected)
+	_threat_hud = ThreatHud.install(_pager.alert_slot, _chart, true, false)
+	_build_sonar_page(_pager.add_page("sonar", UiText.t("page_sonar")))
+	_build_tracks_page(_pager.add_page("tracks", UiText.t("page_tracks")))
+	_build_weapons_page(_pager.add_page("weapons", UiText.t("page_weapons")))
+	_build_own_page(_pager.add_page("own", UiText.t("page_own")))
+	_pager.select("sonar")
 
-	var op_sec := _make_section("Sonar Operator")
+
+## 页面一声呐：Operator 控制面板（阵列/瀑布图设置/拖曳阵/主动声呐）。
+func _build_sonar_page(pg: VBoxContainer) -> void:
+	var op_sec := UiSection.make(UiText.t("sec_sonar_operator"))
 	_op_panel = OperatorPanel.new()
-	_section_body(op_sec).add_child(_op_panel)
+	UiSection.body(op_sec).add_child(_op_panel)
 	_op_panel.mark_requested.connect(_on_op_mark)
 	_op_panel.array_changed.connect(
 		func(aid: String):
 			op.set_array(aid)
-			_update_status("Array -> " + aid)
+			_update_status(UiText.t("st_array_to") + " " + aid)
 	)
 	_op_panel.autocrew_toggled.connect(
-		func(on: bool): _update_status("Autocrew " + ("ON" if on else "OFF"))
+		func(on: bool):
+			_update_status(UiText.t("st_autocrew_on") if on else UiText.t("st_autocrew_off"))
 	)
 	_op_panel.towed_deploy_requested.connect(_on_towed_deploy)
 	_op_panel.towed_retract_requested.connect(_on_towed_retract)
@@ -253,174 +263,170 @@ func _build_panel() -> void:
 	_op_panel.active_fit_mode_requested.connect(func(m: String): _ping_ctrl.set_fit_mode(m))
 	_op_panel.active_take_control_requested.connect(func(): _ping_ctrl.take_control())
 	_op_panel.active_apply_requested.connect(func(): _ping_ctrl.apply_pending())
-	_panel.add_child(op_sec)
-	_panel.add_child(HSeparator.new())
-	var auto_panel := AutomationPanelUI.new()
-	auto_panel.bind(tracker, _auto_refit_track)
-	_section_body(_make_section("Automation")).add_child(auto_panel)
+	pg.add_child(op_sec)
 
-	# REQ-B1-01/05：显式 Mark 组选择 + Remove/Reassign/Undo（编辑记审计）。
-	mark_panel = MarkGroupPanel.new()
+
+## 页面二航迹：接触/威胁列表 + Mark 组 + Fit/Trial（S109 §8.2）。
+func _build_tracks_page(pg: VBoxContainer) -> void:
+	_btn_mark = Button.new()
+	_btn_mark.text = UiText.t("btn_mark")
+	_btn_mark.pressed.connect(_on_mark)
+	pg.add_child(_btn_mark)
+	_build_contact_list(pg)
+	_threat_list = ThreatHud.install(pg, _chart, false, true)
+	mark_panel = MarkGroupPanel.new()  # REQ-B1-01/05：Mark 组/Remove/Reassign/Undo
 	mark_panel.association_changed.connect(
 		func(m: String):
 			mark_flow.association_mode = m
-			_update_status("Mark association -> " + m)
+			_update_status(UiText.t("st_assoc_mode") + " " + UiText.assoc(m))
 	)
 	mark_panel.active_group_changed.connect(
 		func(g: String):
 			mark_flow.active_group_id = g
-			_update_status("Add Mark to -> " + (g if g != "" else "(auto)"))
+			_update_status(UiText.t("st_mark_group") + (g if g != "" else UiText.t("auto_pick")))
 	)
 	mark_panel.flow = mark_flow
 	mark_panel.selected_provider = func() -> String: return selected_track_id
 	mark_panel.operation_result.connect(_on_mark_operation)
-	_section_body(_make_section("Mark Groups")).add_child(mark_panel)
-
-	_lbl_status = Label.new()
-	_lbl_status.text = ""
-	_lbl_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lbl_status.add_theme_font_size_override("font_size", 14)
-	var sec_status := _make_section("Status")
-	_section_body(sec_status).add_child(_lbl_status)
-	_panel.add_child(sec_status)
-
-	_lbl_selected = Label.new()
-	_lbl_selected.text = "Selected: none"
-	_lbl_selected.add_theme_font_size_override("font_size", 16)
-	_panel.add_child(_lbl_selected)
-
+	var m_sec := UiSection.make(UiText.t("sec_mark_groups"))
+	UiSection.body(m_sec).add_child(mark_panel)
+	pg.add_child(m_sec)
 	_btn_fit = Button.new()
-	_btn_fit.text = "🔄 Auto Fit TMA (selected)"
+	_btn_fit.text = UiText.t("btn_auto_fit")
 	_btn_fit.pressed.connect(_on_fit_tma)
-	_panel.add_child(_btn_fit)
-
+	pg.add_child(_btn_fit)
 	_lbl_tma = Label.new()
-	_lbl_tma.text = "No fit yet."
+	_lbl_tma.text = UiText.t("no_fit_yet")
 	_lbl_tma.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_lbl_tma.add_theme_font_size_override("font_size", 14)
-	_sec_fit = _make_section("Fit Details")
-	_section_body(_sec_fit).add_child(_lbl_tma)
-	_panel.add_child(_sec_fit)
-
+	_sec_fit = UiSection.make(UiText.t("sec_fit_details"))
+	UiSection.body(_sec_fit).add_child(_lbl_tma)
+	pg.add_child(_sec_fit)
 	_btn_enter = Button.new()
-	_btn_enter.text = "✅ Accept as System"
+	_btn_enter.text = UiText.t("btn_accept_system")
 	_btn_enter.pressed.connect(_on_enter_solution)
-	_panel.add_child(_btn_enter)
-
-	_weapon_panel = WeaponPanelUI.new()
-	_panel.add_child(_weapon_panel)
-	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
-	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
-	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
-
-	_in_water_panel = InWaterWeaponPanel.new()
-	_panel.add_child(_in_water_panel)
-
-	_panel.add_child(HSeparator.new())
-	_build_contact_list()
-	_panel.add_child(HSeparator.new())
-	_build_layer_toggles()
-
-	_panel.add_child(HSeparator.new())
-
-	_own_panel = OwnManeuverPanel.new()
-	_panel.add_child(_own_panel)
-
-	_panel.add_child(HSeparator.new())
-	_cm_panel = CountermeasurePanel.new()
-	_cm_panel.status.connect(func(m: String): _update_status(m))
-	_panel.add_child(_cm_panel)
-	_alert_panel = AlertPanel.new()
-	_panel.add_child(_alert_panel)
-
-	_panel.add_child(HSeparator.new())
-	var cam_title := Label.new()
-	cam_title.text = "Camera / View"
-	cam_title.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(cam_title)
-	var row_cam := HBoxContainer.new()
-	row_cam.add_theme_constant_override("separation", 4)
-	_panel.add_child(row_cam)
-	var btn_reset := Button.new()
-	btn_reset.text = "Reset View"
-	btn_reset.pressed.connect(func(): _chart.reset_view())
-	row_cam.add_child(btn_reset)
-	var btn_frame := Button.new()
-	btn_frame.text = "Auto Frame"
-	btn_frame.pressed.connect(func(): _chart.auto_frame())
-	row_cam.add_child(btn_frame)
-	var chk_all_lob := CheckButton.new()
-	chk_all_lob.text = "All LOB History"
-	chk_all_lob.toggled.connect(func(on: bool): _chart.show_all_lobs = on)
-	_panel.add_child(chk_all_lob)
-	# REQ-B3-03：Selected Track only / All Tracks 切换（默认突出当前 Track）。
-	var chk_sel_only := CheckButton.new()
-	chk_sel_only.text = "Selected Track Only"
-	chk_sel_only.toggled.connect(func(on: bool): _chart.show_selected_only = on)
-	_panel.add_child(chk_sel_only)
-
-	_panel.add_child(HSeparator.new())
+	pg.add_child(_btn_enter)
 	var tma_title := Label.new()
-	tma_title.text = "Trial Params (manual)"
+	tma_title.text = UiText.t("trial_params")
 	tma_title.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(tma_title)
-	_spin_bearing = _add_spin("Bearing (°)", 0, 359, 1, 0)
-	_spin_range = _add_spin("Range (m)", 100, 50000, 100, 0)
-	_spin_course = _add_spin("Course (°)", 0, 359, 1, 0)
-	_spin_speed = _add_spin("Speed (kn)", 0, 40, 0.5, 0)
+	pg.add_child(tma_title)
+	_spin_bearing = UiSection.spin_row(pg, UiText.t("spin_bearing"), 0, 359, 1, 0)
+	_spin_range = UiSection.spin_row(pg, UiText.t("spin_range"), 100, 50000, 100, 0)
+	_spin_course = UiSection.spin_row(pg, UiText.t("spin_course"), 0, 359, 1, 0)
+	_spin_speed = UiSection.spin_row(pg, UiText.t("spin_speed"), 0, 40, 0.5, 0)
 	_spin_bearing.value_changed.connect(func(v): trial.set_bearing(v))
 	_spin_range.value_changed.connect(func(v): trial.set_range(v))
 	_spin_course.value_changed.connect(func(v): trial.set_course(v))
 	_spin_speed.value_changed.connect(func(v): trial.set_speed(v))
 
+
+## 页面三武器：发射管/编程、在水武器、诱饵、战果评估（S109 §8.2）。
+func _build_weapons_page(pg: VBoxContainer) -> void:
+	_weapon_panel = WeaponPanelUI.new()
+	pg.add_child(_weapon_panel)
+	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
+	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
+	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
+	_in_water_panel = InWaterWeaponPanel.new()
+	pg.add_child(_in_water_panel)
+	_cm_panel = CountermeasurePanel.new()
+	_cm_panel.status.connect(func(m: String): _update_status(m))
+	pg.add_child(_cm_panel)
+	_alert_panel = AlertPanel.new()  # §11.5 告警/战果评估
+	pg.add_child(_alert_panel)
+
+
+## 页面四本艇：状态/自动化/机动、镜头与图层、开发选项（S109 §8.2）。
+func _build_own_page(pg: VBoxContainer) -> void:
+	_lbl_status = Label.new()
+	_lbl_status.text = ""
+	_lbl_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lbl_status.add_theme_font_size_override("font_size", 14)
+	var sec_status := UiSection.make(UiText.t("sec_status"))
+	UiSection.body(sec_status).add_child(_lbl_status)
+	pg.add_child(sec_status)
+	var auto_panel := AutomationPanelUI.new()
+	auto_panel.bind(tracker, _auto_refit_track)
+	var auto_sec := UiSection.make(UiText.t("sec_automation"))
+	UiSection.body(auto_sec).add_child(auto_panel)
+	pg.add_child(auto_sec)
+	_own_panel = OwnManeuverPanel.new()
+	pg.add_child(_own_panel)
+	var cam_title := Label.new()
+	cam_title.text = UiText.t("cam_view")
+	cam_title.add_theme_font_size_override("font_size", 15)
+	pg.add_child(cam_title)
+	var row_cam := HBoxContainer.new()
+	row_cam.add_theme_constant_override("separation", 4)
+	pg.add_child(row_cam)
+	var btn_reset := Button.new()
+	btn_reset.text = UiText.t("btn_reset_view")
+	btn_reset.pressed.connect(func(): _chart.reset_view())
+	row_cam.add_child(btn_reset)
+	var btn_frame := Button.new()
+	btn_frame.text = UiText.t("btn_auto_frame")
+	btn_frame.pressed.connect(func(): _chart.auto_frame())
+	row_cam.add_child(btn_frame)
+	var chk_all_lob := CheckButton.new()
+	chk_all_lob.text = UiText.t("chk_all_lob")
+	chk_all_lob.toggled.connect(func(on: bool): _chart.show_all_lobs = on)
+	pg.add_child(chk_all_lob)
+	# REQ-B3-03：Selected Track only / All Tracks 切换（默认突出当前 Track）。
+	var chk_sel_only := CheckButton.new()
+	chk_sel_only.text = UiText.t("chk_sel_only")
+	chk_sel_only.toggled.connect(func(on: bool): _chart.show_selected_only = on)
+	pg.add_child(chk_sel_only)
+	_build_layer_toggles(pg)
 	_btn_show_truth = Button.new()
-	_btn_show_truth.text = "Show Truth (dev)"
+	_btn_show_truth.text = UiText.t("btn_show_truth")
 	_btn_show_truth.toggle_mode = true
 	_btn_show_truth.toggled.connect(_on_show_truth)
-	_panel.add_child(_btn_show_truth)
+	pg.add_child(_btn_show_truth)
 
 
-func _build_contact_list() -> void:
+func _build_contact_list(pg: Control) -> void:
 	var ct_title := Label.new()
-	ct_title.text = "Contacts (click to select)"
+	ct_title.text = UiText.t("contacts_title")
 	ct_title.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(ct_title)
+	pg.add_child(ct_title)
+	_contact_rows_box = VBoxContainer.new()
+	pg.add_child(_contact_rows_box)
 
 
-func _build_layer_toggles() -> void:
+func _build_layer_toggles(pg: Control) -> void:
 	var lt := Label.new()
-	lt.text = "Layers"
+	lt.text = UiText.t("layers")
 	lt.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(lt)
+	pg.add_child(lt)
 	for key in ["lob", "sigma", "fit", "alt", "trial", "system", "truth", "threat"]:
 		var cb := CheckButton.new()
-		cb.text = key.capitalize() if key != "alt" else "Alternatives"
+		cb.text = UiText.t("legend_alt") if key == "alt" else UiText.t("legend_" + key)
 		cb.button_pressed = bool(_chart.layers.get(key, true))
 		cb.toggled.connect(_on_layer_toggle.bind(key))
-		_panel.add_child(cb)
+		pg.add_child(cb)
 		_chk_layers[key] = cb
 	var ob := OptionButton.new()
-	ob.add_item("BT Axis: Local (auto)")
-	ob.add_item("BT Axis: 360° Overview")
+	ob.add_item(UiText.t("bt_local"))
+	ob.add_item(UiText.t("bt_360"))
 	ob.item_selected.connect(
 		func(i: int):
 			_bt_plot.overview_mode = i == 1
 			_bt_plot.queue_redraw()
 	)
-	_panel.add_child(ob)
+	pg.add_child(ob)
 
 	var diag_lbl := Label.new()
-	diag_lbl.text = "Diagnostics:"
+	diag_lbl.text = UiText.t("diagnostics")
 	diag_lbl.add_theme_font_size_override("font_size", 15)
-	_panel.add_child(diag_lbl)
+	pg.add_child(diag_lbl)
 	var diag_ob := OptionButton.new()
-	diag_ob.add_item("CLOSED")
-	diag_ob.add_item("BT")
-	diag_ob.add_item("RESIDUAL")
-	diag_ob.add_item("SPLIT")
+	diag_ob.add_item(UiText.t("diag_closed"))
+	diag_ob.add_item(UiText.t("diag_bt"))
+	diag_ob.add_item(UiText.t("diag_residual"))
+	diag_ob.add_item(UiText.t("diag_split"))
 	diag_ob.select(DIAG_BT)
 	diag_ob.item_selected.connect(_set_diag_mode)
-	_panel.add_child(diag_ob)
+	pg.add_child(diag_ob)
 
 
 func _build_bottom(root: VBoxContainer) -> void:
@@ -474,24 +480,6 @@ func _draw() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), Color(0.03, 0.06, 0.08, 1.0))
 
 
-func _add_spin(title: String, min_v: float, max_v: float, step: float, val: float) -> SpinBox:
-	var lbl := Label.new()
-	lbl.text = title
-	var sp := SpinBox.new()
-	sp.min_value = min_v
-	sp.max_value = max_v
-	sp.step = step
-	sp.value = val
-	sp.allow_greater = true
-	sp.allow_lesser = true
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 2)
-	box.add_child(lbl)
-	box.add_child(sp)
-	_panel.add_child(box)
-	return sp
-
-
 func _process(delta: float) -> void:
 	if world == null:
 		return
@@ -523,8 +511,8 @@ func _process(delta: float) -> void:
 		_depth_bar.sync()
 	_update_displays_light()
 	_update_panel()
-	if _sidebar_scroll != null:  # P1-03.1 侧栏宽度契约鈐制
-		_sidebar_scroll.size.x = UiContract.sidebar_clamp_x(_sidebar_scroll.size.x)
+	if _pager != null:  # P1-03.1 侧栏宽度契约鈐制（S109：施加于分页器）
+		_pager.size.x = UiContract.sidebar_clamp_x(_pager.size.x)
 
 
 func _feed_new_measurements() -> void:
@@ -622,30 +610,6 @@ func _rebuild_display_data() -> void:
 	)
 
 
-## 可折叠区块：标题按钮 + 内容容器，再次点击标题折叠/展开。
-func _make_section(title_text: String) -> VBoxContainer:
-	var box := VBoxContainer.new()
-	var head := Button.new()
-	head.text = "▾ " + title_text
-	head.flat = true
-	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	head.add_theme_font_size_override("font_size", 14)
-	var body := VBoxContainer.new()
-	head.pressed.connect(
-		func():
-			body.visible = not body.visible
-			head.text = ("▾ " if body.visible else "▸ ") + title_text
-	)
-	box.add_child(head)
-	box.add_child(body)
-	box.set_meta("body", body)
-	return box
-
-
-func _section_body(box: VBoxContainer) -> VBoxContainer:
-	return box.get_meta("body") as VBoxContainer
-
-
 func _selected_track() -> Track:
 	if selected_track_id == "":
 		return null
@@ -659,6 +623,10 @@ func _update_displays_light() -> void:
 	var own: TruthEntity = world.world["own"]
 	_chart.now_time = world.sim_time
 	_chart.set_threat_evidence(world.player_evidence, world.sim_time)
+	_chart.threat_snapshots = world.threat_tracks.ui_snapshots()
+	_threat_hud.refresh(_chart.threat_snapshots, world.sim_time)
+	_threat_list.refresh(_chart.threat_snapshots, world.sim_time)
+	_pager.set_badge("tracks", _active_threat_count())  # §8.3 红点（隐页也更新）
 	_chart.own_pos = Vector2(own.position_east_m, own.position_north_m)
 	_chart.own_course_deg = own.course_deg  # S1-01.4：本艇符号随实际艏向旋转
 	_chart.own_track = _own_track_cache()
@@ -678,10 +646,8 @@ func _update_displays_light() -> void:
 		_chart.system_active = true
 	else:
 		_chart.system_active = false
-	_chart.truth_positions = (
-		TmaUiData.collect_truth(world)
-		if _chart.show_truth or bool(_chart.layers.get("truth", false))
-		else []
+	_chart.truth_positions = TmaUiData.truth_snapshot(
+		world, _chart.show_truth or bool(_chart.layers.get("truth", false))
 	)
 	_chart.queue_redraw()
 
@@ -696,6 +662,15 @@ func _update_displays_light() -> void:
 	_bearing.queue_redraw()
 	_bt_plot.queue_redraw()
 	_res_plot.queue_redraw()
+
+
+## 非 LOST 威胁数：航迹页按钮徽标计数（S109 §8.3，AT-30）。
+func _active_threat_count() -> int:
+	var n: int = 0
+	for s in _chart.threat_snapshots:
+		if str(s["state"]) != "LOST":
+			n += 1
+	return n
 
 
 func _own_track_cache() -> Array:
@@ -723,18 +698,24 @@ func _update_panel() -> void:
 	if world == null:
 		return
 	var status: String = (
-		"Time %.0fs | Meas %d | %dx%s"
-		% [world.sim_time, world.measurements.size(), int(_time_scale), " ⏸" if _paused else ""]
+		UiText.t("status_fmt") % [world.sim_time, world.measurements.size()]
+		+ " | %dx%s" % [int(_time_scale), "（已暂停）" if _paused else ""]
 	)
 	_lbl_status.text = status
+	_lbl_time.text = "T+%.0fs" % world.sim_time  # S109 §8.1 顶栏任务时间
 	var brcs: String = ""
 	if trial.range_m > 0.0:
 		brcs = (
-			"  B%.0f° R%.0fm C%.0f° S%.1fkn"
+			"  方位%.0f° 距离%.0fm 航向%.0f° 航速%.1fkn"
 			% [trial.bearing_deg, trial.range_m, trial.course_deg, trial.speed_kn]
 		)
 	_lbl_selected.text = (
-		"Selected: " + (selected_track_id if selected_track_id != "" else "none") + brcs
+		(
+			UiText.t("selected_none")
+			if selected_track_id == ""
+			else UiText.t("selected_prefix") + selected_track_id
+		)
+		+ brcs
 	)
 	_update_contact_rows()
 
@@ -775,7 +756,7 @@ func _update_contact_rows() -> void:
 			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			b.add_theme_font_size_override("font_size", 14)
 			b.pressed.connect(_on_contact_selected.bind(t.track_id))
-			_panel.add_child(b)
+			_contact_rows_box.add_child(b)
 			_contact_rows[t.track_id] = b
 		var btn := _contact_rows[t.track_id] as Button
 		# REQ-03/06 关联徽章色阶：R（测距门控）绿 / P（预测门控）橙 / B（纯方位）灰
@@ -807,20 +788,20 @@ func _on_contact_selected(track_id: String) -> void:
 		_refresh_fit_view()
 		if _ping_ctrl != null:
 			_ping_ctrl.preferred_track_id = ""
-		_lbl_selected.text = "Selected: none"
+		_lbl_selected.text = UiText.t("selected_none")
 		_dirty = true
 		_rebuild_display_data()
-		_update_status("Selection cleared")
+		_update_status(UiText.t("selection_cleared"))
 		return
 	selected_track_id = track_id
 	_refresh_fit_view()
 	# REQ-02 多回波优先级：命中当前选中 Track 的回波排最前。
 	if _ping_ctrl != null:
 		_ping_ctrl.preferred_track_id = track_id
-	_lbl_selected.text = "Selected: " + track_id
+	_lbl_selected.text = UiText.t("selected_prefix") + track_id
 	_dirty = true
 	_rebuild_display_data()
-	_update_status("Selected " + track_id + " — Auto Fit will use this contact")
+	_update_status(track_id + " " + UiText.t("st_selected_hint"))
 
 
 func _on_layer_toggle(on: bool, key: String) -> void:
@@ -850,7 +831,7 @@ func _on_threat_selected(evidence_id: int) -> void:
 func _on_pause() -> void:
 	_paused = not _paused
 	world.set_paused(_paused)
-	_btn_pause.text = "▶ Resume" if _paused else "⏸ Pause"
+	_btn_pause.text = UiText.t("resume") if _paused else UiText.t("pause")
 
 
 func _on_speed(index: int) -> void:
@@ -870,18 +851,18 @@ func _on_mark() -> void:
 	if m == null:
 		return
 	tracker.mark(m, "S")
-	_update_status("Manual Mark: new contact")
+	_update_status(UiText.t("st_manual_mark"))
 
 
 ## Auto Fit：只拟合 selected_track_id（主动回波 REFIT 复用）。
 func _on_fit_tma() -> void:
 	var sel: Track = _selected_track()
 	if sel == null:
-		_update_status("No contact selected — click a contact first")
+		_update_status(UiText.t("st_no_contact"))
 		return
 	# 门槛按物理 evidence 计数（拖曳 A/B 一次到达 = 一个证据）。
 	if sel.evidence_count() < 4:
-		_update_status("Contact %s needs >= 4 evidences" % sel.track_id)
+		_update_status(UiText.t("evt_needs_evidence") + " " + sel.track_id + " ≥4 条证据")
 		return
 	fcc.solve_and_store(sel, op, world.sim_time)
 	_present_fit(sel.track_id, true)
@@ -901,13 +882,13 @@ func _present_fit(tid: String, announce: bool) -> void:
 		TmaUiData.dot_stack_compute(dot_stack, r, sel)
 		_lbl_tma.text = TmaUiData.summary(r, sel)
 	if announce and not r.is_empty():
-		var st_txt: String = str(r.get("status", "?"))
+		var st_txt: String = UiText.fit(str(r.get("status", "?")))
 		if fcc.is_stale(tid):
-			st_txt = "STALE " + st_txt
+			st_txt = "已过期 · " + st_txt
 		if bool(r.get("success", false)):
 			_update_status(
 				(
-					"TMA %s %s | B%.0f R%.0fm C%.0f S%.1fkn"
+					"TMA %s %s | 方位%.0f° 距离%.0fm 航向%.0f° 航速%.1fkn"
 					% [
 						tid,
 						st_txt,
@@ -919,11 +900,10 @@ func _present_fit(tid: String, announce: bool) -> void:
 				)
 			)
 		else:
-			_update_status("TMA %s: %s" % [tid, st_txt])
+			_update_status(UiText.t("st_tma_result") + " %s：%s" % [tid, st_txt])
 
 
-## S1-05/REQ-B1-03：FULL_AUTO 后台 REFIT——绝不改 selected_contact_id；
-## 只更新 fit_by_track_id[tid]，玩家正在查看 tid 时才刷新前台显示。
+## S1-05/REQ-B1-03：FULL_AUTO 后台 REFIT 只更新 fit_by_track_id[tid]，绝不改选中。
 func _auto_refit_track(tid: String) -> void:
 	var t: Track = tracker.track_by_id(tid)
 	if t == null or t.evidence_count() < 4:
@@ -937,22 +917,24 @@ func _auto_refit_track(tid: String) -> void:
 func _on_enter_solution() -> void:
 	var tid := selected_track_id
 	if tid == "" or trial.range_m <= 0.0:
-		_update_status("Auto Fit TMA first, then submit")
+		_update_status("先自动拟合 TMA，再提交系统解")
 		return
 	var st: String = str(last_fit.get("status", "CONVERGED")) if not last_fit.is_empty() else "NONE"
 	var res: Dictionary = fcc.commit_solution_checked(tid, world.sim_time, st, _lowq_confirmed)
 	if bool(res.get("lowq_pending", false)):
 		_lowq_confirmed = true
-		_update_status("LOW quality (%s) — press Enter Solution again to confirm" % st)
+		_update_status("拟合质量偏低（%s）— 再次点击接受为系统解以确认" % UiText.fit(st))
 		return
 	_lowq_confirmed = false
 	if not bool(res.get("ok", false)):
-		_update_status("Submit rejected: %s" % str(res.get("reason", "?")))
+		_update_status(
+			UiText.t("evt_submit_reject") + "：" + UiText.reject(str(res.get("reason", "?")))
+		)
 		return
 	system_sol = res["solution"]
 	if _weapon_panel != null:
 		_weapon_panel.set_fire_context("SOLUTION ready — %s (src %s)" % [st, tid])
-	_update_status("System Solution submitted for %s (%s)" % [tid, st])
+	_update_status(UiText.t("evt_submit") + " " + tid + "（" + UiText.fit(st) + "）")
 
 
 ## REQ-B1-04：发射模式玩家显式选择（FIRE MODE），执行/联锁在 FireExecutor。
@@ -961,18 +943,29 @@ func _on_fire_torpedo() -> void:
 		return
 	var res: Dictionary = fire_exec.execute(world.weapons, world, _fire_mode, selected_track_id)
 	if not bool(res.get("ok", false)):
-		_update_status("Fire rejected [%s]: %s" % [_fire_mode, str(res.get("reason", "?"))])
+		_update_status(
+			(
+				"%s [%s]：%s"
+				% [
+					UiText.t("evt_fire_reject"),
+					UiText.fire_mode(_fire_mode),
+					UiText.reject(str(res.get("reason", "?")))
+				]
+			)
+		)
 		return
 	var tp: Torpedo = res["tp"]
 	var mode: String = str(res["mode"])
 	if tp != null:
-		_update_status("Torpedo away (%s / %s)" % [tp.torpedo_id, mode])
+		_update_status(
+			"%s（%s / %s）" % [UiText.t("evt_torpedo_away"), tp.torpedo_id, UiText.fire_mode(mode)]
+		)
 		_dirty = true
 		if _weapon_panel != null:
 			_weapon_panel.set_fire_context("In-water: %s (%s)" % [tp.torpedo_id, mode])
 			_weapon_panel.refresh()
 	else:
-		_update_status("Fire rejected — no LOADED tube or invalid program (%s)" % mode)
+		_update_status("%s — 无已装管或参数非法（%s）" % [UiText.t("evt_fire_reject"), UiText.fire_mode(mode)])
 
 
 func _update_status(msg: String) -> void:
@@ -1023,7 +1016,7 @@ func _op_step() -> void:
 				world.measurements.append(gm)
 				_processed_meas += 1
 			_dirty = true
-			_update_status("Autocrew marked a new detection")
+			_update_status(UiText.t("st_autocrew_mark"))
 	_op_panel.refresh(op)
 
 
@@ -1038,7 +1031,7 @@ func _on_towed_deploy() -> void:
 	if t == null:
 		return
 	t.stream()
-	_update_status("Towed array streaming to %.0f m..." % t.commanded_tow_length_m)
+	_update_status(UiText.t("st_towed_stream") + " %.0f m" % t.commanded_tow_length_m)
 
 
 func _on_towed_retract() -> void:
@@ -1046,7 +1039,7 @@ func _on_towed_retract() -> void:
 	if t == null:
 		return
 	t.retrieve()
-	_update_status("Retrieving towed array...")
+	_update_status(UiText.t("st_towed_retract"))
 
 
 func _on_towed_hold() -> void:
@@ -1054,7 +1047,7 @@ func _on_towed_hold() -> void:
 	if t == null:
 		return
 	t.hold()
-	_update_status("Towed length HOLD at %.0f m" % t.actual_tow_length_m)
+	_update_status(UiText.t("st_towed_hold") + " %.0f m" % t.actual_tow_length_m)
 
 
 ## S1-03：缆长命令（frac ∈ 0..1 × max_tow_length_m，来自滑条/预设按钮）。
@@ -1063,7 +1056,7 @@ func _on_towed_length_commanded(frac: float) -> void:
 	if t == null:
 		return
 	t.set_length_command(frac * t.max_tow_length_m)
-	_update_status("Towed length cmd -> %.0f m" % t.commanded_tow_length_m)
+	_update_status(UiText.t("st_towed_cmd") + " %.0f m" % t.commanded_tow_length_m)
 
 
 ## 刷新 TOWED 状态行 + 控件可用性（S1-03；ACT/CMD 分离显示）。
@@ -1119,29 +1112,31 @@ func _on_active_return_selected(i: int) -> void:
 	_on_contact_selected(tid)
 
 
-## 主动回波命中回调（REQ-02）：按 fit_mode 裁决后高亮最高优先命中。
+## 回波命中回调（REQ-02/S109 §5.3/P0-08）：绝不抢玩家当前选中，只刷新面板。
 func _on_ping_echo_hits(fed: Array) -> void:
 	if fed.is_empty():
 		return
 	var tr: Track = fed[0].get("track")
 	if tr == null:
 		return
-	selected_track_id = tr.track_id
-	_refresh_fit_view()
-	_ping_ctrl.preferred_track_id = tr.track_id
 	_dirty = true
-	_update_status("Selected %s — active range on contact" % tr.track_id)
+	_update_status(UiText.t("st_echo_fused") + " " + tr.track_id)
 
 
-## REQ-02：AUTO 命中 / ASSISTED Apply 触发的重拟合（选中 + Auto Fit）。
+## AUTO/Apply 重拟合（REQ-02/S109 §5.3）：只更新命中航迹 per-Track Fit，不切视图。
 func _on_ping_fit_requested(track_id: String) -> void:
-	if track_id != selected_track_id:
-		selected_track_id = track_id
-		_ping_ctrl.preferred_track_id = track_id
+	var t: Track = tracker.track_by_id(track_id)
+	if t == null:
+		return
+	if t.evidence_count() < 4:
+		_ping_ctrl.mark_range_applied(false)
+		_update_status(UiText.t("evt_needs_evidence") + " " + track_id + " ≥4 条证据")
+		return
+	var r: Dictionary = fcc.solve_and_store(t, op, world.sim_time)
+	if track_id == selected_track_id:
+		_present_fit(track_id, true)
 		_dirty = true
-	_on_fit_tma()
-	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == track_id:
-		_ping_ctrl.mark_range_applied(bool(last_fit.get("success", false)))
+	_ping_ctrl.mark_range_applied(bool(r.get("success", false)))
 
 
 ## REQ-B1-01/02：Mark 关联流移入 MarkFlow（LOCKED/SUGGEST/AUTO + 同峰去重）。
@@ -1152,7 +1147,7 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 		selected_track_id = sel_id
 		if _ping_ctrl != null:
 			_ping_ctrl.preferred_track_id = sel_id
-		_lbl_selected.text = "Selected: " + sel_id
+		_lbl_selected.text = UiText.t("selected_prefix") + sel_id
 	_apply_mark_result(res, false)
 
 
@@ -1178,7 +1173,7 @@ func _apply_mark_result(res: Dictionary, rebuild: bool) -> void:
 		if rebuild:
 			_rebuild_display_data()
 			_refresh_mark_panel()
-	_update_status(str(res.get("status", "")))
+	_update_status(UiText.mark_status(str(res.get("status", ""))))
 
 
 func _on_mark_operation(res: Dictionary) -> void:

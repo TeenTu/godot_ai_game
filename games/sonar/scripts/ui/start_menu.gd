@@ -31,7 +31,7 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 12)
 	center.add_child(box)
 	var title := Label.new()
-	title.text = "SONAR — 阶段一"
+	title.text = "潜艇声呐 — 阶段一"
 	title.add_theme_font_size_override("font_size", 30)
 	box.add_child(title)
 	var brief := Label.new()
@@ -42,11 +42,11 @@ func _ready() -> void:
 		+ "的敌方潜艇并防其反击。seed 决定敌方出生位置与声学随机流："
 		+ "「新一局」抽随机 seed，「重玩同 seed」复现上一局完全相同的局面。"
 		+ "游戏内按 M 返回本菜单。\n\n"
-		+ "教程（S1-08）：① SONAR 面板监听宽带，瀑布游标 Mark 建立接触；"
-		+ "② 接触累计 ≥4 条证据后 Fit Details 做 TMA 拟合并提交 System "
-		+ "Solution；③ WEAPONS 面板发射并线控，深度用层带预设；"
-		+ "④ 遇袭时 Countermeasures 放诱饵规避（JAMMER 覆盖 800–1200 Hz）。"
-		+ "⑤ AUTO 面板可切 ASSISTED/FULL_AUTO 让系统自动重拟合（ROE 可调）。"
+		+ "教程（S1-08）：① 声呐面板监听宽带，瀑布游标 Mark 建立接触；"
+		+ "② 接触累计 ≥4 条证据后在「拟合详情」做 TMA 拟合并提交系统 Solution"
+		+ "；③ 武器面板发射并线控，深度用层带预设；"
+		+ "④ 遇袭时在「反制措施」放诱饵规避（JAMMER 覆盖 800–1200 Hz）。"
+		+ "⑤ 「自动化」面板可切 辅助/全自动 让系统自动重拟合（ROE 可调）。"
 	)
 	box.add_child(brief)
 	box.add_child(

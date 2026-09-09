@@ -34,7 +34,7 @@ func _init() -> void:
 	box.add_theme_constant_override("separation", 14)
 	center.add_child(box)
 	var title := Label.new()
-	title.text = "MISSION FAILED"
+	title.text = UiText.t("mission_failed")
 	title.add_theme_font_size_override("font_size", 42)
 	title.add_theme_color_override("font_color", Color(0.95, 0.25, 0.2))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -47,8 +47,8 @@ func _init() -> void:
 	_lbl_time.add_theme_font_size_override("font_size", 16)
 	_lbl_time.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(_lbl_time)
-	box.add_child(_mk_btn("Restart Same Seed", _on_restart))
-	box.add_child(_mk_btn("Main Menu", func() -> void: menu_requested.emit()))
+	box.add_child(_mk_btn(UiText.t("btn_restart_seed"), _on_restart))
+	box.add_child(_mk_btn(UiText.t("btn_main_menu"), func() -> void: menu_requested.emit()))
 
 
 ## 显示终局结果（reason 映射为玩家可读文本；不泄露任何 Truth 信息）。
@@ -56,9 +56,9 @@ func show_result(result: Dictionary, scenario: String, seed_val: int) -> void:
 	_scenario = scenario
 	_seed_val = seed_val
 	var reason: String = str(result.get("reason", ""))
-	_lbl_reason.text = "TORPEDO IMPACT — OWN SHIP LOST" if reason == "TORPEDO_HIT" else reason
+	_lbl_reason.text = UiText.mission(reason) if reason != "" else ""
 	var t: float = float(result.get("time", 0.0))
-	_lbl_time.text = "Mission time %02d:%02d" % [int(t) / 60, int(t) % 60]
+	_lbl_time.text = "%s %02d:%02d" % [UiText.t("mission_time"), int(t) / 60, int(t) % 60]
 	visible = true
 
 
