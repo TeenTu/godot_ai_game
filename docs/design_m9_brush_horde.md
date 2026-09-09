@@ -45,3 +45,11 @@ CPU、节点数和玩家可读性；二者不再混为同一个限制。
 - W1 配额 12，W10 配额 64；W10 单批刷新 4 只；同屏 48 封顶。
 - 2D 普通敌人只保留一个 `MeshInstance3D`（预警圈），共享动画帧资源。
 - `weapon_binding_review.gd`、`play_test.gd` 与 `play_test_m8.gd` 全部通过。
+
+### 2026-09-09 实机复验
+
+- Windows / Compatibility / RTX 4070 Ti SUPER，真实渲染器同时创建 48 只敌人，
+  连续 30 帧采样平均 `5.55ms/frame`；截图由
+  `visual_review.gd --capture-dir=<dir> --horde` 生成。
+- 判笔五帧实机排图确认墨迹层依次呈现聚气、扩张、满弧、回卷、消散；审查器同时
+  断言身体、武器与墨迹层帧号一致。

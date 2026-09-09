@@ -18,6 +18,10 @@ const HANDS: Dictionary = {
 	"idle_up": [Vector2(157, 109)],
 	"idle_left": [Vector2(89, 131)],
 	"idle_right": [Vector2(177, 120)],
+	"idle_down_right": [Vector2(134, 135)],
+	"idle_down_left": [Vector2(91, 140)],
+	"idle_up_left": [Vector2(123, 120)],
+	"idle_up_right": [Vector2(167, 115)],
 	"move_down":
 	[
 		Vector2(103, 133),
@@ -53,6 +57,42 @@ const HANDS: Dictionary = {
 		Vector2(187, 125),
 		Vector2(187, 104),
 		Vector2(178, 118)
+	],
+	"move_down_right":
+	[
+		Vector2(140, 127),
+		Vector2(162, 120),
+		Vector2(164, 121),
+		Vector2(152, 133),
+		Vector2(160, 126),
+		Vector2(164, 112)
+	],
+	"move_down_left":
+	[
+		Vector2(96, 132),
+		Vector2(118, 129),
+		Vector2(123, 127),
+		Vector2(112, 132),
+		Vector2(117, 138),
+		Vector2(131, 115)
+	],
+	"move_up_left":
+	[
+		Vector2(100, 127),
+		Vector2(104, 121),
+		Vector2(108, 122),
+		Vector2(111, 120),
+		Vector2(107, 119),
+		Vector2(109, 120)
+	],
+	"move_up_right":
+	[
+		Vector2(144, 121),
+		Vector2(148, 112),
+		Vector2(149, 116),
+		Vector2(151, 122),
+		Vector2(150, 107),
+		Vector2(145, 117)
 	],
 	"recoil": [Vector2(75, 139), Vector2(64, 77), Vector2(112, 137)],
 	"swing":
@@ -243,5 +283,5 @@ static func resolve(
 		# 单位为武器画布像素；直接等于掌心-握柄换算差，禁止再取反 y。
 		"offset": shift,
 		"flip_h": mirrored,
-		"priority": 1 if action.ends_with("_up") else 3,
+		"priority": 1 if action.begins_with("idle_up") or action.begins_with("move_up") else 3,
 	}

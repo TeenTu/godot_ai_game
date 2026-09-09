@@ -9,9 +9,12 @@ func _initialize() -> void:
 
 func _review() -> void:
 	var capture_dir := ""
+	var capture_horde := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--capture-dir="):
 			capture_dir = arg.trim_prefix("--capture-dir=")
+		elif arg == "--horde":
+			capture_horde = true
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	var player: BoomPlayer = scene.sim.player
@@ -49,6 +52,33 @@ func _review() -> void:
 			var path := capture_dir.path_join("move_" + player.facing_anim + ".png")
 			assert(root.get_texture().get_image().save_png(path) == OK)
 			print("VISUAL_CAPTURE " + path)
+		if capture_horde:
+			scene.sim.set_weapon("greatsword")
+			for index in BoomGame.MAX_ALIVE_CAP:
+				var ring: int = floori(float(index) / 12.0)
+				var angle := TAU * float(index % 12) / 12.0 + float(ring) * 0.16
+				var radius := 3.6 + float(ring) * 2.0
+				var enemy: BoomJelly = scene.sim.spawn_enemy_at(
+					Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
+				)
+				# sim 在定帧截图中停用，直接结束出生缩放，否则所有敌人保持 scale=0。
+				enemy._spawn_ttl = 0.0
+				enemy.scale = Vector3.ONE * enemy.base_scale
+				if enemy._art != null:
+					enemy._art.modulate.a = 1.0
+			var started_usec := Time.get_ticks_usec()
+			for _frame in 30:
+				await process_frame
+			var average_ms := float(Time.get_ticks_usec() - started_usec) / 30_000.0
+			await RenderingServer.frame_post_draw
+			var horde_path := capture_dir.path_join("horde_48.png")
+			assert(root.get_texture().get_image().save_png(horde_path) == OK)
+			print(
+				(
+					"HORDE_RENDER enemies=%d average_frame_ms=%.2f capture=%s"
+					% [scene.sim.enemies.size(), average_ms, horde_path]
+				)
+			)
 	scene.queue_free()
 	await process_frame
 	quit()
