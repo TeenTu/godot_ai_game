@@ -34,6 +34,10 @@ SPRITES = {
     "16_hero_move_up_source_strip.png": ("hero_move_up.png", 6, False),
     "17_hero_move_left_source_strip.png": ("hero_move_left.png", 6, False),
     "18_hero_move_right_source_strip.png": ("hero_move_right.png", 6, False),
+    "32_hero_move_down_right_source_strip.png": ("hero_move_down_right.png", 6, False),
+    "33_hero_move_down_left_source_strip.png": ("hero_move_down_left.png", 6, False),
+    "34_hero_move_up_left_source_strip.png": ("hero_move_up_left.png", 6, False),
+    "35_hero_move_up_right_source_strip.png": ("hero_move_up_right.png", 6, False),
 }
 
 STATIC_ASSETS = {
@@ -277,7 +281,15 @@ def main() -> None:
             raise FileNotFoundError(f"Missing approved reference source: {source}")
         strip = build_strip(source, destination, frame_count, has_checker)
         generated.append((output_name, strip))
-        if output_name in {"hero_move_up.png", "hero_move_left.png", "hero_move_right.png"}:
+        if output_name in {
+            "hero_move_up.png",
+            "hero_move_left.png",
+            "hero_move_right.png",
+            "hero_move_down_right.png",
+            "hero_move_down_left.png",
+            "hero_move_up_left.png",
+            "hero_move_up_right.png",
+        }:
             idle_name = output_name.replace("move", "idle")
             build_directional_idle(strip, idle_name)
         print(f"generated {destination.relative_to(ROOT)} ({destination.stat().st_size} bytes)")

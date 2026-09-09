@@ -18,16 +18,16 @@ extends SceneTree
 ##   [m3-logic] M3 纯逻辑：击杀播报阈值(2/3/5→DOUBLE/TRIPLE/RAMPAGE)、结算星级(2/4/6 波)
 ##   [m3-settle] M3 结算状态机：game over → 0.3x 慢镜头 → 恢复 1.0x 启动结算序列
 ##   [m4-wave]  M4 波次系统（design_m4_waves.md §7）：
-##              1. 配额分段边界 W1/4/5/9/10/封顶 30
+##              1. 怪海配额边界 W1/4/5/9/10/封顶 96
 ##              2. 间歇阶梯 2.5/2.0/1.5/1.0 + 清波后 step(2.4) 不换波、越 2.5s 换波
 ##              3. 属性阶梯 W1/W5/W10 HP 30/40/50、W10 速度 1.7×1.1、W40 封顶 1.3×30=80
 ##              4. 精英标记 W5 最后一只/W4 否；精英 HP120/radius 0.84/速度 ×0.85
 ##              5. 精英死亡金币雨 8×5=40 逐枚入账；波奖励查表 + 台阶 ×2
-##              6. 同屏上限 12 封顶；auto_spawn=false 手动刷怪回归
+##              6. 同屏 48 封顶、批量刷新、四帧分离轮转；auto_spawn=false 回归
 ##   [m5-weapon] M5 武器系统（design_m5_weapons.md §3/§4/§6）：
 ##              1. 注册表 BoomWeapons：两把武器、默认恒为泡泡、未知 id 回退
 ##              2. set_weapon 注入机体数值：大剑 HP 5→7、移速 ×0.85、形态 sword
-##              3. 大剑弧斩：150°×2.9m 内 4 敌一斩各 3 伤、blade_hit、致死计数
+##              3. 判笔重剑：0.32/0.08/0.36 节奏、150°×2.9m、最多 12 敌、独立墨迹层
 ##              4. 无目标不空挥：近战待机保持 NONE，不消耗挥斩
 ##              5. 选武器 UX（main 层）：选单默认泡泡、确认后开战/隐藏选单/
 ##                 max_hp 血条上限重建 7
@@ -178,6 +178,10 @@ func _test_smoke() -> void:
 		"res://assets/images/characters/mist_spirit_float.png",
 		"res://assets/images/backgrounds/rainy_ancient_town.png",
 		"res://assets/images/floors/wet_stone_tiles.png",
+		"res://assets/images/characters/night_patrol/hero_move_down_right.png",
+		"res://assets/images/characters/night_patrol/hero_move_down_left.png",
+		"res://assets/images/characters/night_patrol/hero_move_up_left.png",
+		"res://assets/images/characters/night_patrol/hero_move_up_right.png",
 	]:
 		_check(ResourceLoader.exists(asset_path), "美术资源可加载: %s" % asset_path)
 	for retired_path in [
@@ -203,6 +207,14 @@ func _new_game() -> BoomGame:
 func _test_player_moves() -> void:
 	print("[player-move]")
 	var g := _new_game()
+	for sample in [
+		[Vector2(1.0, 1.0), "down_right"],
+		[Vector2(-1.0, 1.0), "down_left"],
+		[Vector2(-1.0, -1.0), "up_left"],
+		[Vector2(1.0, -1.0), "up_right"],
+	]:
+		g.player.set_move(sample[0])
+		_check(g.player.facing_anim == sample[1], "八向输入解析为 %s" % sample[1])
 	g.input_move = Vector2(0.0, -1.0)
 	var start_z: float = g.player.position.z
 	_run(g, 45)

@@ -32,7 +32,6 @@ static func _add_floor(w: Node3D) -> void:
 	var floor := MeshInstance3D.new()
 	floor.mesh = floor_mesh
 	floor.material_override = floor_mat
-	floor.rotation_degrees.x = -90.0
 	w.add_child(floor)
 
 

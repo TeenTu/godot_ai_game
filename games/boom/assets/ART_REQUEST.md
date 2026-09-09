@@ -157,6 +157,15 @@ Review sheets: `assets/review/night_patrol_weapon_actions_preview.png` and
 - 角色和图标要求透明底；场景背景允许不透明。任何无武器基础角色图必须双手空置。
 - 禁止糖果/果冻/气球质感、嘉年华配色、Bubble Captain、奶蛙、真实枪械、照片级写实及黑色描边。
 
+### 八向跑动扩展（2026-09-09）
+
+- 玩家移动从四向扩展为八向：`down`、`down_left`、`left`、`up_left`、`up`、
+  `up_right`、`right`、`down_right`；每个方向使用 6 帧横向跑动条，约 12 fps。
+- 四条对角线采用同一角色锚点、脚底基线和灯匣比例；输入以 45° 扇区量化，并留约
+  8° 防抖余量，避免摇杆在边界抖动时跳帧。对角线待机取对应跑动首帧，保证松杆不突变。
+- 运行时仍是 2.5D：角色为 `AnimatedSprite3D` 的透明 2D 雪碧图，武器继续通过
+  `WeaponSocket` 独立层和逐帧掌心锚点绑定。
+
 ## Generation manifest
 
 Mode: Codex built-in ImageGen。M5 玩家动画的 prompt 骨架见 `design_m5_weapons.md` §7.1

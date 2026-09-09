@@ -10,7 +10,17 @@ const BASE_MAX_HP: int = 50
 const RADIUS: float = 0.55
 const MOVE_SPEED: float = 5.4
 const INVULN_TIME: float = 0.9
-const FACING_HYSTERESIS: float = 1.18
+const FACING_HYSTERESIS_RAD: float = 0.14  # ≈8°，跨扇区时再换向，避免摇杆边界抖动
+const FACING_DIRECTIONS: Array[String] = [
+	"right",
+	"down_right",
+	"down",
+	"down_left",
+	"left",
+	"up_left",
+	"up",
+	"up_right",
+]
 const WeaponBinding = preload("res://scripts/core/boom_weapon_binding.gd")
 
 ## 2D 帧条规格（design §6.0）：单帧 256×256、横向无缝拼接、透明底。
@@ -24,10 +34,18 @@ const _ANIM_FPS: Dictionary = {
 	"idle_up": 6.0,
 	"idle_left": 6.0,
 	"idle_right": 6.0,
+	"idle_down_right": 6.0,
+	"idle_down_left": 6.0,
+	"idle_up_left": 6.0,
+	"idle_up_right": 6.0,
 	"move_down": 12.0,  # ≈12fps 小步快挪
 	"move_up": 12.0,
 	"move_left": 12.0,
 	"move_right": 12.0,
+	"move_down_right": 12.0,
+	"move_down_left": 12.0,
+	"move_up_left": 12.0,
+	"move_up_right": 12.0,
 	"recoil": 14.0,  # 3 帧远程施法身姿
 	"swing": 16.0,  # 5 帧近战挥击身姿
 	"hurt": 12.0,  # 3 帧受击
@@ -42,10 +60,18 @@ const FORM_STRIPS: Dictionary = {
 		"idle_up": ["hero_idle_up", 1],
 		"idle_left": ["hero_idle_left", 1],
 		"idle_right": ["hero_idle_right", 1],
+		"idle_down_right": ["hero_idle_down_right", 1],
+		"idle_down_left": ["hero_idle_down_left", 1],
+		"idle_up_left": ["hero_idle_up_left", 1],
+		"idle_up_right": ["hero_idle_up_right", 1],
 		"move_down": ["hero_move_unarmed", 6],
 		"move_up": ["hero_move_up", 6],
 		"move_left": ["hero_move_left", 6],
 		"move_right": ["hero_move_right", 6],
+		"move_down_right": ["hero_move_down_right", 6],
+		"move_down_left": ["hero_move_down_left", 6],
+		"move_up_left": ["hero_move_up_left", 6],
+		"move_up_right": ["hero_move_up_right", 6],
 		"recoil": ["hero_ranged_cast_body", 3],
 		"skill_cast": ["hero_skill_cast_body", 4],
 		"knockdown": ["hero_knockdown_unarmed", 4],
@@ -56,10 +82,18 @@ const FORM_STRIPS: Dictionary = {
 		"idle_up": ["hero_idle_up", 1],
 		"idle_left": ["hero_idle_left", 1],
 		"idle_right": ["hero_idle_right", 1],
+		"idle_down_right": ["hero_idle_down_right", 1],
+		"idle_down_left": ["hero_idle_down_left", 1],
+		"idle_up_left": ["hero_idle_up_left", 1],
+		"idle_up_right": ["hero_idle_up_right", 1],
 		"move_down": ["hero_move_unarmed", 6],
 		"move_up": ["hero_move_up", 6],
 		"move_left": ["hero_move_left", 6],
 		"move_right": ["hero_move_right", 6],
+		"move_down_right": ["hero_move_down_right", 6],
+		"move_down_left": ["hero_move_down_left", 6],
+		"move_up_left": ["hero_move_up_left", 6],
+		"move_up_right": ["hero_move_up_right", 6],
 		"swing": ["hero_melee_swing_body", 5],
 		"skill_cast": ["hero_skill_cast_body", 4],
 		"knockdown": ["hero_knockdown_unarmed", 4],
@@ -351,7 +385,8 @@ func _build_weapon_effect(cfg: Dictionary) -> void:
 	_weapon_fx_anim.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	_weapon_fx_anim.pixel_size = cfg.get("effect_pixel", 0.0084)
 	_weapon_fx_anim.position = Vector3.ZERO
-	_weapon_fx_anim.render_priority = 1
+	# 刀光必须压在人物/武器之上；同平面放在背后会被 alpha-cut 身体写入深度后遮掉。
+	_weapon_fx_anim.render_priority = 5
 	_weapon_fx_anim.visible = false
 	_weapon_socket.add_child(_weapon_fx_anim)
 
@@ -456,6 +491,7 @@ func _sync_weapon_effect() -> void:
 	_weapon_fx_anim.visible = _anim.animation == "swing"
 	if not _weapon_fx_anim.visible:
 		return
+	_weapon_fx_anim.animation = "swing"
 	_weapon_fx_anim.pause()
 	_weapon_fx_anim.flip_h = false
 	_weapon_fx_anim.modulate = Color.WHITE
@@ -530,16 +566,19 @@ func set_move(v: Vector2) -> void:
 	move_vec = v
 	if v.length_squared() <= 0.01:
 		return
-	# 已经面向的轴在对角线附近保留，避免微小摇杆噪声来回切换贴图。
-	var horizontal: bool = facing_anim in ["left", "right"]
-	if absf(v.x) > absf(v.y) * FACING_HYSTERESIS:
-		horizontal = true
-	elif absf(v.y) > absf(v.x) * FACING_HYSTERESIS:
-		horizontal = false
-	if horizontal:
-		facing_anim = "right" if v.x > 0.0 else "left"
-	else:
-		facing_anim = "down" if v.y > 0.0 else "up"
+	# 八等分方向：x 右、y 下，按 45° 扇区选择对应跑动条。
+	var angle: float = atan2(v.y, v.x)
+	var sector: int = int(floor((angle + PI / 8.0 + TAU) / (PI / 4.0))) % 8
+	var target: String = FACING_DIRECTIONS[sector]
+	# 在当前方向的扇区边界外再多留约 8°，避免摇杆边界噪声造成动画跳向。
+	var current_index: int = FACING_DIRECTIONS.find(facing_anim)
+	if current_index < 0:
+		facing_anim = target
+		return
+	var current_angle: float = float(current_index) * PI / 4.0
+	var delta_angle: float = fmod(angle - current_angle + PI, TAU) - PI
+	if absf(delta_angle) > PI / 8.0 + FACING_HYSTERESIS_RAD:
+		facing_anim = target
 
 
 ## 播放单次形态动作（灯火灵印施法 / 墨线判笔挥击 / 受击），播完回到基础动画。
@@ -624,6 +663,8 @@ func physics_update(delta: float, bounds_half_x: float, bounds_half_z: float) ->
 		_anim.scale = Vector3(breath, breath, breath)
 		if _weapon_anim != null:
 			_weapon_anim.scale = Vector3(breath, breath, breath)
+		if _weapon_fx_anim != null:
+			_weapon_fx_anim.scale = Vector3(breath, breath, breath)
 		if not _transient_anim:
 			var want := _base_anim_name()
 			if _sprite_frames.has_animation(want) and _anim.animation != want:
