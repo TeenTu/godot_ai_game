@@ -38,9 +38,9 @@ var emission_bus: AcousticEmissionBus = null
 ## 鱼雷 id 前缀（Commit 10：敌方发射器用 "ET"，与玩家 "T" 区分——净化器
 ## 按前缀/集合判定本艇事实 vs 敌方截获）。
 var id_prefix: String = "T"
-var _next_id: int = 1
 # S109 AT-40：World 任务门（非空时注入每条新鱼雷；终局后线导命令统一拒绝）。
 var mission_gate: Callable = Callable()
+var _next_id: int = 1
 
 
 func _init() -> void:
