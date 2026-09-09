@@ -34,6 +34,9 @@ const PALETTES: Array[Color] = [
 	Color(0.55, 0.80, 0.35),  # 黄绿
 ]
 
+static var _paper_frames: SpriteFrames = null
+static var _mist_frames: SpriteFrames = null
+
 var hp: int = MAX_HP
 var radius: float = RADIUS
 # M4 §3.3/§4：波次阶梯与精英参数由 BoomGame 在出生时写入（不改 FSM）。
@@ -61,8 +64,6 @@ var _spawn_ttl: float = 0.0
 var _flash_left: float = 0.0
 var _dying: bool = false
 var _death_t: float = 0.0
-static var _paper_frames: SpriteFrames = null
-static var _mist_frames: SpriteFrames = null
 
 
 func _init() -> void:

@@ -37,6 +37,8 @@ signal player_healed(amount: int)
 ## M5 挥斩 FSM（design_m5_weapons.md §4.2：蓄 → 抡 → 收，纯逻辑可无头断言）。
 enum SwingState { NONE, WINDUP, ACTIVE, RECOVER }
 
+const CrowdSystem = preload("res://scripts/core/boom_crowd_system.gd")
+
 # 百怪夜巡扩展场域：玩家/敌人边界与 20×54 内场栏杆保持约 0.6m 安全边距。
 const PLAYER_BOUND_X: float = 8.8
 const PLAYER_BOUND_Z: float = 25.8
@@ -863,21 +865,7 @@ func _elite_coin_rain(pos: Vector3) -> void:
 
 
 func _tick_enemies(delta: float) -> void:
-	_crowd_tick = (_crowd_tick + 1) % CROWD_SEPARATION_STRIDE
-	for index in enemies.size():
-		var jelly := enemies[index] as BoomJelly
-		if jelly == null:
-			continue
-		jelly.physics_update(
-			delta,
-			player.position,
-			enemies,
-			ENEMY_BOUND_X,
-			ENEMY_BOUND_Z,
-			index,
-			_crowd_tick,
-			CROWD_SEPARATION_STRIDE
-		)
+	CrowdSystem.tick_enemies(self, delta)
 
 
 func spawn_enemy_at(pos: Vector3, elite: bool = false) -> BoomJelly:
@@ -932,20 +920,16 @@ func _spawn_edge_enemy(elite: bool = false) -> void:
 
 
 func _max_alive() -> int:
-	return clampi(MAX_ALIVE_BASE + wave * MAX_ALIVE_PER_WAVE, 16, MAX_ALIVE_CAP)
+	return CrowdSystem.max_alive(self)
 
 
 func _spawn_interval() -> float:
-	return clampf(
-		SPAWN_INTERVAL_START - float(wave - 1) * SPAWN_INTERVAL_STEP,
-		SPAWN_INTERVAL_MIN,
-		SPAWN_INTERVAL_START
-	)
+	return CrowdSystem.spawn_interval(self)
 
 
 @warning_ignore("integer_division")
 func _spawn_burst() -> int:
-	return clampi(2 + (wave - 1) / 3, 2, SPAWN_BURST_MAX)
+	return CrowdSystem.spawn_burst(self)
 
 
 func _begin_wave() -> void:
@@ -958,37 +942,7 @@ func _begin_wave() -> void:
 
 
 func _tick_spawns(delta: float) -> void:
-	if is_over:
-		return
-	# R9：未 begin_match（选武器期间）不开波、不推进波次状态机。
-	if not match_started:
-		return
-	if _between_waves:
-		_next_wave_cd -= delta
-		if _next_wave_cd <= 0.0:
-			wave += 1
-			_begin_wave()
-		return
-	if _spawned_total >= _quota_current:
-		if enemies.is_empty():
-			var bonus := BoomCombatMath.wave_bonus(wave)
-			score += bonus
-			wave_cleared.emit(wave, bonus)
-			_between_waves = true
-			_next_wave_cd = BoomCombatMath.wave_rest(wave)
-		return
-	if not auto_spawn:
-		return
-	if enemies.size() < _max_alive():
-		_spawn_cd -= delta
-		if _spawn_cd <= 0.0:
-			_spawn_cd = _spawn_interval()
-			var room: int = _max_alive() - enemies.size()
-			var remaining: int = _quota_current - _spawned_total
-			var count: int = mini(_spawn_burst(), mini(room, remaining))
-			for _index in count:
-				_spawned_total += 1
-				_spawn_edge_enemy(_is_elite_spawn())
+	CrowdSystem.tick_spawns(self, delta)
 
 
 ## §4 精英周期：每 ELITE_EVERY_N 波的最后一只刷出为精英（W5/10/15…）。

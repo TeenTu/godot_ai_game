@@ -22,15 +22,15 @@ enum AttackKind { RANGED, MELEE }
 ## 所有输出经 BoomGame 统一结算入口 floor(base × (1+伤害加成)) 放大。
 @export var base_attack: int = 10
 # ---- 普攻（melee）----
-@export var swing_windup: float = 0.24  # 前摇（可走、锁定朝向）
-@export var swing_active: float = 0.12  # 判定窗（锁移动）
-@export var swing_recover: float = 0.34  # 后摇（可移动）
+@export var swing_windup: float = 0.32  # 重剑前摇（可走、锁定朝向）
+@export var swing_active: float = 0.08  # 瞬时释放窗（锁移动）
+@export var swing_recover: float = 0.36  # 带惯性的收势（可移动）
 @export var swing_arc_deg: float = 150.0  # 弧斩张角
 @export var swing_range: float = 2.9  # 斩距（世界单位）
-@export var swing_max_targets: int = 6  # 单斩命中上限
+@export var swing_max_targets: int = 12  # 怪海单斩命中上限
 @export var swing_dmg: int = 3
 @export var swing_knock: float = 6.0  # 斩击击退初速（> jelly.KNOCK_SPEED=4.6）
-@export var swing_freeze: float = 0.05  # 斩中顿帧（0.5s 门控）
+@export var swing_freeze: float = 0.065  # 斩中顿帧（0.5s 门控）
 # ---- 机体数值 ----
 @export var move_mult: float = 1.0  # 移动速度倍率（BoomPlayer.MOVE_SPEED=5.4 之上）
 @export var max_hp_bonus: int = 0  # HP 上限增量（M8：泡泡 0 → 50；大剑 +20 → 70，§4.1）
