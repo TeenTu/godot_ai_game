@@ -101,29 +101,41 @@ func _initialize() -> void:
 		"other track's solution rejected for SOLUTION fire (A has no own solution)",
 	)
 
-	# ---- 验收 6/7：LOCKED 拒绝不污染；SUGGEST 未 Apply 不改 Track ----
+	# ---- 验收 6/7（S1-11 §3.3/D-13 修订）：显式选组 = 直接追加命令，不受
+	# 8° 自动关联门否决（8° 只留给自动关联评分）；SUGGEST 未 Apply 不改 Track。
+	# 用独立空组 tc 验证，避免污染后面 SUGGEST/Apply 用例的 ta/tb 证据。
 	var world := World.new()
 	var flow := MarkFlow.new()
 	flow.tracker = tr
 	flow.op = op
 	flow.world = world
 	flow.association_mode = MarkFlow.ASSOC_LOCKED
-	flow.active_group_id = ta.track_id
+	var tc: Track = tr.create_empty_track()
+	flow.active_group_id = tc.track_id
 	var n_meas: int = world.measurements.size()
 	var n_tracks: int = tr.count()
-	var sel_before: String = ta.track_id
-	var gate_res: Dictionary = flow.handle_mark(150.0, false, _peak_row(150.0), sel_before)
+	var first_res: Dictionary = flow.handle_mark(10.0, false, _peak_row(10.0), "")
 	_assert(
 		fails,
-		str(gate_res.get("status", "")).begins_with("Mark ignored"),
-		"LOCKED inconsistent mark rejected with explicit message",
+		first_res.get("track") == tc and tc.evidence_count() == 1,
+		"explicit empty group accepts its first measurement (no gate)",
+	)
+	var far_res: Dictionary = flow.handle_mark(150.0, false, _peak_row(150.0), "")
+	_assert(
+		fails,
+		not str(far_res.get("status", "")).begins_with("Mark ignored"),
+		"explicit group mark is a command, not gated by auto-association",
 	)
 	_assert(
 		fails,
-		world.measurements.size() == n_meas and tr.count() == n_tracks,
-		"LOCKED failure pollutes nothing (no new measurement/track)",
+		far_res.get("track") == tc and tc.evidence_count() == 2,
+		"explicit group append lands on the chosen group (no 8-deg gate)",
 	)
-	_assert(fails, ta.evidence_count() == 3, "LOCKED failure does not modify target track")
+	_assert(
+		fails,
+		world.measurements.size() == n_meas + 2 and tr.count() == n_tracks,
+		"explicit group append adds exactly one measurement each, no new track",
+	)
 
 	flow.association_mode = MarkFlow.ASSOC_SUGGEST
 	flow.active_group_id = tb.track_id

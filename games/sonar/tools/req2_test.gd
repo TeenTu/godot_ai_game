@@ -474,8 +474,14 @@ func _r2_09_true_mode_mark(fails: Array) -> void:
 		],
 	}
 	var m_rel: Measurement = op.create_mark(31.0, 100.0, "", false, row)
+	# S1-11 §3.3/AT-49：记录光标原始方位（31 → 真方位 121），不再吸附 6° 内
+	# 最近峰（峰只用于回填 SE/谱线等元数据）。
 	_close(
-		fails, "R2-09a rel: nearest peak 33 -> true 123", m_rel.measured_bearing_deg, 123.0, 1e-6
+		fails,
+		"R2-09a rel: cursor bearing kept (no peak snap) -> true 121",
+		m_rel.measured_bearing_deg,
+		121.0,
+		1e-6
 	)
 	var m_true: Measurement = op.create_mark(123.0, 100.0, "", true, row)
 	_close(

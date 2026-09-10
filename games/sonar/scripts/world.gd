@@ -64,6 +64,8 @@ var _ping_session: Dictionary = {}
 # 已结算回波摘要缓冲（take_arrived_echoes 排空）。独立于会话存活：远目标回波 τ 可能远超冷却期，会话提前清空也不得丢已结算结果。
 var _ping_results: Array = []
 var _next_ping_id: int = 1
+# S1-11 §3.5：最近一次监听窗关闭的 ping_id（-1=无）。驱动 UI 侧回波批次结算。
+var _last_closed_ping_id: int = -1
 
 # ---- S1-07 §9（Commit 9）：敌方出生/感知/Doctrine；同一声学服务+净化证据 ----
 var _player_torpedo_shadows: Array = []
@@ -177,6 +179,7 @@ func load_scenario(scenario: Dictionary) -> void:
 	_ping_session = {}
 	_ping_results.clear()
 	_next_ping_id = 1
+	_last_closed_ping_id = -1
 	if emission_bus != null:
 		emission_bus.clear()
 
@@ -831,6 +834,9 @@ func issue_ping() -> bool:
 		"cooldown_until": sim_time + ping_cooldown_s,
 		"echoes": echoes,
 		"returned_count": 0,
+		# S1-11 §3.5：本 Ping 的净化回波批次（到达顺序无关的一对一分配输入）。
+		"batch": [],
+		"batch_processed": false,
 		"sensor": sensor,
 	}
 	_next_ping_id += 1
@@ -900,6 +906,81 @@ func take_arrived_echoes() -> Array:
 	return out
 
 
+## S1-11 §3.5：监听窗关闭后的本 Ping 回波批次结算。先构造 Return×TT 航迹代价
+## 矩阵做一对一分配（ActiveReturnBatch，顺序无关 + 歧义保留），再把已归属回波
+## 融合进对应威胁航迹；未归属回波仍作为净化证据保留在 player_evidence，绝不
+## 按到达顺序强塞（AT-51..54）。批次只结算一次（幂等）。
+func _process_active_return_batch() -> void:
+	if bool(_ping_session.get("batch_processed", false)):
+		return
+	_ping_session["batch_processed"] = true
+	var batch: Array = _ping_session.get("batch", [])
+	if batch.is_empty():
+		return
+	var targets: Array = []
+	for tr in threat_tracks.tracks():
+		var snap: Dictionary = threat_tracks.estimate_snapshot(tr)
+		var rng: float = -1.0
+		var rng_sig: float = 100.0
+		if snap.get("range_est_m") != null:
+			rng = float(snap["range_est_m"])
+			if snap.get("range_sigma_m") != null:
+				rng_sig = float(snap["range_sigma_m"])
+		(
+			targets
+			. append(
+				{
+					"id": str(snap.get("track_id", "")),
+					"bearing_deg": float(snap.get("bearing_est_deg", 0.0)),
+					"bearing_sigma_deg": float(snap.get("bearing_sigma_deg", 2.0)),
+					"range_m": rng,
+					"range_sigma_m": rng_sig,
+					"time": float(snap.get("last_update_time", 0.0)),
+					"freqs": [],
+				}
+			)
+		)
+	var returns: Array = []
+	for i in range(batch.size()):
+		var e: Dictionary = batch[i]
+		(
+			returns
+			. append(
+				{
+					"id": _batch_return_id(i),
+					"bearing_deg": float(e.get("bearing_deg", 0.0)),
+					"bearing_sigma_deg": float(e.get("bearing_sigma_deg", 2.0)),
+					"range_m": float(e.get("measured_range_m", -1.0)),
+					"range_sigma_m": float(e.get("range_sigma_m", 100.0)),
+					"time": float(e.get("available_time", sim_time)),
+					"freqs": [],
+				}
+			)
+		)
+	var res: Dictionary = ActiveReturnBatch.assign(returns, targets)
+	var assigns: Dictionary = res.get("assignments", {})
+	for i in range(batch.size()):
+		var rid: String = _batch_return_id(i)
+		if assigns.has(rid):
+			# 已归属：融合进对应 TT 航迹（带 batch_key 防止同 Ping 二次占用）。
+			var dto: Dictionary = batch[i].duplicate()
+			dto["batch_key"] = str(_ping_session.get("ping_id", -1))
+			player_evidence.append(threat_tracks.fuse_active_return(dto, sim_time))
+		else:
+			# 未归属/关联不确定：证据保留，供 UI 建立临时主动接触（不偷用身份）。
+			player_evidence.append(batch[i])
+
+
+## 批次内回波稳定 id（顺序无关，仅用于分配索引）。
+func _batch_return_id(idx: int) -> String:
+	return "P%d-R%03d" % [int(_ping_session.get("ping_id", -1)), idx]
+
+
+## S1-11 §3.5：最近关闭监听窗的 ping_id（-1=无）。UI 侧据此结算普通接触批次。
+func last_closed_ping_id() -> int:
+	return _last_closed_ping_id
+
+
 ## 推进 PingSession（tick 每步调用）：结算到点回波 + 状态转移。
 func _advance_ping_session() -> void:
 	if _ping_session.is_empty():
@@ -911,6 +992,8 @@ func _advance_ping_session() -> void:
 			# 监听窗结束：丢弃仍未到达/超出窗口的回波（REQ-04，不可接收），
 			# 再按已返回 detected 数判 RETURN/NO_RETURN。窗口不因远目标延长。
 			PingSessionRules.drop_unsettled(_ping_session)
+			_process_active_return_batch()
+			_last_closed_ping_id = int(_ping_session.get("ping_id", -1))
 			_ping_session["state"] = (
 				"RETURN" if int(_ping_session["returned_count"]) > 0 else "NO_RETURN"
 			)
@@ -984,10 +1067,12 @@ func _settle_due_echoes() -> void:
 		if detected:
 			_ping_session["returned_count"] = int(_ping_session["returned_count"]) + 1
 			measurements.append(m)
-			# S109 §4.4/P0-04：净化回波进威胁链并自动距离—方位融合（AT-13/14）。
-			player_evidence.append(
-				threat_tracks.fuse_active_measurement(
-					m, float(own.position_east_m), float(own.position_north_m), sim_time
+			# S1-11 §3.5：回波先入本 Ping 批次，监听窗关闭后统一做一对一分配再融合，
+			# 保证同一 Ping 内每条 Return 只被消费一次、每条航迹只吸收一条回波
+			# （AT-51..54；与回波到达/遍历顺序无关）。
+			_ping_session["batch"].append(
+				threat_tracks.active_return_dto(
+					m, float(own.position_east_m), float(own.position_north_m)
 				)
 			)
 

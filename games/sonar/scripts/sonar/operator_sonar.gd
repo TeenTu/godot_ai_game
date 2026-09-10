@@ -735,17 +735,11 @@ func create_mark(
 	# （测试/直接调用）保留一次加噪模拟测量误差。
 	# REQ-B1-02：点击值即玩家所见测量值——无峰自由点击直接用点击方位，
 	# 不再重抽随机误差（物理噪声只在行生成时抽一次）；峰命中沿用峰方位。
+	# S1-11 §3.3/AT-49：玩家光标原始方位即 Measurement 方位——不在 6° 门内吸附
+	# 峰值、不重新抽一次噪声。峰匹配只用于回填 SE/谱线/镜像歧义等元数据。
 	var brg_in: float = bearing_deg
-	if not matched.is_empty() and matched.has("bearing_deg"):
-		brg_in = float(matched["bearing_deg"])
 	if as_true:
-		# REQ-10：匹配峰存的是显示 frame（艇艏相对）方位——TRUE 模式必须
-		# 按该行艏向转回真方位，绝不把相对方位直写为真方位；无峰时输入
-		# 已是真方位，直接用。
-		if matched.is_empty():
-			m.measured_bearing_deg = NavUtils.wrap360(brg_in)
-		else:
-			m.measured_bearing_deg = NavUtils.rel_to_true(own_course, brg_in)
+		m.measured_bearing_deg = NavUtils.wrap360(brg_in)
 	else:
 		m.measured_bearing_deg = NavUtils.rel_to_true(own_course, brg_in)
 	m.bearing_sigma_deg = sigma
@@ -811,8 +805,22 @@ func create_mark_group(
 	return out
 
 
-## Autocrew（默认关闭）：对强检测自动 Mark。
-## 返回本时刻自动产生的测量（调用方负责 feed tracker）。
+## S1-11 §3.3/AT-49：Mark 被删除后允许在同一位置重新标记——清掉该物理
+## Measurement 的 row/peak 去重缓存（去重只针对"仍存在的既有 Mark"）。
+func drop_mark_cache(m: Measurement) -> void:
+	if m == null:
+		return
+	for k in _marks_by_row_peak.keys():
+		if _marks_by_row_peak[k] == m:
+			_marks_by_row_peak.erase(k)
+
+
+## row_id+peak_id 去重缓存条目数（测试/诊断用）。
+func mark_cache_size() -> int:
+	return _marks_by_row_peak.size()
+
+
+## Autocrew（默认关闭）：对强检测自动 Mark。## 返回本时刻自动产生的测量（调用方负责 feed tracker）。
 ## S1-03B：①携带被点最新行上下文（阵心/时刻/阵轴，不再用无行缺省）；②拖曳
 ## 阵 A/B 同 pair 只处理一次并走 create_mark_group（返回共享 evidence 的两支），
 ## 调用方须把同 evidence 镜像支并入同一 Track（不双计、不建第二个目标）。

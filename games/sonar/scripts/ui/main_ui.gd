@@ -1140,8 +1140,13 @@ func _on_ping_fit_requested(track_id: String) -> void:
 
 
 ## REQ-B1-01/02：Mark 关联流移入 MarkFlow（LOCKED/SUGGEST/AUTO + 同峰去重）。
+## S1-11 §3.3/AT-48：仅查看/切换 Contact 不隐式改变 Mark 归属；Shift＋点击才
+## 显式把该点追加到当前查看的接触（显式命令，不过 8° 自动关联门）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
-	var res: Dictionary = mark_flow.handle_mark(x_value, as_true, row, selected_track_id)
+	var explicit_append: bool = Input.is_key_pressed(KEY_SHIFT) and selected_track_id != ""
+	var res: Dictionary = mark_flow.handle_mark(
+		x_value, as_true, row, selected_track_id, explicit_append
+	)
 	var sel_id: String = str(res.get("select", ""))
 	if sel_id != "":
 		selected_track_id = sel_id
