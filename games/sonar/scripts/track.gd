@@ -61,6 +61,12 @@ var depth_assessment_source: String = ""  # 观测模型/来源标签（如 "PIT
 var depth_assessment_confidence: float = 0.0  # 0..1
 var depth_assessment_updated_s: float = -1.0
 
+## S1-11 §3.2：自动 Mark 来源标签 -> 计数（"自动·被动"/"自动·主动"/"自动·鱼雷威胁"）。
+## 手动改绑/降权不抹除来源台账，仅影响该组归属。
+var auto_mark_sources: Dictionary = {}
+## S1-11 §3.7：最近一次 ClassificationAssessment（概率/依据/置信度/时间/来源 id）。
+var classification_assessment: Dictionary = {}
+
 var _known_evidence: Dictionary = {}  # 已登记 evidence_id（revision 去重用）
 
 
@@ -93,6 +99,31 @@ func depth_assessment_summary() -> Dictionary:
 		"confidence": depth_assessment_confidence,
 		"updated_s": depth_assessment_updated_s,
 	}
+
+
+## S1-11 §3.2：自动 Mark 来源标签摘要（UI 展示用；无自动来源时显示"手动"）。
+func mark_source_summary() -> String:
+	if auto_mark_sources.is_empty():
+		return "手动" if last_association_mode == "manual" else ""
+	var parts: Array = []
+	for k in auto_mark_sources.keys():
+		parts.append("%s×%d" % [k, int(auto_mark_sources[k])])
+	return " ".join(parts)
+
+
+## S1-11 §3.7：写入一次分类评估（UI/地图只读使用）。
+func set_classification(a: Dictionary) -> void:
+	classification_assessment = a
+
+
+## 分类概率视图（无评估时为空）。
+func classification_view() -> Dictionary:
+	return classification_assessment.get("probabilities", {})
+
+
+## 渐进分类标签（无评估时"未知接触"）。
+func classification_label() -> String:
+	return str(classification_assessment.get("label", "未知接触"))
 
 
 ## 创建一个新接触。source_type 取 "S"/"E"/"R"/"V"/"M"。
