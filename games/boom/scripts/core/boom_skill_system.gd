@@ -11,6 +11,8 @@ signal skill_ready(skill_id: String)
 signal skill_fired(skill_id: String, result: Variant)
 # 金币解锁成功
 signal skill_unlocked(skill_id: String)
+# M11 首领奖励：当前局主动技能已进化。
+signal skill_evolved(skill_id: String)
 
 # 新武器专属主动技能冷却（秒）。
 const FAN_COOLDOWN: float = 3.0
@@ -92,6 +94,8 @@ var weapon_id: String = "bubble"
 var tree: Array[String] = []
 # M7 本局装备槽（顺序 = 手势槽：0=tap / 1=←swipe / 2=→swipe）。
 var equipped: Array[String] = []
+## M11 本局主动技能进化，不写跨局存档；restart/reset 时清空。
+var evolved_skills: Array[String] = []
 
 
 func _init() -> void:
@@ -243,6 +247,15 @@ func try_unlock(skill_id: String) -> bool:
 	return true
 
 
+## 首领奖励免费解锁：仍严格检查武器树和前置，但不消费金币。
+func _grant_free_unlock(skill_id: String) -> bool:
+	if is_unlocked(skill_id) or unlock_cost(skill_id) < 0:
+		return false
+	BoomSave.unlock_skill(weapon_id, skill_id)
+	skill_unlocked.emit(skill_id)
+	return true
+
+
 ## 装备进槽：非本树 / 未解锁 / 重复 / 超过 MAX_EQUIPPED 拒绝。
 func equip(skill_id: String) -> bool:
 	if not in_current_tree(skill_id) or not is_unlocked(skill_id) or equipped.has(skill_id):
@@ -260,6 +273,42 @@ func unequip(skill_id: String) -> bool:
 	equipped.erase(skill_id)
 	_refresh_passives()
 	return true
+
+
+func _first_evolvable_active() -> String:
+	for skill_id in equipped:
+		var skill := get_skill(skill_id)
+		if skill != null and not skill.is_passive and not evolved_skills.has(skill_id):
+			return skill_id
+	for skill_id in tree:
+		var skill := get_skill(skill_id)
+		if (
+			skill != null
+			and not skill.is_passive
+			and is_unlocked(skill_id)
+			and not evolved_skills.has(skill_id)
+		):
+			return skill_id
+	return ""
+
+
+func _evolve_skill(skill_id: String) -> bool:
+	var skill := get_skill(skill_id)
+	if (
+		skill == null
+		or skill.is_passive
+		or not in_current_tree(skill_id)
+		or not is_unlocked(skill_id)
+		or evolved_skills.has(skill_id)
+	):
+		return false
+	evolved_skills.append(skill_id)
+	skill_evolved.emit(skill_id)
+	return true
+
+
+func _is_evolved(skill_id: String) -> bool:
+	return evolved_skills.has(skill_id)
 
 
 ## M7R 被动加成落到对局管线（equip/unequip/换树后刷新；game 未注入时跳过）。
@@ -324,6 +373,16 @@ func cast_skill(skill_id: String) -> void:
 
 
 func _dispatch_cast(skill_id: String) -> Variant:
+	if evolved_skills.has(skill_id):
+		match skill_id:
+			"lamp_firefly_volley":
+				return game.cast_fan_shot(7, deg_to_rad(20.0))
+			"lamp_soul_beacon":
+				return game.cast_ring_shot(18)
+			"brush_ink_wave":
+				return game.cast_brush_ink_wave(true)
+			"brush_seal_domain":
+				return game.cast_brush_seal_domain(true)
 	var method := CAST_METHODS.get(skill_id, "") as String
 	if method == "":
 		return null
@@ -340,6 +399,7 @@ func get_state() -> Dictionary:
 			ready_ids.append(skill_id)
 	var state: Dictionary = {
 		"equipped": equipped.duplicate(),
+		"evolved": evolved_skills.duplicate(),
 		"ready": ready_ids,
 		"weapon": weapon_id,
 	}
@@ -353,6 +413,7 @@ func get_state() -> Dictionary:
 func reset() -> void:
 	for skill: BoomSkill in pool.values():
 		skill.cooldown_left = 0.0
+	evolved_skills.clear()
 
 
 ## 测试辅助：直接写入解锁（绕过存档扣币，供无头测试构造前置状态）。

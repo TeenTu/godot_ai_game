@@ -1,12 +1,8 @@
 class_name BoomGame
 extends Node3D
 ## 《B-Boom》核心对局（零 UI 依赖，可无头逻辑测试）。
-##   - 玩家：摇杆输入驱动（input_move），自动瞄准最近敌人、自动开火。
-##   - 敌人：纸偶/雾灵（BoomJelly），波次刷怪，前摇 + 冲撞。
-##   - 灵印投射物：对象池，命中扣血 + 击退；击杀计分连击。
 ##   - 手感：击杀顿帧（0.5s 内最多一次全停）、击退、squash 由敌人自身做。
 ## 本类只发信号 + 暴露数据；视觉表现（粒子/震屏/音效/HUD）由 main.gd 订阅。
-
 signal enemy_damaged(pos: Vector3, dir: Vector3)
 ## M8 统一输出结算广播（§5/§6）：dmg=最终结算伤害，crit=是否暴击。
 signal enemy_hit(pos: Vector3, dmg: int, crit: bool)
@@ -33,12 +29,20 @@ signal level_up(new_level: int)
 signal stat_applied(kind: String)
 ## M7 应急维修回复（heal 技能；amount 为实际回复量）。
 signal player_healed(amount: int)
+## M11 首领事件；逻辑层只发状态，HUD/音效由 main.gd 订阅。
+signal boss_spawned(boss: BoomBoss)
+signal boss_attack_telegraphed(kind: String, duration: float)
+signal boss_attack_released(kind: String, pos: Vector3)
+signal boss_phase_changed(phase_index: int)
+signal boss_defeated(encounter_index: int, pos: Vector3)
+signal boss_reward_completed(reward_id: String)
 
 ## M5 挥斩 FSM（design_m5_weapons.md §4.2：蓄 → 抡 → 收，纯逻辑可无头断言）。
 enum SwingState { NONE, WINDUP, ACTIVE, RECOVER }
 
 const CrowdSystem = preload("res://scripts/core/boom_crowd_system.gd")
 const MeleeSystem = preload("res://scripts/core/boom_melee_system.gd")
+const BossSystem = preload("res://scripts/core/boom_boss_system.gd")
 
 # 百怪夜巡扩展场域：玩家/敌人边界与 20×54 内场栏杆保持约 0.6m 安全边距。
 const PLAYER_BOUND_X: float = 8.8
@@ -112,6 +116,14 @@ const SPAWN_INTERVAL_STEP: float = 0.03
 const SPAWN_BURST_MAX: int = 4
 const CROWD_SEPARATION_STRIDE: int = 4
 
+# ---- M11 首领系统：与普通怪波次 HP/攻击曲线彻底分离 ----
+const BOSS_EVERY_N_WAVES: int = 10
+const BOSS_PROJECTILE_POOL_SIZE: int = 32
+const BOSS_GHOSTFIRE_SPEED: float = 6.8
+const BOSS_ADD_CAP: int = 6
+const BOSS_ADD_INTERVAL: float = 2.4
+const BOSS_KILL_SCORE: int = 500
+
 # ---- M7 成长系统（design_m7_progression.md）----
 const RING_COUNT: int = 12  # ring 环形弹幕发数
 const TWIN_COUNT: int = 2  # M7R twin 双管重弹发数（平行弹，落点聚合即重击）
@@ -126,6 +138,10 @@ var player: BoomPlayer
 var enemies: Array = []
 var bullets: Array = []  # BoomBullet 池
 var props: Array = []
+var boss_projectiles: Array = []  # BoomBossProjectile 固定池
+var boss: BoomBoss = null
+var boss_reward_pending: bool = false
+var boss_chest: BoomBossChest = null
 var wave: int = 1
 var score: int = 0
 var coins: int = 0
@@ -178,6 +194,8 @@ var _swing_step: Dictionary = {}
 var _swing_facing: Vector3 = Vector3.FORWARD
 var _last_swing_freeze: float = -10.0  # 斩中顿帧 0.5s 门控
 var _crowd_tick: int = 0
+var _boss_projectile_index: int = 0
+var _boss_add_cd: float = BOSS_ADD_INTERVAL
 ## R3 死亡表现窗：已死 jelly 移出 enemies 后仍挂树演 0.2s 压扁/淡出（不阻塞结算）。
 var _corpses: Array = []
 
@@ -192,6 +210,10 @@ func _init() -> void:
 		var b := BoomBullet.new()
 		bullets.append(b)
 		add_child(b)
+	for i in BOSS_PROJECTILE_POOL_SIZE:
+		var projectile := BoomBossProjectile.new()
+		boss_projectiles.append(projectile)
+		add_child(projectile)
 	restart()
 
 
@@ -213,6 +235,7 @@ func step(delta: float) -> void:
 	_tick_player(delta)
 	_tick_enemies(delta)
 	_tick_bullets(delta)
+	BossSystem.tick_projectiles(self, delta)
 	_tick_props(delta)
 	_tick_spawns(delta)
 	_tick_corpses(delta)
@@ -233,6 +256,10 @@ func restart() -> void:
 	skill_threefold_seal = false
 	skill_brush_verdict = false
 	_ranged_shot_index = 0
+	boss = null
+	boss_reward_pending = false
+	_boss_projectile_index = 0
+	_boss_add_cd = BOSS_ADD_INTERVAL
 	weapon_cfg = BoomWeapons.get_def(BoomWeapons.default_id())
 	player.apply_weapon(weapon_cfg)
 	_apply_stats_to_player()
@@ -269,6 +296,8 @@ func restart() -> void:
 	player.set_move(Vector2.ZERO)
 	for b in bullets:
 		(b as BoomBullet).recycle()
+	for projectile in boss_projectiles:
+		(projectile as BoomBossProjectile).recycle()
 	for e in enemies:
 		if is_instance_valid(e):
 			e.queue_free()
@@ -277,6 +306,9 @@ func restart() -> void:
 		if is_instance_valid(prop):
 			prop.queue_free()
 	props.clear()
+	if boss_chest != null and is_instance_valid(boss_chest):
+		boss_chest.queue_free()
+	boss_chest = null
 	for corpse in _corpses:
 		if is_instance_valid(corpse):
 			corpse.queue_free()
@@ -550,16 +582,16 @@ static func result_stars(wave: int) -> int:
 
 ## 爆裂弹幕：朝最近敌人方向射出 FAN_COUNT 发扇形散弹（复用子弹池，走既有命中/回收）。
 ## 无目标时朝玩家朝向扇形散射。返回实际发射数（顿帧/特效由上层订阅 shot_fired）。
-func cast_fan_shot() -> int:
+func cast_fan_shot(projectile_count: int = FAN_COUNT, spread: float = FAN_SPREAD_RAD) -> int:
 	var muzzle: Vector3 = player.position + player.basis * player.muzzle.position
 	var base_dir: Vector3 = player.facing
 	var target := _nearest_enemy(weapon_cfg.attack_range)
 	if target != null:
 		base_dir = _aim_dir(muzzle, target)
 	var count: int = 0
-	var span := FAN_SPREAD_RAD
-	var step_rad := 0.0 if FAN_COUNT == 1 else span * 2.0 / float(FAN_COUNT - 1)
-	for i in FAN_COUNT:
+	var span := spread
+	var step_rad := 0.0 if projectile_count == 1 else span * 2.0 / float(projectile_count - 1)
+	for i in projectile_count:
 		var off := -span + float(i) * step_rad
 		var dir := base_dir.rotated(Vector3.UP, off)
 		_spawn_bullet(muzzle, dir, "fan")
@@ -612,8 +644,8 @@ func cast_aoe_nuke() -> Array:
 
 
 ## M7 ring 环形弹幕薄包装（实现见 BoomGameSkillCasts.ring_shot）。
-func cast_ring_shot() -> int:
-	return BoomGameSkillCasts.ring_shot(self)
+func cast_ring_shot(projectile_count: int = RING_COUNT) -> int:
+	return BoomGameSkillCasts.ring_shot(self, projectile_count)
 
 
 ## M7 heal 应急维修薄包装（实现见 BoomGameSkillCasts.repair）。
@@ -631,12 +663,12 @@ func cast_whirl() -> int:
 	return BoomGameSkillCasts.whirl(self)
 
 
-func cast_brush_ink_wave() -> Array:
-	return BoomGameSkillCasts.ink_wave(self)
+func cast_brush_ink_wave(evolved: bool = false) -> Array:
+	return BoomGameSkillCasts.ink_wave(self, evolved)
 
 
-func cast_brush_seal_domain() -> Array:
-	return BoomGameSkillCasts.seal_domain(self)
+func cast_brush_seal_domain(evolved: bool = false) -> Array:
+	return BoomGameSkillCasts.seal_domain(self, evolved)
 
 
 ## 距 from 平面距离最近且不在 exclude 内、未死的敌人（闪电链找下一跳用）。
@@ -695,7 +727,8 @@ func _tick_bullets(delta: float) -> void:
 			var jelly := e as BoomJelly
 			if jelly == null or jelly.is_dead() or jelly.hp <= 0:
 				continue
-			if bullet.position.distance_to(jelly.position) <= BoomJelly.HIT_RADIUS:
+			var hit_radius := maxf(BoomJelly.HIT_RADIUS, jelly.radius)
+			if bullet.position.distance_to(jelly.position) <= hit_radius:
 				var hit_dir: Vector3 = bullet.vel.normalized()
 				bullet.recycle()
 				enemy_damaged.emit(bullet.position, hit_dir)
@@ -760,13 +793,14 @@ func _finalize_prop(prop: BoomProp) -> void:
 
 
 func _finalize_kill(jelly: BoomJelly) -> void:
+	var defeated_boss := jelly as BoomBoss
 	kills += 1
 	if combo_left > 0.0:
 		combo += 1
 	else:
 		combo = 1
 	combo_left = COMBO_WINDOW
-	score += KILL_SCORE
+	score += BOSS_KILL_SCORE if defeated_boss != null else KILL_SCORE
 	# 怪种独立经验；人物升级曲线不读取波次/配额/怪物数量。
 	var xp_gain: int = jelly.xp_reward()
 	exp_sys.add_xp(xp_gain)
@@ -779,6 +813,8 @@ func _finalize_kill(jelly: BoomJelly) -> void:
 	enemy_died.emit(jelly.position)
 	if jelly.elite:
 		_elite_coin_rain(jelly.position)
+	if defeated_boss != null:
+		BossSystem.finalize_defeat(self, defeated_boss)
 	enemies.erase(jelly)
 	# R3：移出逻辑数组（enemies）但延迟销毁——由 BoomJelly 的表现窗 Tween 完成后
 	# queue_free（_tick_corpses 兜底驱动，避免无头环境 tween 不跑导致的悬挂）。
@@ -828,8 +864,12 @@ func _tick_enemies(delta: float) -> void:
 	CrowdSystem.tick_enemies(self, delta)
 
 
-func spawn_enemy_at(pos: Vector3, elite: bool = false) -> BoomJelly:
+func spawn_enemy_at(pos: Vector3, elite: bool = false, forced_variant: String = "") -> BoomJelly:
 	var jelly := BoomJelly.new()
+	if forced_variant == "paper":
+		jelly.set_variant(false)
+	elif forced_variant == "mist":
+		jelly.set_variant(true)
 	jelly.position = pos
 	_apply_wave_scaling(jelly, elite)
 	enemies.append(jelly)
@@ -893,12 +933,14 @@ func _spawn_burst() -> int:
 
 
 func _begin_wave() -> void:
-	_quota_current = BoomCombatMath.wave_quota(wave)
+	_quota_current = 0 if BossSystem.is_boss_wave(self, wave) else BoomCombatMath.wave_quota(wave)
 	_spawned_total = 0
 	# W1 首刷前留开局准备时长（§3.4），其后每波 0.6s 内开刷。
 	_spawn_cd = WAVE_REST_READY if wave == 1 else 0.6
 	_between_waves = false
 	wave_started.emit(wave)
+	if BossSystem.is_boss_wave(self, wave):
+		BossSystem.spawn(self)
 
 
 func _tick_spawns(delta: float) -> void:
@@ -931,12 +973,20 @@ func _tick_player_contact() -> void:
 		if flat.length() <= player.radius + jelly.radius + 0.12:
 			jelly.hit_cd = 1.0
 			jelly.knock_back(Vector3(jelly.position - player.position).normalized())
-			_damage_player(jelly.position)
+			if jelly is BoomBoss:
+				_damage_player_raw((jelly as BoomBoss).contact_damage, jelly.position)
+			else:
+				_damage_player(jelly.position)
 
 
 ## M8 统一受伤结算入口（§8/§10.3）：闪避判定 → 防御减伤 → 扣最终伤害；闪避成功不扣血/不进无敌帧。
 func _damage_player(from_pos: Vector3) -> void:
-	var raw := BoomCombatMath.enemy_raw_attack(wave)
+	_damage_player_raw(BoomCombatMath.enemy_raw_attack(wave), from_pos)
+
+
+func _damage_player_raw(raw: int, from_pos: Vector3) -> void:
+	if player.invuln_left > 0.0 or is_over:
+		return
 	var result: Array = BoomCombatMath.resolve_player_damage(raw, stats.dodge_rate(), stats.defense)
 	if result[1]:
 		player_dodged.emit(from_pos)

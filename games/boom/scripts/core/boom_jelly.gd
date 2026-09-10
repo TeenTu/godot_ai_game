@@ -78,6 +78,21 @@ func xp_reward() -> int:
 	return BoomExperience.MIST_SPIRIT_XP if _is_mist_spirit else BoomExperience.PAPER_DOLL_XP
 
 
+## M11 灯阵召唤固定纸偶；普通随机刷怪仍保持原来的 3:1 分布。
+func set_variant(mist_spirit: bool) -> void:
+	if _is_mist_spirit == mist_spirit and _art != null:
+		return
+	_is_mist_spirit = mist_spirit
+	if _art == null:
+		return
+	var frames := _build_enemy_frames()
+	if frames == null:
+		return
+	_art.sprite_frames = frames
+	_art.pixel_size = 0.0032 if _is_mist_spirit else 0.00335
+	_art.play("float" if _is_mist_spirit else "move_down")
+
+
 func _build_visuals(palette: Color) -> void:
 	# 正常运行只建 2D 敌人和预警圈，省掉每只怪 5 个永远隐藏的回退网格。
 	_add_character_art()

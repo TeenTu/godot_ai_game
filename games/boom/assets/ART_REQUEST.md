@@ -238,3 +238,23 @@ Mode: Codex built-in ImageGen。M5 玩家动画的 prompt 骨架见 `design_m5_w
 | `skill_brush_ink_wave.png` | One giant judge brush sends a focused forward teal-black ink wave shaped like a decisive crescent. |
 | `skill_brush_focus.png` | A single controlled breathing ink circle coils tightly around a glowing brush tip, communicating reduced skill cooldown. |
 | `skill_brush_seal_domain.png` | A judge brush planted vertically into a cinnabar seal circle, with radial black-ink runes and a spectral teal boundary. |
+
+## M11 首领与宝箱（2026-09-10，当前有效）
+
+生成模式：Codex built-in ImageGen，`stylized-concept`。原始生成图保存在
+`assets/references/m11_boss/`；ImageGen 返回的是带伪棋盘格的 RGB 图，因此未直接进入运行时。
+`tools/process_m11_assets.py` 使用确定性的边缘连通域算法去除棋盘背景、裁切居中并压缩为
+512×512 RGBA；运行时成品为 `images/characters/boss_lantern_warden.png` 和
+`images/props/boss_spirit_seal_chest.png`。
+
+提灯无常原始提示词：
+
+> Use case: stylized-concept. Create a production-ready transparent-background 2D boss sprite for the Chinese fantasy roguelite 百怪夜巡, matching the current boom-night-2d direction. A compact 2.75–3-head-tall Chinese night spirit called 提灯无常, viewed from a top-down three-quarter gameplay angle. He wears a tall folded paper hat with no writing, a broad dark ink-blue robe with simplified off-white paper panels, old-bronze fittings and restrained cinnabar cords. He grips a square dark-wood and aged-bronze hand lantern glowing warm amber; two teal spectral hands or wisps emerge around the sleeves. Strong readable silhouette at mobile size, rice-paper and painted-cloth texture, soft painted edges without black outline. Center one full-body character, generous transparent padding, no ground, no text, no UI, no watermark, no candy/plastic look, no photorealism, no native-3D render.
+
+提灯无常比例返工提示词（precise-object-edit）：
+
+> Keep the exact same character identity, costume, lantern, palette and top-down three-quarter orientation, but compress the anatomy into a compact 2.75–3-head-tall light-Q gameplay proportion. Enlarge the head and hat, shorten the torso and legs, broaden the robe silhouette, simplify internal robe detail by about 60%, and keep the lantern large and readable. Preserve transparent background, centered full body, no text, no floor, no black outline, no 3D render.
+
+首领宝箱原始提示词：
+
+> Use case: stylized-concept. Create a production-ready square transparent-background 2D reward chest sprite for the Chinese fantasy roguelite 百怪夜巡, matching the current boom-night-2d direction. A compact spirit-seal chest made of dark wood and aged bronze, viewed from a top-down three-quarter gameplay angle. The lid is bound by one off-white paper seal and restrained cinnabar cord; warm amber light leaks through the lid seam, with exactly three small spectral-teal wisps curling upward. Strong mobile-readable silhouette, rice-paper painted texture, soft edges without black outline. Center one object with generous transparent padding, no ground, no text or readable characters, no UI, no watermark, no candy/plastic look, no photorealism, no native-3D render.

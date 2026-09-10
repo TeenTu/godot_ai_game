@@ -8,11 +8,11 @@ extends RefCounted
 
 ## M7 ring 环形弹幕：以玩家为中心 RING_COUNT 发 360° 均布弹（复用子弹池，
 ## variant="ring" 走技能命中管线）。返回实际发射数。
-static func ring_shot(g: BoomGame) -> int:
+static func ring_shot(g: BoomGame, projectile_count: int = BoomGame.RING_COUNT) -> int:
 	var from: Vector3 = g.player.position + Vector3(0.0, 0.5, 0.0)
 	var count: int = 0
-	for i in BoomGame.RING_COUNT:
-		var ang := TAU * float(i) / float(BoomGame.RING_COUNT)
+	for i in projectile_count:
+		var ang := TAU * float(i) / float(projectile_count)
 		var dir := Vector3(cos(ang), 0.0, sin(ang))
 		g._spawn_bullet(from, dir, "ring")
 		count += 1
@@ -82,13 +82,15 @@ static func whirl(g: BoomGame) -> int:
 
 
 ## 判笔技能流一阶：向面朝方向推出 100°、5m 的扇形墨浪，最多命中 8 个目标。
-static func ink_wave(g: BoomGame) -> Array:
+static func ink_wave(g: BoomGame, evolved: bool = false) -> Array:
 	var hits: Array = []
 	var targets: Array[BoomJelly] = []
 	var facing: Vector3 = g.player.facing.normalized()
-	var half_arc: float = deg_to_rad(50.0)
+	var half_arc: float = deg_to_rad(65.0 if evolved else 50.0)
+	var max_targets := 12 if evolved else 8
+	var max_range := 6.0 if evolved else 5.0
 	for entry in g.enemies:
-		if targets.size() >= 8:
+		if targets.size() >= max_targets:
 			break
 		var jelly := entry as BoomJelly
 		if jelly == null or jelly.is_dead():
@@ -96,29 +98,33 @@ static func ink_wave(g: BoomGame) -> Array:
 		var offset: Vector3 = jelly.position - g.player.position
 		offset.y = 0.0
 		var distance: float = offset.length()
-		if distance <= 0.001 or distance > 5.0:
+		if distance <= 0.001 or distance > max_range:
 			continue
 		if acos(clampf(facing.dot(offset / distance), -1.0, 1.0)) <= half_arc:
 			targets.append(jelly)
 	for jelly in targets:
-		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * 1.8)), hits)
+		var multiplier := 2.4 if evolved else 1.8
+		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * multiplier)), hits)
 	return hits
 
 
 ## 判笔技能流终阶：朱砂落印形成 4.5m 领域，最多镇压 16 怪，伤害为最终攻击 2.5 倍。
-static func seal_domain(g: BoomGame) -> Array:
+static func seal_domain(g: BoomGame, evolved: bool = false) -> Array:
 	var hits: Array = []
 	var targets: Array[BoomJelly] = []
+	var max_targets := 24 if evolved else 16
+	var radius := 5.5 if evolved else 4.5
 	for entry in g.enemies:
-		if targets.size() >= 16:
+		if targets.size() >= max_targets:
 			break
 		var jelly := entry as BoomJelly
 		if jelly == null or jelly.is_dead():
 			continue
-		if g.player.position.distance_to(jelly.position) <= 4.5:
+		if g.player.position.distance_to(jelly.position) <= radius:
 			targets.append(jelly)
 	for jelly in targets:
-		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * 2.5)), hits)
+		var multiplier := 3.2 if evolved else 2.5
+		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * multiplier)), hits)
 	if not hits.is_empty():
 		g.trigger_freeze(0.10)
 	return hits

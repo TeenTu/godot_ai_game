@@ -134,6 +134,7 @@ func test_experience() -> void:
 	host._check(e.add_xp(99) == 0 and e.level == BoomExperience.LEVEL_CAP, "满级封顶不再升级")
 	# 经验由怪物类型定价；角色升级公式不读取波次、配额或怪物数量。
 	var paper := BoomJelly.new()
+	paper.set_variant(false)
 	host._check(paper.xp_reward() == 5, "纸偶经验 = 5")
 	var mist := BoomJelly.new()
 	mist.set("_is_mist_spirit", true)

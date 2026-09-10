@@ -1,7 +1,5 @@
 extends Node
 ## 《B-Boom》入口：一切节点由本脚本在 _ready 里代码构建。
-##   3D 世界（程序化原语 + 简易灯光）→ BoomGame 对局 → BoomFx 粒子/焦痕
-##   → BoomCam 俯视跟拍 → BoomAudio 程序化音效 → 纯代码 HUD（摇杆/血条/分数）。
 
 const HUD_W: float = 720.0
 const HUD_H: float = 1280.0
@@ -12,7 +10,6 @@ const ARENA_DEPTH: float = 76.0
 const ARENA_HALF_X: float = 26.0
 const ARENA_HALF_Z: float = 38.0
 
-# ---- M2 技能手势区 / 识别参数（design_m2_danmaku.md §2）----
 const SKILL_ZONE_X: float = 0.65  # 触点 x 归一 > 0.65 = 右侧技能手势区
 const TAP_MAX_TIME: float = 0.20
 const TAP_MAX_DIST: float = 14.0
@@ -81,6 +78,7 @@ var _hp_text: Label
 var _stats_btn: Button
 var _stats_panel: BoomStatsPanel
 var _level_panel: BoomLevelUpPanel
+var _boss_presenter: BoomBossPresenter
 var _vignette: ColorRect
 var _kill_white: ColorRect = null  # 击杀全屏泛白 overlay（峰值≤0.15，≤50ms 淡出）
 var _kill_white_a: float = 0.0
@@ -123,6 +121,20 @@ func _ready() -> void:
 	skill_fx = BoomSkillFx.new()
 	world.add_child(skill_fx)
 	_build_hud()
+	_boss_presenter = BoomBossPresenter.new()
+	add_child(_boss_presenter)
+	_boss_presenter.setup(
+		_hud,
+		sim,
+		skill_sys,
+		audio,
+		cam,
+		hitnum,
+		_is_test_mode() or DisplayServer.get_name() == "headless",
+		_rebuild_skill_hud,
+		_show_toast,
+		_show_announce
+	)
 	_build_weapon_select()
 	_connect_signals()
 	_started = true
@@ -333,6 +345,11 @@ func _test_hook_get_state() -> Dictionary:
 	for slot in SKILL_SLOT_COUNT:
 		slot_ids.append(equipped[slot] if slot < equipped.size() else "")
 	state["sk_slots"] = slot_ids
+	var boss_state: Dictionary = _boss_presenter.debug_state()
+	for key in boss_state:
+		state[key] = boss_state[key]
+	state["boss_projectiles"] = _active_boss_projectile_count()
+	state["sk_evolved"] = sk["evolved"]
 	return state
 
 
@@ -342,6 +359,14 @@ func _active_bullet_count() -> int:
 		if (b as BoomBullet).active:
 			n += 1
 	return n
+
+
+func _active_boss_projectile_count() -> int:
+	var count := 0
+	for projectile in sim.boss_projectiles:
+		if (projectile as BoomBossProjectile).active:
+			count += 1
+	return count
 
 
 # ------------------------------------------------------------------ 信号
@@ -528,7 +553,9 @@ func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:
 func _on_wave_started(wave: int) -> void:
 	audio.play("wave", -12.0)
 	# M4 §5 波次开场横幅：复用 M3 播报大字管线；精英波/台阶波换文案与颜色。
-	if wave % BoomGame.ELITE_EVERY_N == 0:
+	if BoomBossSystem.is_boss_wave(sim, wave):
+		_show_wave_banner("WAVE %d · BOSS" % wave, COL_DANGER)
+	elif wave % BoomGame.ELITE_EVERY_N == 0:
 		_show_wave_banner("WAVE %d · ELITE!" % wave, COL_DANGER)
 	elif wave % BoomGame.WAVE_STAGE_EVERY == 0:
 		_show_wave_banner("WAVE %d — STAGE UP!" % wave, COL_GOLD)
@@ -833,6 +860,10 @@ func _on_retry() -> void:
 		_hint_label.visible = true
 	if sim == null:
 		return
+	if _boss_presenter != null:
+		_boss_presenter.reset()
+	if skill_sys != null:
+		skill_sys.reset()
 	sim.restart()
 	_open_weapon_select()
 
