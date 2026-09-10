@@ -16,6 +16,7 @@ func _init(p_host) -> void:
 
 func run_all() -> void:
 	test_assets()
+	test_attack_range()
 	test_experience()
 	test_skill_tree()
 	test_tree_passives()
@@ -77,6 +78,33 @@ func test_assets() -> void:
 	seal_bullet.free()
 
 
+func test_attack_range() -> void:
+	print("[m10-range]")
+	var g: BoomGame = host._new_game()
+	var attack_range: float = g.weapon_cfg.attack_range
+	host._check(attack_range == 8.0, "镇夜灯普通攻击射程 = 8m")
+	host._check(attack_range < BoomCam.CAM_SIZE * 720.0 / 1280.0, "攻击半径小于竖屏相机横向半宽，屏外敌人不可锁定")
+	var outside := g.spawn_enemy_at(Vector3(attack_range + 0.2, 0.0, 0.0))
+	host._check(g._nearest_enemy(attack_range) == null, "射程外敌人不进入自动锁定")
+	var inside := g.spawn_enemy_at(Vector3(attack_range - 0.5, 0.0, 0.0))
+	host._check(g._nearest_enemy(attack_range) == inside, "射程内敌人可进入自动锁定")
+	outside.queue_free()
+	inside.queue_free()
+	g.enemies.clear()
+	var bullet := g.bullets[0] as BoomBullet
+	bullet.fire(Vector3.ZERO, Vector3.FORWARD, attack_range)
+	for _frame in 90:
+		g._tick_bullets(DT)
+		if not bullet.active:
+			break
+	host._check(not bullet.active, "普通灵印抵达 8m 硬上限后回收")
+	host._check(bullet.position.length() <= attack_range + 0.3, "普通灵印不会飞入屏外继续伤敌")
+	g._spawn_bullet(Vector3.ZERO, Vector3.FORWARD, "ring")
+	var skill_bullet := g.bullets[0] as BoomBullet
+	host._check(skill_bullet.max_distance == attack_range, "镇夜灯主动技能灵印同样受 8m 限制")
+	g.free()
+
+
 func test_stats() -> void:
 	print("[m7-stats]")
 	# M8 已重构属性系统（design_m8_attributes.md）：本节迁移至 play_test_m8.gd [m8-stats]。
@@ -91,47 +119,48 @@ func test_stats() -> void:
 
 func test_experience() -> void:
 	print("[m7-exp]")
-	host._check(BoomExperience.xp_to_next(1) == 5, "curve: 升 2 级需 5 xp")
-	host._check(BoomExperience.xp_to_next(2) == 9, "curve: 升 3 级需 9 xp（+4 递增）")
+	host._check(BoomExperience.xp_to_next(1) == 50, "角色曲线：升 2 级固定需 50 xp")
+	host._check(BoomExperience.xp_to_next(2) == 90, "角色曲线：升 3 级固定需 90 xp")
 	var e := BoomExperience.new()
 	var last_level: Array = [0]
 	e.leveled_up.connect(func(lv: int) -> void: last_level[0] = lv)
-	host._check(e.add_xp(4) == 0 and e.level == 1, "4 xp 不升级")
-	host._check(e.add_xp(1) == 1 and e.level == 2, "第 5 点 xp 升到 2 级")
+	host._check(e.add_xp(49) == 0 and e.level == 1, "49 xp 不升级")
+	host._check(e.add_xp(1) == 1 and e.level == 2, "第 50 点 xp 升到 2 级")
 	host._check(last_level[0] == 2, "升级信号广播 new_level=2")
 	host._check(e.xp == 0, "升级后 xp 清零")
 	e.add_xp(BoomExperience.xp_to_next(2) + BoomExperience.xp_to_next(3))
 	host._check(e.level == 4, "一次入账两级经验跨级到 4")
 	e.level = BoomExperience.LEVEL_CAP
 	host._check(e.add_xp(99) == 0 and e.level == BoomExperience.LEVEL_CAP, "满级封顶不再升级")
-	# 对局集成：普通击杀 +1 xp；精英 +8 xp 且升级产出属性点。
+	# 经验由怪物类型定价；角色升级公式不读取波次、配额或怪物数量。
+	var paper := BoomJelly.new()
+	host._check(paper.xp_reward() == 5, "纸偶经验 = 5")
+	var mist := BoomJelly.new()
+	mist.set("_is_mist_spirit", true)
+	host._check(mist.xp_reward() == 8, "雾灵经验 = 8")
+	var elite_reward := BoomJelly.new()
+	elite_reward.elite = true
+	host._check(elite_reward.xp_reward() == 30, "精英经验 = 30")
+	paper.free()
+	mist.free()
+	elite_reward.free()
 	var g: BoomGame = host._new_game()
+	var curve_before := BoomExperience.xp_to_next(g.exp_sys.level)
+	g.wave = 99
+	for i in 10:
+		g.spawn_enemy_at(Vector3(float(i), 0.0, 20.0))
+	host._check(BoomExperience.xp_to_next(g.exp_sys.level) == curve_before, "角色经验曲线独立于波次与怪物数量")
 	g.player.invuln_left = 10.0
 	var jelly := g.spawn_enemy_at(Vector3(0.0, 0.0, -5.0))
+	var expected_reward: int = jelly.xp_reward()
 	var guard := 0
 	while guard < MAX_FRAMES and not jelly.is_dead():
 		guard += 1
 		g.player.invuln_left = 10.0
 		g.step(DT)
 	host._check(jelly.is_dead(), "经验测试敌人被击杀")
-	host._check(g.exp_sys.xp == BoomExperience.KILL_XP, "普通击杀入账 1 xp")
+	host._check(g.exp_sys.xp == expected_reward, "击杀按怪物类型入账 %d xp" % expected_reward)
 	g.free()
-	var g2: BoomGame = host._new_game()
-	g2.wave = 5
-	g2.player.invuln_left = 10.0
-	var elite := g2.spawn_enemy_at(Vector3(0.0, 0.0, -5.0), true)
-	var guard2 := 0
-	while guard2 < MAX_FRAMES and not elite.is_dead():
-		guard2 += 1
-		g2.player.invuln_left = 10.0
-		g2.step(DT)
-	host._check(elite.is_dead(), "精英被自动火力击杀")
-	host._check(
-		g2.exp_sys.xp == BoomExperience.ELITE_XP - BoomExperience.xp_to_next(1), "精英 +8 xp 升级后余 3"
-	)
-	host._check(g2.exp_sys.level == 2, "精英击杀升到 2 级")
-	host._check(g2.pending_upgrades == 1, "升级产出 1 个待消费属性点")
-	g2.free()
 
 
 func test_skill_tree() -> void:
@@ -141,109 +170,75 @@ func test_skill_tree() -> void:
 	var sys := BoomSkillSystem.new()
 	sys.game = g
 	g.add_child(sys)
-	# 1) 全池扩容：9 个技能定义；bubble 树 6 槽 = 共用 4 + 专属 2。
-	host._check(sys.pool_ids().size() == 9, "技能池存全部定义 (n=%d)" % sys.pool_ids().size())
+	# 两把武器各 6 个独占节点，不再共享前三项技能。
+	host._check(sys.pool_ids().size() == 12, "两棵独立技能树共 12 个定义")
 	var bubble_tree := sys.tree_ids()
 	host._check(
-		bubble_tree == ["fan", "chain", "nuke", "ring", "twin", "rapid"],
-		"bubble 树 = fan/chain/nuke/ring + 专属 twin/rapid"
+		(
+			bubble_tree
+			== [
+				"lamp_quick_wick",
+				"lamp_firefly_volley",
+				"lamp_bright_core",
+				"lamp_echo",
+				"lamp_threefold_seal",
+				"lamp_soul_beacon"
+			]
+		),
+		"镇夜灯树 = 普攻/技能双分支交错三阶"
 	)
 	host._check(BoomSkillSystem.MAX_EQUIPPED == 3, "每局装备上限 = 3")
-	# 2) M7R 跨局解锁：新档仅树首 fan 解锁并装备。
 	host._check(
-		sys.is_unlocked("fan") and not sys.is_unlocked("chain") and not sys.is_unlocked("nuke"),
-		"新档仅树首 fan 免费解锁"
+		sys.is_unlocked("lamp_quick_wick") and sys.is_unlocked("lamp_firefly_volley"),
+		"新档免费解锁两条分支根节点"
 	)
-	host._check(sys.equipped == ["fan"], "新档默认装备 = [fan]")
-	# 3) 树内顺序价：60/120/200/300/420；树首免费；非本树技能不可购买。
-	host._check(sys.unlock_cost("chain") == 60, "chain 树序价 60")
-	host._check(sys.unlock_cost("nuke") == 120, "nuke 树序价 120")
-	host._check(sys.unlock_cost("ring") == 200, "ring 树序价 200")
-	host._check(sys.unlock_cost("twin") == 300, "twin（bubble 专属）树序价 300")
-	host._check(sys.unlock_cost("rapid") == 420, "rapid（bubble 专属被动）树序价 420")
-	host._check(sys.unlock_cost("fan") < 0, "树首免费不可购买")
-	host._check(sys.unlock_cost("heal") < 0, "sword 树技能在 bubble 树不可见不可购买")
-	# 4) 跨局金币解锁：余额不足失败 → 足额成功扣存档币并即时落盘。
-	host._check(not sys.equip("ring"), "未解锁不能装备")
-	BoomSave.add_coins(199)
-	host._check(not sys.try_unlock("ring"), "跨局金币不足解锁失败")
+	host._check(sys.equipped == ["lamp_quick_wick", "lamp_firefly_volley"], "默认装备两根节点")
+	host._check(sys.tree_node("lamp_bright_core")["branch"] == "basic", "亮灯芯属于普攻分支")
+	host._check(sys.tree_node("lamp_echo")["branch"] == "skill", "灯回响属于技能分支")
+	host._check(sys.unlock_cost("lamp_bright_core") == 120, "普攻二阶价格 120")
+	host._check(sys.unlock_cost("lamp_threefold_seal") < 0, "未解锁二阶时三阶不可购买")
+	host._check(sys.unlock_cost("brush_firm_grip") < 0, "判笔节点不可跨树购买")
+	BoomSave.add_coins(119)
+	host._check(not sys.try_unlock("lamp_bright_core"), "金币不足解锁失败")
 	BoomSave.add_coins(1)
 	var unlocked_box: Array = [""]
 	sys.skill_unlocked.connect(func(id: String) -> void: unlocked_box[0] = id)
-	host._check(sys.try_unlock("ring"), "跨局金币足额解锁成功")
-	host._check(unlocked_box[0] == "ring", "skill_unlocked 信号广播 ring")
+	host._check(sys.try_unlock("lamp_bright_core"), "普攻二阶足额解锁成功")
+	host._check(unlocked_box[0] == "lamp_bright_core", "广播灯芯节点解锁")
 	host._check(BoomSave.coins() == 0, "解锁扣跨局币 (coins=%d)" % BoomSave.coins())
-	host._check(BoomSave.is_unlocked("bubble", "ring"), "解锁状态写入存档")
-	host._check(BoomSave.unlocked_for("bubble").has("ring"), "bubble 树存档含 ring")
-	host._check(sys.is_unlocked("ring"), "ring 已解锁")
-	host._check(not sys.try_unlock("ring"), "重复解锁拒绝")
-	# 5) 装备上限：满 3 拒绝 → 换装成功。
-	host._check(sys.equip("ring"), "解锁后装备 ring 成功")
-	sys.debug_grant("chain")
-	host._check(sys.equip("chain"), "装备 chain 凑满 3 槽")
-	sys.debug_grant("twin")
-	host._check(not sys.equip("twin"), "装备满 3 时再装备被拒")
-	host._check(sys.unequip("chain"), "卸下 chain")
-	host._check(not sys.equipped.has("chain") and sys.equipped.size() == 2, "卸下后槽位 2")
-	host._check(sys.equip("twin"), "装备 bubble 专属 twin 成功")
-	host._check(sys.equipped.size() == BoomSkillSystem.MAX_EQUIPPED, "重新装备满 3 槽")
-	host._check(not sys.equip("fan"), "重复装备被拒")
-	# 6) 槽位手势重映射：槽 2 = twin，施放 2 发平行重弹。
+	host._check(sys.unlock_cost("lamp_threefold_seal") == 300, "满足前置后普攻三阶价格 300")
+	host._check(sys.equip("lamp_bright_core"), "已解锁节点可装备到第三槽")
+	sys.debug_grant("lamp_echo")
+	host._check(not sys.equip("lamp_echo"), "装备满 3 时拒绝第四节点")
+	host._check(sys.unequip("lamp_bright_core") and sys.equip("lamp_echo"), "卸装后可切换构筑")
+	# 主动根节点按装备槽进入施放管线。
 	var fired_box: Array = [0]
 	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
 	var before: int = host._active_bullets(g)
-	sys.handle_slot(2)
+	sys.handle_slot(sys.equipped.find("lamp_firefly_volley"))
 	host._check(
-		host._active_bullets(g) == before + BoomGame.TWIN_COUNT,
-		"twin 槽位施放 %d 发重弹" % BoomGame.TWIN_COUNT
+		host._active_bullets(g) == before + BoomGame.FAN_COUNT, "流萤散射施放 %d 枚灵印" % BoomGame.FAN_COUNT
 	)
 	host._check(fired_box[0] == 1, "handle_slot 触发 skill_fired")
-	var st: Dictionary = sys.get_state()
-	host._check(st.has("twin") and st["twin"] > 0.0, "twin 施放后进入 CD (%.2f)" % st["twin"])
-	host._check(st["equipped"].size() == 3, "get_state 返回装备槽")
-	sys.handle_slot(9)
-	host._check(fired_box[0] == 1, "槽位越界静默忽略")
-	# 7) ring 环形弹：槽位施放 12 发（twin 弹仍存活，取下界）。
-	sys.reset()
-	sys.handle_slot(sys.equipped.find("ring"))
-	host._check(
-		host._active_bullets(g) >= BoomGame.RING_COUNT, "ring 槽位施放 %d 发环形弹" % BoomGame.RING_COUNT
-	)
-	# 8) 换大剑树：ring 不可见不可购买，heal/whirl/titan 解锁可用。
+	# 判笔树完全独立。
 	sys.set_weapon_tree("greatsword")
 	var sword_tree := sys.tree_ids()
 	host._check(
-		sword_tree == ["fan", "chain", "nuke", "heal", "whirl", "titan"],
-		"sword 树 = fan/chain/nuke/heal + 专属 whirl/titan"
+		(
+			sword_tree
+			== [
+				"brush_firm_grip",
+				"brush_ink_wave",
+				"brush_flowing_script",
+				"brush_focus",
+				"brush_verdict",
+				"brush_seal_domain"
+			]
+		),
+		"墨线判笔树 = 独立普攻/技能双分支"
 	)
-	host._check(sys.unlock_cost("ring") < 0, "bubble 树技能 ring 在 sword 树不可购买")
-	host._check(not sys.is_unlocked("ring"), "bubble 树解锁进度不串 sword 树")
-	host._check(sys.unlock_cost("heal") == 200, "heal 在 sword 树树序价 200")
-	host._check(sys.unlock_cost("whirl") == 300, "whirl（sword 专属）树序价 300")
-	host._check(sys.unlock_cost("titan") == 420, "titan（sword 专属被动）树序价 420")
-	host._check(sys.equipped == ["fan"], "切树后装备重置为该树已解锁")
-	# 9) heal 应急维修（sword 树）：解锁 → 回复 min(REPAIR_HP=15, 缺口)；满血 0。
-	BoomSave.add_coins(200)
-	host._check(sys.try_unlock("heal"), "跨局金币解锁 heal")
-	host._check(sys.equip("heal"), "装备 heal")
-	g.player.hp = 40
-	var heal_slot: int = sys.equipped.find("heal")
-	sys.handle_slot(heal_slot)
-	host._check(g.player.hp == 50, "heal 回复 min(15, 缺口10) → 满血 (hp=50)")
-	host._check(fired_box[0] == 3, "heal 触发 skill_fired（累计 twin+ring+heal）")
-	g.player.hp = g.player.max_hp
-	sys.reset()
-	sys.handle_slot(heal_slot)
-	host._check(g.player.hp == g.player.max_hp, "满血时 heal 回复 0")
-	# 10) M7R 跨局保留：restart 清局内金币，不清存档解锁与跨局币。
-	BoomSave.add_coins(50)
-	g.coins = 999
-	sys.debug_grant("whirl")
-	g.restart()
-	host._check(g.coins == 0, "restart 清局内金币")
-	host._check(BoomSave.coins() == 50, "restart 不清跨局金币 (%d)" % BoomSave.coins())
-	host._check(BoomSave.is_unlocked("greatsword", "whirl"), "restart 不清解锁进度")
-	host._check(sys.is_unlocked("whirl"), "系统视角解锁跨局保留")
+	host._check(not sword_tree.any(func(id: String) -> bool: return bubble_tree.has(id)), "两树节点零共享")
+	host._check(sys.equipped == ["brush_firm_grip", "brush_ink_wave"], "切树后装备判笔两根节点")
 	g.remove_child(sys)
 	sys.free()
 	g.free()
@@ -257,59 +252,77 @@ func test_tree_passives() -> void:
 	var sys := BoomSkillSystem.new()
 	sys.game = g
 	g.add_child(sys)
-	# 1) rapid（bubble 专属被动）：装备即普攻 CD ×0.8，卸下还原。
-	sys.debug_grant("rapid")
-	host._check(sys.equip("rapid"), "装备 rapid 被动")
-	host._check(
-		absf(g.skill_fire_cd_mult - BoomSkillSystem.RAPID_FIRE_MULT) < 0.001,
-		"rapid 装备后 fire_cd ×0.8"
-	)
-	g.player.invuln_left = 10.0
-	g.spawn_enemy_at(Vector3(0.0, 0.0, -5.0))
-	host._run(g, 30)
-	host._check(host._active_bullets(g) > 0, "rapid 生效期自动开火正常")
-	host._check(sys.unequip("rapid"), "卸下 rapid")
-	host._check(absf(g.skill_fire_cd_mult - 1.0) < 0.001, "rapid 卸下后 fire_cd 复位")
-	# 2) 被动技能不进施放管线：handle_slot 指向 rapid 不发 skill_fired / 不进 CD。
-	sys.equip("rapid")
+	sys.set_weapon_tree("bubble")
+	host._check(absf(g.skill_basic_speed_mult - 1.15) < 0.001, "镇夜灯根节点提供普攻速度 +15%")
+	sys.debug_grant("lamp_bright_core")
+	host._check(sys.equip("lamp_bright_core"), "装备亮灯芯")
+	host._check(g._base_attack() == 12, "亮灯芯使基础攻击 10 → 12")
+	# 被动节点不进入施放管线。
 	var fired_box: Array = [0]
 	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
 	sys.reset()
-	sys.handle_slot(sys.equipped.find("rapid"))
+	sys.handle_slot(sys.equipped.find("lamp_quick_wick"))
 	host._check(fired_box[0] == 0, "被动技能不可施放（skill_fired 不触发）")
-	host._check(float(sys.get_state()["rapid"]) <= 0.0, "被动技能无冷却")
-	# 3) titan（sword 专属被动）：弧斩/旋风斩伤害 +1。
-	sys.set_weapon_tree("greatsword")
-	sys.debug_grant("titan")
-	host._check(sys.equip("titan"), "装备 titan 被动")
-	g.set_weapon("greatsword")
-	host._check(g.skill_swing_dmg_bonus == BoomSkillSystem.TITAN_DMG_BONUS, "titan 装备后弧斩加成 +1")
-	# restart 归零机体被动加成（局内状态），重走 equip 管线恢复（模拟选单确认次序）。
-	g.restart()
-	host._check(g.skill_swing_dmg_bonus == 0, "restart 归零被动加成")
-	g.set_weapon("greatsword")
-	host._check(sys.unequip("titan") and sys.equip("titan"), "重走 equip 管线恢复 titan")
-	host._check(g.skill_swing_dmg_bonus == 1, "equip 管线恢复 titan 加成")
-	g.player.invuln_left = 10.0
-	for offset in [-1.5, 0.0, 1.5]:
-		g.spawn_enemy_at(Vector3(float(offset), 0.0, 2.0))
-	var blade_box: Array = [0]
-	g.blade_hit.connect(func(_pos: Vector3, dmg: int) -> void: blade_box[0] += dmg)
-	var hits: int = g.cast_whirl()
-	host._check(hits == 3, "whirl 命中斩距内 3 敌 (hits=%d)" % hits)
+	# 灯回响是独立的技能冷却乘区，并与角色直接冷却缩减相乘。
+	host._check(sys.unequip("lamp_bright_core"), "卸下亮灯芯腾出槽位")
+	sys.debug_grant("lamp_echo")
+	host._check(sys.equip("lamp_echo"), "装备灯回响")
+	g.stats.haste_stacks = 1
+	sys.cast_skill("lamp_firefly_volley")
+	var expected_cd := BoomSkillSystem.LAMP_VOLLEY_COOLDOWN * 0.85 * 0.92
 	host._check(
-		blade_box[0] == 93, "whirl 单体伤害 = (base_attack 30 + titan 1)×1.0 = 31 (总 %d)" % blade_box[0]
+		absf(float(sys.get_state()["lamp_firefly_volley"]) - expected_cd) < 0.02,
+		"武器 -15% 与角色 -8% 冷却乘算"
 	)
-	# 4) whirl 命中封顶：WHIRL_MAX_TARGETS 截断。
-	g.restart()
+	# 灯普攻终阶：第三发从单发改成三重灵印，三次共生成 5 发。
+	host._check(sys.unequip("lamp_echo"), "卸下灯回响腾出形态槽")
+	sys.debug_grant("lamp_threefold_seal")
+	host._check(sys.equip("lamp_threefold_seal"), "装备三叠镇印")
+	for bullet_variant in g.bullets:
+		(bullet_variant as BoomBullet).recycle()
+	g._ranged_shot_index = 0
+	var muzzle := g.player.position + Vector3(0.0, 0.5, 0.0)
+	for _shot in 3:
+		g._fire_ranged_basic(muzzle, Vector3.FORWARD)
+	host._check(host._active_bullets(g) == 5, "镇夜灯第三次普攻改为三重灵印（3 次共 5 发）")
+	# 判笔普攻三阶改变三段动作形态。
+	sys.set_weapon_tree("greatsword")
 	g.set_weapon("greatsword")
-	g.player.invuln_left = 10.0
-	for i in BoomGame.WHIRL_MAX_TARGETS + 3:
-		g.spawn_enemy_at(Vector3(-2.0 + float(i) * 0.4, 0.0, 2.0))
-	var hits2: int = g.cast_whirl()
+	sys.debug_grant("brush_verdict")
+	host._check(sys.equip("brush_verdict"), "装备朱批判决")
+	host._check(g.skill_brush_verdict, "判笔普攻形态切换标记生效")
+	var step: Dictionary = BoomMeleeSystem.next_step(g)
+	step["arc_deg"] = 180.0 if String(step["action"]) != "swing_whirl" else 360.0
+	step["damage_mult"] = float(step["damage_mult"]) * 1.25
+	host._check(float(step["arc_deg"]) >= 180.0, "朱批判决扩大左右挥覆盖角")
+	# 判笔技能两端形态：前向墨浪与圆形封域均进入真实伤害管线。
+	g.wave = 20
+	g.player.face_toward(Vector3.FORWARD)
+	var wave_target := g.spawn_enemy_at(Vector3(-0.7, 0.0, -3.0))
+	var wave_target_2 := g.spawn_enemy_at(Vector3(0.7, 0.0, -3.0))
+	var wave_hp_before: int = wave_target.hp
+	var wave_hits: Array = g.cast_brush_ink_wave()
 	host._check(
-		hits2 == BoomGame.WHIRL_MAX_TARGETS,
-		"whirl 命中封顶 %d (hits=%d)" % [BoomGame.WHIRL_MAX_TARGETS, hits2]
+		(
+			wave_hits.size() == 2
+			and wave_target.hp < wave_hp_before
+			and wave_target_2.hp < wave_hp_before
+		),
+		(
+			"泼墨锋命中前方 5m 目标 (hits=%d hp=%d→%d facing=%s)"
+			% [wave_hits.size(), wave_hp_before, wave_target.hp, g.player.facing]
+		)
+	)
+	g.enemies.erase(wave_target)
+	g.enemies.erase(wave_target_2)
+	wave_target.free()
+	wave_target_2.free()
+	var domain_target := g.spawn_enemy_at(Vector3(3.0, 0.0, 0.0))
+	var domain_target_2 := g.spawn_enemy_at(Vector3(-3.0, 0.0, 0.0))
+	var domain_hits: Array = g.cast_brush_seal_domain()
+	host._check(
+		domain_hits.size() == 2 and domain_target.is_dead() and domain_target_2.is_dead(),
+		"朱砂封域命中 4.5m 圆域内多目标"
 	)
 	g.remove_child(sys)
 	sys.free()
@@ -319,16 +332,15 @@ func test_tree_passives() -> void:
 
 func test_save() -> void:
 	print("[m7-save]")
-	# 1) 全新档默认结构：coins=0 / 各树仅 fan。
+	# 1) 全新档默认结构：coins=0 / 各树两条分支根节点。
 	BoomSave.test_reset()
 	var data: Dictionary = BoomSave.data()
 	host._check(int(data["coins"]) == 0, "新档 coins = 0")
 	host._check(
-		(
-			BoomSave.unlocked_for("bubble") == ["fan"]
-			and BoomSave.unlocked_for("greatsword") == ["fan"]
-		),
-		"新档各树默认解锁 = [fan]"
+		BoomSave.unlocked_for("bubble") == ["lamp_quick_wick", "lamp_firefly_volley"], "镇夜灯默认解锁两根节点"
+	)
+	host._check(
+		BoomSave.unlocked_for("greatsword") == ["brush_firm_grip", "brush_ink_wave"], "判笔默认解锁两根节点"
 	)
 	# 2) 货币语义：入账 / 消费 / 余额不足。
 	BoomSave.add_coins(77)
@@ -337,14 +349,14 @@ func test_save() -> void:
 	host._check(BoomSave.spend_coins(27), "足额消费成功")
 	host._check(BoomSave.coins() == 50, "消费后余额 50")
 	# 3) roundtrip：写盘 → 清内存缓存 → 重读一致（含解锁）。
-	BoomSave.unlock_skill("bubble", "twin")
+	BoomSave.unlock_skill("bubble", "lamp_bright_core")
 	BoomSave.add_coins(100)
 	host._check(BoomSave.save(), "存档落盘成功")
 	BoomSave._data = {}
 	var reloaded: Dictionary = BoomSave.data()
 	host._check(int(reloaded["coins"]) == 150, "roundtrip 金币一致 (%d)" % int(reloaded["coins"]))
-	host._check(BoomSave.is_unlocked("bubble", "twin"), "roundtrip 解锁一致")
-	host._check(not BoomSave.is_unlocked("greatsword", "twin"), "跨树解锁互不串扰")
+	host._check(BoomSave.is_unlocked("bubble", "lamp_bright_core"), "roundtrip 解锁一致")
+	host._check(not BoomSave.is_unlocked("greatsword", "lamp_bright_core"), "跨树解锁互不串扰")
 	# 4) 跨局保留：对局 restart 不动存档；对局金币获得即时入存档。
 	BoomSave.test_reset()
 	BoomSave.add_coins(10)
@@ -359,8 +371,8 @@ func test_save() -> void:
 	g.restart()
 	host._check(g.coins == 0, "restart 清局内金币")
 	host._check(BoomSave.coins() == 11, "restart 后跨局金币保留")
-	host._check(BoomSave.is_unlocked("bubble", "fan"), "restart 后解锁进度保留")
-	host._check(not BoomSave.is_unlocked("bubble", "ring"), "未解锁进度不受对局影响")
+	host._check(BoomSave.is_unlocked("bubble", "lamp_quick_wick"), "restart 后解锁进度保留")
+	host._check(not BoomSave.is_unlocked("bubble", "lamp_threefold_seal"), "未解锁进度不受影响")
 	# 5) 精英金币雨同样即时入存档（40）。
 	var g2: BoomGame = host._new_game()
 	g2.wave = 5
@@ -395,7 +407,7 @@ func test_tree_ui() -> void:
 	host._check(sel.skill_sys != null, "选单已注入技能系统")
 	if sel.skill_sys == null:
 		return
-	# 1) bubble 卡：技能区 6 行 = bubble 树，含专属 twin/rapid，不含 sword 专属。
+	# 1) 镇夜灯卡：技能区两列六节点，且图标全部装载。
 	sel.set_selected("bubble")
 	var rows: Dictionary = sel.skill_rows()
 	host._check(rows.size() == 6, "技能配置区 6 行 (n=%d)" % rows.size())
@@ -403,35 +415,42 @@ func test_tree_ui() -> void:
 	for i in rows.size():
 		bubble_texts.append((rows[i] as Button).text)
 	host._check(
-		str(bubble_texts).contains("TWIN") and str(bubble_texts).contains("OVERDRIVE"),
-		"bubble 技能区含专属 twin/rapid"
+		str(bubble_texts).contains("QUICK WICK") and str(bubble_texts).contains("SOUL BEACON"),
+		"镇夜灯技能区含独立双分支节点"
 	)
 	host._check(
-		not str(bubble_texts).contains("WHIRL") and not str(bubble_texts).contains("REPAIR"),
-		"bubble 技能区不出现 sword 专属技能"
+		(
+			not str(bubble_texts).contains("INK WAVE")
+			and not str(bubble_texts).contains("SCARLET VERDICT")
+		),
+		"镇夜灯技能区不出现判笔节点"
 	)
-	# 2) 未解锁行显示价格；fan 已解锁显示 EQUIPPED。
-	host._check(str(bubble_texts[0]).contains("EQUIPPED"), "fan 行显示已勾选")
-	host._check(str(bubble_texts[3]).contains("UNLOCK 200"), "ring 行显示解锁价 200")
+	host._check(str(bubble_texts[0]).contains("EQUIPPED"), "普攻根节点显示已装备")
+	host._check(str(bubble_texts[2]).contains("UNLOCK 120"), "普攻二阶显示价格 120")
+	host._check(str(bubble_texts[4]).contains("REQUIRES"), "普攻三阶显示前置条件")
+	for row_variant in rows.values():
+		var row := row_variant as Button
+		var icon := row.get_node_or_null("Icon") as TextureRect
+		host._check(icon != null and icon.texture != null, "技能树节点图标已加载")
 	# 3) 切大剑卡：列表随之切换为 sword 树。
 	sel.set_selected("greatsword")
 	var sword_texts: Array = []
 	for i in rows.size():
 		sword_texts.append((rows[i] as Button).text)
 	host._check(
-		str(sword_texts).contains("WHIRLWIND") and str(sword_texts).contains("REPAIR"),
-		"sword 技能区含 whirl/heal"
+		str(sword_texts).contains("INK WAVE") and str(sword_texts).contains("SEAL DOMAIN"),
+		"判笔技能区含独立技能分支"
 	)
-	host._check(not str(sword_texts).contains("TWIN"), "sword 技能区不出现 bubble 专属 twin")
-	# 4) 行点击解锁：ring 价 200，余额不足点击不解锁、足额点击解锁并勾选。
+	host._check(not str(sword_texts).contains("SOUL BEACON"), "判笔技能区不出现镇夜灯节点")
+	# 4) 行点击：已解锁节点可勾选/取消。
 	sel.set_selected("bubble")
-	sel.skill_sys.debug_grant("ring")  # 直接给解锁，专注测勾选路径
+	sel.skill_sys.debug_grant("lamp_bright_core")
 	sel._refresh_skill_rows()
-	var ring_idx: int = sel.skill_sys.tree_ids().find("ring")
-	sel._on_skill_row_pressed(ring_idx)
-	host._check(sel.skill_sys.equipped.has("ring"), "点击已解锁行勾选 ring")
-	sel._on_skill_row_pressed(ring_idx)
-	host._check(not sel.skill_sys.equipped.has("ring"), "再次点击取消勾选")
+	var node_idx: int = sel.skill_sys.tree_ids().find("lamp_bright_core")
+	sel._on_skill_row_pressed(node_idx)
+	host._check(sel.skill_sys.equipped.has("lamp_bright_core"), "点击已解锁节点勾选")
+	sel._on_skill_row_pressed(node_idx)
+	host._check(not sel.skill_sys.equipped.has("lamp_bright_core"), "再次点击取消勾选")
 	# 5) 还原：bubble 树 + 默认装备（不污染后续断言）。
 	sel.set_selected("bubble")
 	sel.skill_sys.set_weapon_tree("bubble")

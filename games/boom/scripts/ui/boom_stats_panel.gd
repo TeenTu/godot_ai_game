@@ -106,7 +106,7 @@ func _init() -> void:
 	y = _add_row(panel, "attack_speed", "Attack Speed", y, COL_TEXT, "%s/s")
 	y = _add_row(panel, "crit_rate_pct", "Crit Rate", y, COL_CRIT, "%s%%")
 	y = _add_row(panel, "crit_dmg_pct", "Crit Damage", y, COL_CRIT, "%s%%")
-	y = _add_row(panel, "haste_pct", "Skill Haste", y, COL_SKILL, "+%s%%")
+	y = _add_row(panel, "haste_pct", "Cooldown Reduction", y, COL_SKILL, "-%s%%")
 	y = _add_section(panel, "SURVIVAL", y + 6.0)
 	y = _add_row(panel, "max_hp", "Max HP", y, COL_TEXT, "%s")
 	y = _add_row(panel, "defense", "Defense", y, COL_TEXT, "%s")

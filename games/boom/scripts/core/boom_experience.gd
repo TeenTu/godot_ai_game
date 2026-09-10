@@ -7,10 +7,13 @@ extends RefCounted
 # 升级信号：new_level 为升级后的新等级。
 signal leveled_up(new_level: int)
 
-const KILL_XP: int = 1  # 普通击杀经验
-const ELITE_XP: int = 6  # 精英击杀经验（M8 review 后由 8 下调，design_m8_attributes.md §11.2）
-const LEVEL_BASE: int = 5  # 升到 2 级所需经验
-const LEVEL_STEP: int = 4  # 每级递增（线性曲线）
+const PAPER_DOLL_XP: int = 5
+const MIST_SPIRIT_XP: int = 8
+const ELITE_XP: int = 30
+const KILL_XP: int = PAPER_DOLL_XP  # 兼容旧测试/调用；新结算读取 BoomJelly.xp_reward()
+# 人物曲线只由等级决定，绝不读取波次、配额或怪物数量；经验单位扩大 10 倍方便怪种定价。
+const LEVEL_BASE: int = 50  # 升到 2 级所需经验
+const LEVEL_STEP: int = 40  # 每级递增（固定线性曲线）
 const LEVEL_CAP: int = 20  # 等级封顶（单局 30 配额波内自然到不了，防刷红线）
 
 var level: int = 1

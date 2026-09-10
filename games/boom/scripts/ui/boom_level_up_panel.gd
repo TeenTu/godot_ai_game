@@ -25,7 +25,7 @@ const CARD_DEFS: Dictionary = {
 	"atk_speed": {"title": "LANTERN CHASE", "desc": "Attack Speed +10%", "color": COL_VALUE},
 	"crit_rate": {"title": "CINNABAR FLASH", "desc": "Crit Rate +3%", "color": COL_CRIT},
 	"crit_dmg": {"title": "EVIL BREAKER", "desc": "Crit Damage +15%", "color": COL_CRIT},
-	"haste": {"title": "SPIRIT CYCLE", "desc": "Skill Haste +8%", "color": COL_SKILL},
+	"haste": {"title": "SPIRIT CYCLE", "desc": "Skill Cooldown -8%", "color": COL_SKILL},
 	"speed": {"title": "LIGHT STEP", "desc": "Move Speed +8%", "color": COL_VALUE},
 	"dodge": {"title": "MIST VEIL", "desc": "Dodge +3%", "color": COL_SKILL},
 	"heal": {"title": "RELIGHT", "desc": "Restore Full HP", "color": COL_VALUE},

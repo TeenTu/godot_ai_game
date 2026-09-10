@@ -12,7 +12,7 @@ static func tick(game: BoomGame, delta: float) -> void:
 				String(game._swing_step["action"]),
 				0,
 				int(game._swing_step["windup_frames"]),
-				1.0 - game._swing_t / (windup / game.stats.aspd_mult())
+				1.0 - game._swing_t / (windup / game._basic_attack_speed_mult())
 			)
 			game.player.face_toward(game._swing_facing)
 			if game._swing_t <= 0.0:
@@ -72,7 +72,16 @@ static func tick(game: BoomGame, delta: float) -> void:
 				if to_enemy.length() <= game.weapon_cfg.swing_range:
 					game._swing_step = next_step(game)
 					game._swing_state = game.SwingState.WINDUP
-					game._swing_t = float(game._swing_step["windup"]) / game.stats.aspd_mult()
+					game._swing_t = (
+						float(game._swing_step["windup"]) / game._basic_attack_speed_mult()
+					)
+					if game.skill_brush_verdict:
+						game._swing_step["arc_deg"] = (
+							180.0 if String(game._swing_step["action"]) != "swing_whirl" else 360.0
+						)
+						game._swing_step["damage_mult"] = (
+							float(game._swing_step["damage_mult"]) * 1.25
+						)
 					game._swing_facing = game.player.facing
 					game.player.play_anim_once(String(game._swing_step["action"]))
 					game.player.sync_melee_phase(

@@ -149,6 +149,12 @@ var pending_upgrades: int = 0
 ## rapid → 普攻 CD ×skill_fire_cd_mult；titan → 弧斩/旋风斩 +skill_swing_dmg_bonus。
 var skill_fire_cd_mult: float = 1.0
 var skill_swing_dmg_bonus: int = 0
+var skill_base_attack_mult: float = 1.0
+var skill_basic_speed_mult: float = 1.0
+var skill_cooldown_mult: float = 1.0
+var skill_threefold_seal: bool = false
+var skill_brush_verdict: bool = false
+var _ranged_shot_index: int = 0
 
 var _spawned_total: int = 0
 var _quota_current: int = 0
@@ -221,6 +227,12 @@ func restart() -> void:
 	pending_upgrades = 0
 	skill_fire_cd_mult = 1.0
 	skill_swing_dmg_bonus = 0
+	skill_base_attack_mult = 1.0
+	skill_basic_speed_mult = 1.0
+	skill_cooldown_mult = 1.0
+	skill_threefold_seal = false
+	skill_brush_verdict = false
+	_ranged_shot_index = 0
 	weapon_cfg = BoomWeapons.get_def(BoomWeapons.default_id())
 	player.apply_weapon(weapon_cfg)
 	_apply_stats_to_player()
@@ -319,7 +331,7 @@ func _apply_stats_to_player() -> void:
 
 ## M8 基础攻击力（§5.1）：当前武器决定的初始攻击参数。
 func _base_attack() -> int:
-	return weapon_cfg.base_attack
+	return maxi(1, int(floor(float(weapon_cfg.base_attack) * skill_base_attack_mult)))
 
 
 ## M8 最终攻击力（§5.2）：floor(基础攻击力 × (1 + 伤害加成倍率))。
@@ -329,7 +341,11 @@ func _final_attack() -> int:
 
 ## 当前普攻间隔（秒）：武器 CD ×rapid 被动 ÷攻速倍率（§3.1）；修复 M7R rapid 只写不读未生效的缺口。
 func _fire_interval() -> float:
-	return weapon_cfg.fire_cd * skill_fire_cd_mult / stats.aspd_mult()
+	return weapon_cfg.fire_cd * skill_fire_cd_mult / _basic_attack_speed_mult()
+
+
+func _basic_attack_speed_mult() -> float:
+	return stats.aspd_mult() * skill_basic_speed_mult
 
 
 ## M8 暴击判定（§6.3）：逐目标独立掷一次暴击。返回 [dmg, crit]。
@@ -373,7 +389,7 @@ func _tick_ranged(delta: float) -> void:
 	_lock_ttl = maxf(0.0, _lock_ttl - delta)
 	if _locked != null and (not is_instance_valid(_locked) or _locked.is_dead()):
 		_locked = null
-	var target := _resolve_target()
+	var target := _resolve_target(weapon_cfg.attack_range)
 	if target != _locked:
 		_locked = target
 		_lock_ttl = AIM_LOCK_TIME
@@ -385,7 +401,7 @@ func _tick_ranged(delta: float) -> void:
 		player.face_toward(aim_dir)
 		if _fire_cd <= 0.0:
 			_fire_cd = _fire_interval()
-			_spawn_bullet(muzzle_pos, aim_dir)
+			_fire_ranged_basic(muzzle_pos, aim_dir)
 			player.play_anim_once("recoil")
 	elif player.move_vec.length_squared() > 0.01:
 		# 无目标时朝移动方向边走边扫（只转向不开火会留空档）。
@@ -393,7 +409,7 @@ func _tick_ranged(delta: float) -> void:
 		player.face_toward(mv)
 		if _fire_cd <= 0.0:
 			_fire_cd = _fire_interval()
-			_spawn_bullet(muzzle_pos, mv.normalized())
+			_fire_ranged_basic(muzzle_pos, mv.normalized())
 			player.play_anim_once("recoil")
 
 
@@ -404,8 +420,10 @@ func _tick_melee(delta: float) -> void:
 	MeleeSystem.tick(self, delta)
 
 
-func _resolve_target() -> BoomJelly:
-	var best := _nearest_enemy()
+func _resolve_target(max_range: float = INF) -> BoomJelly:
+	var best := _nearest_enemy(max_range)
+	if _locked != null and player.position.distance_to(_locked.position) > max_range:
+		_locked = null
 	if best == null or _locked == null:
 		return best
 	if _locked == best:
@@ -436,7 +454,7 @@ func _aim_dir(from: Vector3, target: BoomJelly) -> Vector3:
 	return dir
 
 
-func _nearest_enemy() -> BoomJelly:
+func _nearest_enemy(max_range: float = INF) -> BoomJelly:
 	# 加权自动瞄准：距离权重 0.6 + 朝向角度权重 0.4，玩家当前朝向内的敌人更优先；
 	# ±8° 锥内带吸附权重，让扫射手感集中而非跳来跳去。
 	# 目标切换防抖由 _tick_player/_resolve_target 用 _locked + 0.15s 窗口收口。
@@ -453,7 +471,7 @@ func _nearest_enemy() -> BoomJelly:
 		var to_enemy: Vector3 = jelly.position - player.position
 		to_enemy.y = 0.0
 		var d: float = to_enemy.length()
-		if d <= 0.001:
+		if d <= 0.001 or d > max_range:
 			continue
 		var to_dir := to_enemy.normalized()
 		var angle := acos(clampf(fwd.dot(to_dir), -1.0, 1.0))
@@ -475,9 +493,21 @@ func _nearest_enemy() -> BoomJelly:
 func _spawn_bullet(from: Vector3, dir: Vector3, variant: String = "straight") -> void:
 	var b := bullets[_bullet_idx] as BoomBullet
 	_bullet_idx = (_bullet_idx + 1) % bullets.size()
-	b.fire(from, dir)
+	# 镇夜灯的普攻和主动灵印都不得越过可视半径；判笔无投射物射程规则。
+	var max_distance: float = (
+		weapon_cfg.attack_range if weapon_cfg.kind == BoomWeaponDef.AttackKind.RANGED else INF
+	)
+	b.fire(from, dir, max_distance)
 	b.variant = variant
 	shot_fired.emit(from)
+
+
+func _fire_ranged_basic(from: Vector3, dir: Vector3) -> void:
+	_ranged_shot_index += 1
+	_spawn_bullet(from, dir)
+	if skill_threefold_seal and _ranged_shot_index % 3 == 0:
+		_spawn_bullet(from, dir.rotated(Vector3.UP, -0.14))
+		_spawn_bullet(from, dir.rotated(Vector3.UP, 0.14))
 
 
 # ------------------------------------------------------------------ 技能（M2）
@@ -485,6 +515,8 @@ func _spawn_bullet(from: Vector3, dir: Vector3, variant: String = "straight") ->
 
 ## 当前瞄准的最远敌人（供闪电链起点/扇形朝向）。无可攻击目标返回 null。
 func nearest_attacker() -> BoomJelly:
+	if weapon_cfg.kind == BoomWeaponDef.AttackKind.RANGED:
+		return _nearest_enemy(weapon_cfg.attack_range)
 	return _nearest_enemy()
 
 
@@ -521,7 +553,7 @@ static func result_stars(wave: int) -> int:
 func cast_fan_shot() -> int:
 	var muzzle: Vector3 = player.position + player.basis * player.muzzle.position
 	var base_dir: Vector3 = player.facing
-	var target := _nearest_enemy()
+	var target := _nearest_enemy(weapon_cfg.attack_range)
 	if target != null:
 		base_dir = _aim_dir(muzzle, target)
 	var count: int = 0
@@ -599,6 +631,14 @@ func cast_whirl() -> int:
 	return BoomGameSkillCasts.whirl(self)
 
 
+func cast_brush_ink_wave() -> Array:
+	return BoomGameSkillCasts.ink_wave(self)
+
+
+func cast_brush_seal_domain() -> Array:
+	return BoomGameSkillCasts.seal_domain(self)
+
+
 ## 距 from 平面距离最近且不在 exclude 内、未死的敌人（闪电链找下一跳用）。
 func _nearest_jelly_from(from: Vector3, exclude: Array) -> BoomJelly:
 	var best: BoomJelly = null
@@ -644,6 +684,7 @@ func _tick_bullets(delta: float) -> void:
 		bullet.life -= delta
 		var out: bool = (
 			bullet.life <= 0.0
+			or bullet.position.distance_to(bullet.origin) >= bullet.max_distance
 			or absf(bullet.position.x) > ENEMY_BOUND_X + 1.0
 			or absf(bullet.position.z) > ENEMY_BOUND_Z + 1.0
 		)
@@ -726,8 +767,8 @@ func _finalize_kill(jelly: BoomJelly) -> void:
 		combo = 1
 	combo_left = COMBO_WINDOW
 	score += KILL_SCORE
-	# M7 击杀经验入账（精英 ×8；升级在 exp_sys 内同步发信号 → pending_upgrades）。
-	var xp_gain: int = BoomExperience.ELITE_XP if jelly.elite else BoomExperience.KILL_XP
+	# 怪种独立经验；人物升级曲线不读取波次/配额/怪物数量。
+	var xp_gain: int = jelly.xp_reward()
 	exp_sys.add_xp(xp_gain)
 	exp_gained.emit(xp_gain)
 	# 击杀顿帧：0.5s 内最多一次大停，防晕；首停 80ms 不超防晕铁律，连发用 25ms 轻点。

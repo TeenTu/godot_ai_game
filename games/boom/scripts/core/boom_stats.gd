@@ -10,7 +10,7 @@ const KIND_DMG: String = "dmg"  # 伤害 +10%（固定增幅，乘最终攻击�
 const KIND_ASPD: String = "atk_speed"  # 攻击速度 +10%（固定增幅，缩短普攻间隔/挥斩周期）
 const KIND_CRIT: String = "crit_rate"  # 暴击率 +3 个百分点（固定数额）
 const KIND_CRIT_DMG: String = "crit_dmg"  # 暴击伤害 +15 个百分点（固定数额）
-const KIND_HASTE: String = "haste"  # 技能急速 +8%（固定增幅，缩短技能冷却）
+const KIND_HASTE: String = "haste"  # 存档键兼容；效果为技能冷却缩减 -8%
 const KIND_SPEED: String = "speed"  # 移动速度 +8%（固定增幅）
 const KIND_DODGE: String = "dodge"  # 闪避率 +3 个百分点（稀有选项，上限 20%）
 const KIND_HEAL: String = "heal"  # 回满生命（一次性效果，不进堆叠；由 BoomGame 消费）
@@ -33,6 +33,7 @@ const ASPD_PCT_PER_STACK: float = 0.10
 const CRIT_PCT_PER_STACK: float = 0.03
 const CRIT_DMG_PCT_PER_STACK: float = 0.15
 const HASTE_PCT_PER_STACK: float = 0.08
+const COOLDOWN_REDUCTION_CAP: float = 0.40
 const MOVE_MULT_PER_STACK: float = 1.08  # 移速 ×1.08（叠加乘算）
 const DODGE_PCT_PER_STACK: float = 0.03
 const DODGE_CAP: float = 0.20  # 闪避上限 20%（§8）
@@ -121,9 +122,14 @@ func crit_dmg_mult() -> float:
 	return BASE_CRIT_DMG + CRIT_DMG_PCT_PER_STACK * float(crit_dmg_stacks)
 
 
-## 技能急速倍率：技能冷却 ÷ haste_mult()。
+## 兼容旧存档/测试的急速倍率；新结算统一使用直接冷却缩减。
 func haste_mult() -> float:
 	return 1.0 + HASTE_PCT_PER_STACK * float(haste_stacks)
+
+
+## 冷却缩减：每档固定 -8%，最多 -40%；最终冷却 = 基础冷却 × (1-CDR)。
+func cooldown_reduction() -> float:
+	return minf(COOLDOWN_REDUCTION_CAP, HASTE_PCT_PER_STACK * float(haste_stacks))
 
 
 ## 移速倍率（BoomPlayer.MOVE_SPEED * weapon.move_mult 之上，乘算）。

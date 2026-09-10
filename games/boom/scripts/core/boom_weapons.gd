@@ -25,15 +25,31 @@ static func _bubble_def() -> BoomWeaponDef:
 	def.fire_cd = 0.22
 	def.proj_speed = 15.0
 	def.proj_life = 1.6
+	# 竖屏相机横向半宽约 8.72m；8m 保守半径保证目标仍在可视区内。
+	def.attack_range = 8.0  # 锁敌与普通弹飞行共用此硬上限
 	def.base_attack = 10  # M8 基础攻击力：每发普通子弹 10 点（≈3 发杀 W1 30HP）
 	def.proj_dmg = def.base_attack  # 与统一结算入口同源（M8 §5.2）
 	def.proj_color = Color("8ce6ff")
 	def.move_mult = 1.0
 	def.max_hp_bonus = 0
-	def.skill_kit_id = "core"
+	def.skill_kit_id = "lantern"
 	def.anim_set_id = "night_ruler"
-	# M7R 镇夜灯树：共用 4（fan/chain/nuke/ring）+ 远程专属 twin/rapid。
-	def.tree = {"skills": ["fan", "chain", "nuke", "ring", "twin", "rapid"]}
+	def.tree = {
+		"branches":
+		{
+			"basic": ["lamp_quick_wick", "lamp_bright_core", "lamp_threefold_seal"],
+			"skill": ["lamp_firefly_volley", "lamp_echo", "lamp_soul_beacon"],
+		},
+		"skills":
+		[
+			"lamp_quick_wick",
+			"lamp_firefly_volley",
+			"lamp_bright_core",
+			"lamp_echo",
+			"lamp_threefold_seal",
+			"lamp_soul_beacon"
+		],
+	}
 	return def
 
 
@@ -97,10 +113,24 @@ static func _greatsword_def() -> BoomWeaponDef:
 	]
 	def.move_mult = 0.85
 	def.max_hp_bonus = 20  # M8 近战生存补偿：50 + 20 = 70（§4.1）
-	def.skill_kit_id = "core"
+	def.skill_kit_id = "brush"
 	def.anim_set_id = "ink_judge_brush"
-	# M7R 判笔树：共用 4（fan/chain/nuke/heal）+ 近战专属 whirl/titan。
-	def.tree = {"skills": ["fan", "chain", "nuke", "heal", "whirl", "titan"]}
+	def.tree = {
+		"branches":
+		{
+			"basic": ["brush_firm_grip", "brush_flowing_script", "brush_verdict"],
+			"skill": ["brush_ink_wave", "brush_focus", "brush_seal_domain"],
+		},
+		"skills":
+		[
+			"brush_firm_grip",
+			"brush_ink_wave",
+			"brush_flowing_script",
+			"brush_focus",
+			"brush_verdict",
+			"brush_seal_domain"
+		],
+	}
 	return def
 
 

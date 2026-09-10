@@ -17,6 +17,7 @@ enum AttackKind { RANGED, MELEE }
 @export var proj_speed: float = 15.0  # BoomBullet.SPEED
 @export var proj_life: float = 1.6  # BoomBullet.LIFETIME
 @export var proj_dmg: int = 1  # 命中结算用它（现 BULLET_DMG）
+@export var attack_range: float = 11.0  # 普攻锁敌/弹丸最远距离；灯不得攻击屏外敌人
 @export var proj_color: Color = Color("8ce6ff")  # 命中粒子/弹体调色
 ## M8 基础攻击力（design_m8_attributes.md §5.1）：由武器决定的初始攻击参数；
 ## 所有输出经 BoomGame 统一结算入口 floor(base × (1+伤害加成)) 放大。

@@ -59,6 +59,12 @@ func test_stats() -> void:
 	host._check(is_equal_approx(s.aspd_mult(), 1.1), "攻速 +10% → ×1.10")
 	s.apply(BoomStats.KIND_HASTE)
 	host._check(is_equal_approx(s.haste_mult(), 1.08), "急速 +8% → ×1.08")
+	host._check(is_equal_approx(s.cooldown_reduction(), 0.08), "技能冷却缩减每次固定 -8%")
+	s.haste_stacks = 99
+	host._check(
+		is_equal_approx(s.cooldown_reduction(), BoomStats.COOLDOWN_REDUCTION_CAP), "技能冷却缩减封顶 40%"
+	)
+	s.haste_stacks = 1
 	s.apply(BoomStats.KIND_SPEED)
 	host._check(is_equal_approx(s.move_mult(), 1.08), "移速 +8% → ×1.08")
 	# 闪避上限 20%（§8）：34 档 ×3pp = 102% → 封顶。

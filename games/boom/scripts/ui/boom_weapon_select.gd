@@ -3,8 +3,8 @@ extends Control
 ## M5 选武器面板（design_m5_weapons.md §3.3）：开局必经的一层轻量界面，
 ## 也复用为结算"再来一局"的中转站。全代码构建，720×1280 设计空间竖屏 2 卡竖排。
 ## 交互：点卡高亮选中（不直接开战）→ 按【开战】发 confirmed(weapon_id)。
-## M7R：卡片下方为技能配置区，按当前选中武器显示该武器树 6 技能——
-## 已解锁可点击勾选（≤3，MAX_EQUIPPED 不变），未解锁显示价格、点击花跨局金币解锁。
+## 卡片下方为 2 分支 × 3 阶技能树：左列普攻构筑，右列主动技能构筑。
+## 已解锁可点击勾选（≤3），未解锁需先满足前置节点，再花跨局金币解锁。
 ## 纯 UI 层：解锁/装备走注入的 BoomSkillSystem，确认动作由 main.gd 订阅后注入 BoomGame。
 
 signal confirmed(weapon_id: String)
@@ -13,7 +13,7 @@ const COL_CREAM: Color = Color("fff6e8")
 const COL_GOLD: Color = Color("ffc93c")
 const COL_CARD: Color = Color(0.99, 0.52, 0.20, 0.98)
 const COL_CARD_DEEP: Color = Color(0.55, 0.14, 0.03, 0.34)
-const COL_OVERLAY: Color = Color(0.13, 0.07, 0.04, 0.94)
+const COL_OVERLAY: Color = Color(0.07, 0.10, 0.14, 0.99)
 const COL_ROW_LOCKED: Color = Color(0.24, 0.16, 0.12, 0.85)
 const COL_ROW_OPEN: Color = Color(0.86, 0.36, 0.10, 0.92)
 
@@ -26,10 +26,13 @@ const CARD_STEP: float = 215.0
 const BTN_POS: Vector2 = Vector2(100.0, 912.0)
 const BTN_SIZE: Vector2 = Vector2(520.0, 118.0)
 ## M7R 技能配置区几何。
-const SKILL_HEADER_Y: float = 570.0
-const SKILL_ROW_Y0: float = 602.0
-const SKILL_ROW_H: float = 42.0
-const SKILL_ROW_STEP: float = 46.0
+const SKILL_HEADER_Y: float = 560.0
+const SKILL_BRANCH_Y: float = 594.0
+const SKILL_ROW_Y0: float = 626.0
+const SKILL_ROW_H: float = 78.0
+const SKILL_ROW_STEP: float = 86.0
+const SKILL_ROW_W: float = 300.0
+const SKILL_COL_X: Dictionary = {"basic": 50.0, "skill": 370.0}
 
 var skill_sys: BoomSkillSystem = null  # main.gd 注入；空时技能区只读隐藏
 
@@ -40,9 +43,12 @@ var _name_labels: Dictionary = {}  # weapon_id -> Label
 var _fight_btn: Button
 var _skill_rows: Dictionary = {}  # skill_id -> Button（当前武器树 6 行）
 var _skill_header: Label
+var _branch_labels: Dictionary = {}
+var _tree_links: Array[ColorRect] = []
 
 
 func _init() -> void:
+	z_index = 100  # 必须盖住 HUD 的高 z 子控件，避免选单与战斗信息叠画。
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_weapons = BoomWeapons.all()
 
@@ -78,7 +84,9 @@ func _build_panel() -> void:
 
 	_fight_btn = _build_fight_button()
 	_build_skill_panel()
-	var note := _make_label("Each weapon has its own 6-skill tree", 17, Color(1.0, 1.0, 1.0, 0.55))
+	var note := _make_label(
+		"Choose up to 3 nodes · unlock each branch in order", 17, Color(1.0, 1.0, 1.0, 0.55)
+	)
 	note.position = Vector2(0.0, 1056.0)
 	note.size = Vector2(720.0, 30.0)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -202,10 +210,8 @@ func _build_fight_button() -> Button:
 	btn.position = BTN_POS
 	btn.size = BTN_SIZE
 	btn.pivot_offset = btn.size * 0.5
-	btn.text = "FIGHT!"
+	btn.text = ""
 	btn.focus_mode = Control.FOCUS_NONE
-	btn.add_theme_font_size_override("font_size", 42)
-	btn.add_theme_color_override("font_color", Color(0.42, 0.18, 0.02, 1.0))
 	var normal := _rounded(COL_GOLD, Color(1.0, 0.98, 0.9, 0.95), 3, 40)
 	btn.add_theme_stylebox_override("normal", normal)
 	btn.add_theme_stylebox_override("hover", normal)
@@ -213,6 +219,16 @@ func _build_fight_button() -> Button:
 	btn.add_theme_stylebox_override("focus", normal)
 	btn.pressed.connect(_on_fight_pressed)
 	add_child(btn)
+	var label := Label.new()
+	label.text = "FIGHT!"
+	label.position = Vector2.ZERO
+	label.size = BTN_SIZE
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 42)
+	label.add_theme_color_override("font_color", Color(0.42, 0.18, 0.02, 1.0))
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(label)
 	return btn
 
 
@@ -220,23 +236,75 @@ func _on_card_pressed(weapon_id: String) -> void:
 	set_selected(weapon_id)
 
 
-## M7R 技能配置区：标题 + 当前武器树 6 行（按钮文本随解锁/装备状态刷新）。
+## 技能配置区：两列分别代表普攻与主动技能分支，每列三阶并显示连接线。
 func _build_skill_panel() -> void:
-	_skill_header = _make_label("SKILL TREE", 26, COL_GOLD)
+	_skill_header = _make_label("WEAPON TREE", 26, COL_GOLD)
 	_skill_header.position = Vector2(50.0, SKILL_HEADER_Y)
 	_skill_header.size = Vector2(620.0, 32.0)
+	for branch in ["basic", "skill"]:
+		var branch_label := _make_label(BoomSkillSystem.branch_title(branch), 17, COL_CREAM)
+		branch_label.position = Vector2(float(SKILL_COL_X[branch]), SKILL_BRANCH_Y)
+		branch_label.size = Vector2(SKILL_ROW_W, 26.0)
+		branch_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_branch_labels[branch] = branch_label
+		for tier in 2:
+			var link := ColorRect.new()
+			link.color = Color(COL_GOLD, 0.55)
+			link.position = Vector2(
+				float(SKILL_COL_X[branch]) + SKILL_ROW_W * 0.5 - 2.0,
+				SKILL_ROW_Y0 + SKILL_ROW_H + float(tier) * SKILL_ROW_STEP
+			)
+			link.size = Vector2(4.0, SKILL_ROW_STEP - SKILL_ROW_H)
+			link.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(link)
+			move_child(link, 1)
+			_tree_links.append(link)
 	for i in BoomSkillSystem.MAX_EQUIPPED * 2:  # 预建 6 行占位，随树刷新
 		var row := Button.new()
-		row.position = Vector2(50.0, SKILL_ROW_Y0 + float(i) * SKILL_ROW_STEP)
-		row.size = Vector2(620.0, SKILL_ROW_H)
+		var branch := "basic" if i % 2 == 0 else "skill"
+		var tier: int = i / 2
+		row.position = Vector2(
+			float(SKILL_COL_X[branch]), SKILL_ROW_Y0 + float(tier) * SKILL_ROW_STEP
+		)
+		row.size = Vector2(SKILL_ROW_W, SKILL_ROW_H)
 		row.focus_mode = Control.FOCUS_NONE
-		row.add_theme_font_size_override("font_size", 20)
-		row.add_theme_color_override("font_color", COL_CREAM)
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		# Button.text 保留为测试/无障碍摘要；真实排版交给子 Label，避免图标压字。
+		row.add_theme_font_size_override("font_size", 1)
+		row.add_theme_color_override("font_color", Color.TRANSPARENT)
+		row.add_theme_color_override("font_hover_color", Color.TRANSPARENT)
+		row.add_theme_color_override("font_pressed_color", Color.TRANSPARENT)
 		row.add_theme_stylebox_override(
 			"normal", _rounded(COL_ROW_OPEN, Color(1.0, 1.0, 1.0, 0.35), 2, 12)
 		)
 		row.pressed.connect(_on_skill_row_pressed.bind(i))
 		add_child(row)
+		var icon := TextureRect.new()
+		icon.name = "Icon"
+		icon.position = Vector2(10.0, 11.0)
+		icon.size = Vector2(56.0, 56.0)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(icon)
+		var title := Label.new()
+		title.name = "Title"
+		title.position = Vector2(74.0, 8.0)
+		title.size = Vector2(216.0, 27.0)
+		title.add_theme_font_size_override("font_size", 14)
+		title.add_theme_color_override("font_color", COL_CREAM)
+		title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(title)
+		var detail := Label.new()
+		detail.name = "Detail"
+		detail.position = Vector2(74.0, 34.0)
+		detail.size = Vector2(216.0, 38.0)
+		detail.add_theme_font_size_override("font_size", 12)
+		detail.add_theme_color_override("font_color", Color(1.0, 0.94, 0.83, 0.82))
+		detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		detail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(detail)
 		_skill_rows[i] = row
 
 
@@ -254,8 +322,16 @@ func _refresh_skill_rows() -> void:
 			row.visible = false
 			continue
 		row.visible = true
-		row.text = _skill_row_text(ids[i])
-		var locked: bool = skill_sys != null and not skill_sys.is_unlocked(ids[i])
+		var skill_id := ids[i]
+		row.text = _skill_row_text(skill_id)
+		var icon := row.get_node_or_null("Icon") as TextureRect
+		var icon_path := BoomSkillSystem.icon_path(skill_id)
+		if icon != null:
+			icon.texture = (
+				load(icon_path) as Texture2D if ResourceLoader.exists(icon_path) else null
+			)
+		_refresh_skill_row_labels(row, skill_id)
+		var locked: bool = skill_sys != null and not skill_sys.is_unlocked(skill_id)
 		var style := _rounded(
 			COL_ROW_LOCKED if locked else COL_ROW_OPEN, Color(1.0, 1.0, 1.0, 0.35), 2, 12
 		)
@@ -265,11 +341,28 @@ func _refresh_skill_rows() -> void:
 		row.add_theme_stylebox_override("focus", style)
 
 
+func _refresh_skill_row_labels(row: Button, skill_id: String) -> void:
+	var title := row.get_node_or_null("Title") as Label
+	var detail := row.get_node_or_null("Detail") as Label
+	var skill := skill_sys.get_skill(skill_id) if skill_sys != null else null
+	if title == null or detail == null or skill == null:
+		return
+	var status := ""
+	if skill_sys.is_unlocked(skill_id):
+		status = " · EQUIPPED" if skill_sys.equipped.has(skill_id) else " · READY"
+	elif skill_sys.unlock_cost(skill_id) > 0:
+		status = " · %d COINS" % skill_sys.unlock_cost(skill_id)
+	else:
+		status = " · LOCKED"
+	title.text = skill.display_name + status
+	var kind := "PASSIVE" if skill.is_passive else "ACTIVE"
+	detail.text = "%s · %s" % [kind, BoomSkillSystem.description_for(skill_id)]
+
+
 ## 单行文案：树序. 名称 + [EQUIPPED]（已勾选）/ 无标记（已解锁）/ [UNLOCK n]（未解锁）。
 func _skill_row_text(skill_id: String) -> String:
 	if skill_sys == null:
 		return skill_id
-	var idx := skill_sys.tree_ids().find(skill_id)
 	var skill := skill_sys.get_skill(skill_id)
 	var name_txt: String = skill.display_name if skill != null else skill_id
 	var tag := ""
@@ -277,9 +370,17 @@ func _skill_row_text(skill_id: String) -> String:
 		if skill_sys.equipped.has(skill_id):
 			tag = "  [EQUIPPED]"
 	elif skill_sys.unlock_cost(skill_id) > 0:
-		tag = "  [UNLOCK %d]" % skill_sys.unlock_cost(skill_id)
-	var passive := " (PASSIVE)" if skill != null and skill.is_passive else ""
-	return "%d. %s%s%s" % [idx + 1, name_txt, passive, tag]
+		tag = " · UNLOCK %d" % skill_sys.unlock_cost(skill_id)
+	else:
+		var node := skill_sys.tree_node(skill_id)
+		var prerequisite: String = str(node.get("depends_on", ""))
+		var previous := skill_sys.get_skill(prerequisite)
+		tag = " · REQUIRES %s" % (previous.display_name if previous != null else "PRIOR NODE")
+	var kind := "PASSIVE" if skill != null and skill.is_passive else "ACTIVE"
+	return (
+		"        %s%s\n        %s · %s"
+		% [name_txt, tag, kind, BoomSkillSystem.description_for(skill_id)]
+	)
 
 
 ## 技能行点击：未解锁 → 花跨局金币解锁；已解锁 → 勾选/取消勾选（≤3）。

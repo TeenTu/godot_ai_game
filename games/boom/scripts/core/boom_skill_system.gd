@@ -1,7 +1,7 @@
 class_name BoomSkillSystem
 extends Node
-## 技能系统逻辑层（M7R 重构）：技能池存全部技能定义，每武器一棵 6 槽技能树
-## （BoomWeaponDef.tree["skills"] 决定该武器可见/可解锁集合——加新武器 = 定义一棵树）。
+## 技能系统逻辑层：每把武器一棵 2 分支 × 3 阶技能树。
+## 普攻分支改变攻速/基础攻击/普攻形态；技能分支提供两个主动形态与冷却缩减。
 ## 解锁消耗跨局货币（BoomSave.coins，user:// 持久化）；装备为局内 ≤3 槽手势映射。
 ## 纯逻辑，不含视觉/粒子/音频；只发信号，效果由 main.gd 订阅后触发。
 
@@ -12,7 +12,7 @@ signal skill_fired(skill_id: String, result: Variant)
 # 金币解锁成功
 signal skill_unlocked(skill_id: String)
 
-# 冷却阶梯（秒）：Fan=3 / Chain=8 / Nuke=20 / Ring=10 / Twin=6 / Whirl=12 / Heal=30
+# 新武器专属主动技能冷却（秒）。
 const FAN_COOLDOWN: float = 3.0
 const CHAIN_COOLDOWN: float = 8.0
 const NUKE_COOLDOWN: float = 20.0
@@ -20,6 +20,10 @@ const RING_COOLDOWN: float = 10.0
 const TWIN_COOLDOWN: float = 6.0
 const WHIRL_COOLDOWN: float = 12.0
 const HEAL_COOLDOWN: float = 30.0
+const LAMP_VOLLEY_COOLDOWN: float = 4.0
+const LAMP_BEACON_COOLDOWN: float = 12.0
+const BRUSH_WAVE_COOLDOWN: float = 6.0
+const BRUSH_DOMAIN_COOLDOWN: float = 15.0
 
 # 技能图标主题色
 const FAN_COLOR: Color = Color(1.0, 0.75, 0.25)
@@ -32,17 +36,14 @@ const HEAL_COLOR: Color = Color(0.45, 0.95, 0.75)
 
 # M7R 树内顺序解锁价（design_m7_progression.md §5.3）：树内第 1 个免费（默认解锁），
 # 其余 60/120/200/300/420 递增。unlock_cost 返回 -1 表示免费/不可购买。
-const TREE_PRICES: Array[int] = [0, 60, 120, 200, 300, 420]
+const TREE_PRICES: Array[int] = [0, 120, 300]
 
 # M7R skill_id -> BoomGame 施放方法名（扩容登记一处；查表规避 lint max-returns）。
 const CAST_METHODS: Dictionary = {
-	"fan": "cast_fan_shot",
-	"chain": "cast_chain_arc",
-	"nuke": "cast_aoe_nuke",
-	"ring": "cast_ring_shot",
-	"twin": "cast_twin_shot",
-	"whirl": "cast_whirl",
-	"heal": "cast_repair",
+	"lamp_firefly_volley": "cast_fan_shot",
+	"lamp_soul_beacon": "cast_ring_shot",
+	"brush_ink_wave": "cast_brush_ink_wave",
+	"brush_seal_domain": "cast_brush_seal_domain",
 }
 
 # §4.2 技能飘字规格：fan=黄"嘭!"小字 / chain=紫"链!"大字 / nuke=金"轰!"巨型。
@@ -59,9 +60,27 @@ const TEXT_SCALE_NUKE: float = 1.7
 # M7 被动加成数值（bubble 专属 rapid / sword 专属 titan）。
 const RAPID_FIRE_MULT: float = 0.8  # 装备 rapid：普攻 CD ×0.8（射速 +25%）
 const TITAN_DMG_BONUS: int = 1  # 装备 titan：弧斩/旋风斩伤害 +1
+const BASIC_ATTACK_MULT: float = 1.20
+const BASIC_SPEED_MULT: float = 1.15
+const SKILL_COOLDOWN_MULT: float = 0.85
 
 # M7 每局装备上限（§5.4 硬红线：3 槽手势，超编拒绝）。
 const MAX_EQUIPPED: int = 3
+
+const SKILL_DESCRIPTIONS: Dictionary = {
+	"lamp_quick_wick": "Basic rate +15%",
+	"lamp_bright_core": "Base attack +20%",
+	"lamp_threefold_seal": "Every 3rd shot becomes a triple seal",
+	"lamp_firefly_volley": "Fire a five-seal fan volley",
+	"lamp_echo": "Active skill cooldown -15%",
+	"lamp_soul_beacon": "Release a full-circle soul beacon",
+	"brush_firm_grip": "Base attack +20%",
+	"brush_flowing_script": "Basic combo speed +15%",
+	"brush_verdict": "Wider combo arcs and +25% combo damage",
+	"brush_ink_wave": "Sweep a focused frontal ink wave",
+	"brush_focus": "Active skill cooldown -15%",
+	"brush_seal_domain": "Seal and strike a wide domain",
+}
 
 # 注入的对局引用，由 main.gd 赋值
 var game: BoomGame
@@ -76,19 +95,33 @@ var equipped: Array[String] = []
 
 
 func _init() -> void:
-	pool["fan"] = BoomSkill.new("fan", "BULLET STORM", FAN_COOLDOWN, FAN_COLOR)
-	pool["chain"] = BoomSkill.new("chain", "CHAIN LIGHTNING", CHAIN_COOLDOWN, CHAIN_COLOR)
-	pool["nuke"] = BoomSkill.new("nuke", "MEGA NUKE", NUKE_COOLDOWN, NUKE_COLOR)
-	pool["ring"] = BoomSkill.new("ring", "RING BURST", RING_COOLDOWN, RING_COLOR)
-	pool["twin"] = BoomSkill.new("twin", "TWIN CANNON", TWIN_COOLDOWN, TWIN_COLOR)
-	pool["rapid"] = BoomSkill.new("rapid", "OVERDRIVE", 0.0, FAN_COLOR)
-	(pool["rapid"] as BoomSkill).is_passive = true
-	pool["heal"] = BoomSkill.new("heal", "REPAIR", HEAL_COOLDOWN, HEAL_COLOR)
-	pool["whirl"] = BoomSkill.new("whirl", "WHIRLWIND", WHIRL_COOLDOWN, WHIRL_COLOR)
-	pool["titan"] = BoomSkill.new("titan", "TITAN EDGE", 0.0, WHIRL_COLOR)
-	(pool["titan"] as BoomSkill).is_passive = true
+	_add_passive("lamp_quick_wick", "QUICK WICK", FAN_COLOR)
+	_add_passive("lamp_bright_core", "BRIGHT CORE", FAN_COLOR)
+	_add_passive("lamp_threefold_seal", "THREEFOLD SEAL", FAN_COLOR)
+	pool["lamp_firefly_volley"] = BoomSkill.new(
+		"lamp_firefly_volley", "FIREFLY VOLLEY", LAMP_VOLLEY_COOLDOWN, FAN_COLOR
+	)
+	_add_passive("lamp_echo", "LANTERN ECHO", RING_COLOR)
+	pool["lamp_soul_beacon"] = BoomSkill.new(
+		"lamp_soul_beacon", "SOUL BEACON", LAMP_BEACON_COOLDOWN, RING_COLOR
+	)
+	_add_passive("brush_firm_grip", "FIRM GRIP", WHIRL_COLOR)
+	_add_passive("brush_flowing_script", "FLOWING SCRIPT", WHIRL_COLOR)
+	_add_passive("brush_verdict", "SCARLET VERDICT", NUKE_COLOR)
+	pool["brush_ink_wave"] = BoomSkill.new(
+		"brush_ink_wave", "INK WAVE", BRUSH_WAVE_COOLDOWN, CHAIN_COLOR
+	)
+	_add_passive("brush_focus", "ONE-BREATH SCRIPT", CHAIN_COLOR)
+	pool["brush_seal_domain"] = BoomSkill.new(
+		"brush_seal_domain", "SEAL DOMAIN", BRUSH_DOMAIN_COOLDOWN, NUKE_COLOR
+	)
 	# 默认泡泡树；解锁进度从跨局存档加载（无存档 = 各树第 1 技能默认解锁）。
 	set_weapon_tree("bubble")
+
+
+func _add_passive(id: String, title: String, color: Color) -> void:
+	pool[id] = BoomSkill.new(id, title, 0.0, color)
+	(pool[id] as BoomSkill).is_passive = true
 
 
 # ------------------------------------------------------------------ M7R 武器树
@@ -139,6 +172,18 @@ func get_skill(skill_id: String) -> BoomSkill:
 	return pool.get(skill_id) as BoomSkill
 
 
+static func icon_path(skill_id: String) -> String:
+	return "res://assets/images/icons/skill_%s.png" % skill_id
+
+
+static func description_for(skill_id: String) -> String:
+	return str(SKILL_DESCRIPTIONS.get(skill_id, ""))
+
+
+static func branch_title(branch_id: String) -> String:
+	return "BASIC ATTACK" if branch_id == "basic" else "ACTIVE SKILLS"
+
+
 ## 每帧驱动整个技能池的冷却，并在技能从 CD 中归零时广播 skill_ready。
 func tick(delta: float) -> void:
 	for skill: BoomSkill in pool.values():
@@ -160,11 +205,29 @@ func is_unlocked(skill_id: String) -> bool:
 
 ## 树内顺序价（TREE_PRICES[树序]）；树首免费/非本树技能/未知 id 返回 -1（不可购买）。
 func unlock_cost(skill_id: String) -> int:
-	var idx := tree.find(skill_id)
-	if idx < 0:
+	var node := tree_node(skill_id)
+	if node.is_empty():
 		return -1
-	var cost := TREE_PRICES[idx] if idx < TREE_PRICES.size() else TREE_PRICES[-1]
+	var tier: int = int(node["tier"])
+	if tier > 0 and not is_unlocked(String(node["depends_on"])):
+		return -1
+	var cost := TREE_PRICES[tier]
 	return cost if cost > 0 else -1
+
+
+func tree_node(skill_id: String) -> Dictionary:
+	var branches: Dictionary = BoomWeapons.get_def(weapon_id).tree.get("branches", {})
+	for branch_variant in branches:
+		var branch: String = branch_variant
+		var ids: Array = branches[branch]
+		var tier: int = ids.find(skill_id)
+		if tier >= 0:
+			return {
+				"branch": branch,
+				"tier": tier,
+				"depends_on": "" if tier == 0 else String(ids[tier - 1])
+			}
+	return {}
 
 
 ## 花跨局金币解锁（写入存档并即时落盘）：
@@ -203,8 +266,23 @@ func unequip(skill_id: String) -> bool:
 func _refresh_passives() -> void:
 	if game == null:
 		return
-	game.skill_fire_cd_mult = RAPID_FIRE_MULT if equipped.has("rapid") else 1.0
-	game.skill_swing_dmg_bonus = TITAN_DMG_BONUS if equipped.has("titan") else 0
+	game.skill_fire_cd_mult = 1.0
+	game.skill_swing_dmg_bonus = 0
+	game.skill_base_attack_mult = (
+		BASIC_ATTACK_MULT
+		if equipped.has("lamp_bright_core") or equipped.has("brush_firm_grip")
+		else 1.0
+	)
+	game.skill_basic_speed_mult = (
+		BASIC_SPEED_MULT
+		if equipped.has("lamp_quick_wick") or equipped.has("brush_flowing_script")
+		else 1.0
+	)
+	game.skill_cooldown_mult = (
+		SKILL_COOLDOWN_MULT if equipped.has("lamp_echo") or equipped.has("brush_focus") else 1.0
+	)
+	game.skill_threefold_seal = equipped.has("lamp_threefold_seal")
+	game.skill_brush_verdict = equipped.has("brush_verdict")
 
 
 # ------------------------------------------------------------------ 施放入口
@@ -238,7 +316,9 @@ func cast_skill(skill_id: String) -> void:
 	var skill := get_skill(skill_id)
 	if skill == null or skill.is_passive or game == null or not skill.is_ready():
 		return
-	skill.cooldown_left = skill.cooldown / maxf(0.01, game.stats.haste_mult())
+	skill.cooldown_left = (
+		skill.cooldown * game.skill_cooldown_mult * (1.0 - game.stats.cooldown_reduction())
+	)
 	var result: Variant = _dispatch_cast(skill_id)
 	skill_fired.emit(skill_id, result)
 
@@ -285,10 +365,10 @@ func debug_grant(skill_id: String) -> void:
 ## 未登记的 skill_id 返回空字典（上层跳过生成）。
 static func float_text_for(skill_id: String) -> Dictionary:
 	match skill_id:
-		"fan":
+		"fan", "lamp_firefly_volley":
 			return {"text": TEXT_FAN, "color": TEXT_COLOR_FAN, "scale": TEXT_SCALE_FAN}
-		"chain":
+		"chain", "brush_ink_wave":
 			return {"text": TEXT_CHAIN, "color": TEXT_COLOR_CHAIN, "scale": TEXT_SCALE_CHAIN}
-		"nuke":
+		"nuke", "lamp_soul_beacon", "brush_seal_domain":
 			return {"text": TEXT_NUKE, "color": TEXT_COLOR_NUKE, "scale": TEXT_SCALE_NUKE}
 	return {}

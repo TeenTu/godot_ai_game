@@ -2,14 +2,17 @@ class_name BoomSave
 extends RefCounted
 ## M7R 跨局持久存档（design_m7_progression.md §6）：解锁进度 + 跨局货币。
 ## 纯静态门面：内存缓存 + user://boom_save.json 落盘，headless 可读写。
-## 结构：{"coins": int, "unlocked": {"bubble": ["fan",...], "greatsword": [...]}}
+## 结构：{"coins": int, "unlocked": {"bubble": ["lamp_..."], "greatsword": ["brush_..."]}}
 ## 货币语义：解锁消耗跨局货币（存档 coins）；对局内拾取金币在获得时即时
 ## 累加进存档内存（落盘合并到解锁 / 结算时机，见 save() 调用方）。
 
 const SAVE_PATH: String = "user://boom_save.json"
 
-## 每武器默认解锁：各自武器树第 1 个技能（fan）免费初始拥有。
-const DEFAULT_UNLOCKED: Array[String] = ["fan"]
+## 每把武器的两条派生各开放根节点；旧存档技能保留但不再进入新树。
+const DEFAULT_UNLOCKED: Dictionary = {
+	"bubble": ["lamp_quick_wick", "lamp_firefly_volley"],
+	"greatsword": ["brush_firm_grip", "brush_ink_wave"],
+}
 
 static var _data: Dictionary = {}
 
@@ -50,8 +53,8 @@ static func _default_data() -> Dictionary:
 		"coins": 0,
 		"unlocked":
 		{
-			"bubble": DEFAULT_UNLOCKED.duplicate(),
-			"greatsword": DEFAULT_UNLOCKED.duplicate(),
+			"bubble": (DEFAULT_UNLOCKED["bubble"] as Array).duplicate(),
+			"greatsword": (DEFAULT_UNLOCKED["greatsword"] as Array).duplicate(),
 		},
 	}
 
