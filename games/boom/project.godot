@@ -31,7 +31,11 @@ asset_style="boom-night-2d"
 
 [gui]
 
-theme/custom_font="res://assets/fonts/ui_subset.ttf"
+# Web 导出无系统 CJK 回退：全 UI 使用项目自带中文子集主题（msyh 子集，
+# 覆盖 scripts/tools 全部用字）。custom_font 不参与默认主题字体切换，
+# 必须用 custom Theme 资源（default_font）；运行时另见 main.gd 顶层
+# Control.theme 赋值（编辑器侧只认这里的设置）。见 DESIGN_M10 §9。
+theme/custom="res://assets/fonts/ui_theme.tres"
 
 [input_devices]
 

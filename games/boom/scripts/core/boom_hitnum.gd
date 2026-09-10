@@ -12,6 +12,10 @@ const FONT_PX: int = 56
 const PIXEL_SIZE: float = 0.008
 const BASE_Y: float = 1.1
 
+# Label3D 不继承 Control 主题：Web 无系统 CJK 回退，中文飘字必须显式挂
+# 内嵌中文字集字体，否则渲染成豆腐块（见 DESIGN_M10 §9）。
+const FONT_PATH: String = "res://assets/fonts/ui_subset.ttf"
+
 const COLOR_DAMAGE: Color = Color(1.0, 1.0, 1.0)
 const COLOR_SCORE: Color = Color(1.0, 0.85, 0.35)
 
@@ -22,10 +26,12 @@ var _busy: Array[int] = []  # 使用中槽位（先入先出，供断言/超限�
 
 
 func _init() -> void:
+	var font := load(FONT_PATH) as Font
 	for i in POOL_SIZE:
 		var l := Label3D.new()
 		l.name = "HitNum%d" % i
 		l.text = ""
+		l.font = font
 		l.font_size = FONT_PX
 		l.pixel_size = PIXEL_SIZE
 		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED

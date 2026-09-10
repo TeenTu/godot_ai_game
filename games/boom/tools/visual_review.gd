@@ -13,6 +13,7 @@ func _review() -> void:
 	var capture_ui := false
 	var capture_boss := false
 	var capture_skills := false
+	var capture_floats := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--capture-dir="):
 			capture_dir = arg.trim_prefix("--capture-dir=")
@@ -24,6 +25,8 @@ func _review() -> void:
 			capture_boss = true
 		elif arg == "--skills":
 			capture_skills = true
+		elif arg == "--floats":
+			capture_floats = true
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	var player: BoomPlayer = scene.sim.player
@@ -51,6 +54,16 @@ func _review() -> void:
 		return
 	if capture_skills and not capture_dir.is_empty():
 		await _capture_m12_skills(scene, capture_dir)
+		return
+	if capture_floats and not capture_dir.is_empty():
+		# Label3D 飘字 + HUD 连击播报专项；避开下方对角朝向断言（静止场景不成立）。
+		assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
+		scene._select.hide()
+		await create_timer(0.3).timeout
+		await _capture_floats(scene, capture_dir)
+		scene.queue_free()
+		await process_frame
+		quit()
 		return
 	if capture_ui and not capture_dir.is_empty():
 		assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
@@ -132,6 +145,25 @@ func _review() -> void:
 	scene.queue_free()
 	await process_frame
 	quit()
+
+
+## --floats：Label3D 中文飘字专项截图 + 连击播报。Label3D 不继承 Control
+## 主题（见 DESIGN_M10 §9.2），必须显式挂中文字集字体，否则 Web 上是豆腐块。
+func _capture_floats(scene: Node, capture_dir: String) -> void:
+	DirAccess.make_dir_recursive_absolute(capture_dir)
+	var texts: Array[String] = ["嘭!", "链!", "轰!", "萤!", "引!", "墨!", "封!", "闪避", "+12 气血"]
+	# 正交相机 size=15.5 + keep_aspect=KEEP_HEIGHT ⇒ 720×1280 下横向可视仅 ±4.36，
+	# 单行排 9 条必被裁边；改 3×3 网格（列距 2.9 / 行距 Z 1.7），整体上移避开角色。
+	var origin: Vector3 = scene.sim.player.position + Vector3(0.0, 2.6, 0.0)
+	for i in texts.size():
+		var offset := Vector3(-2.9 + float(i % 3) * 2.9, 0.0, -4.0 + float(i / 3) * 1.7)
+		scene.hitnum.spawn(origin + offset, texts[i], Color(1.0, 0.92, 0.7), 1.2)
+	scene._show_combo_announce("三杀")
+	await create_timer(0.12).timeout
+	await RenderingServer.frame_post_draw
+	var path := capture_dir.path_join("floats_zh.png")
+	assert(root.get_texture().get_image().save_png(path) == OK)
+	print("VISUAL_CAPTURE " + path)
 
 
 func _capture_m11_boss(scene: Node, capture_dir: String) -> void:
