@@ -8,6 +8,8 @@ extends SceneTree
 ##   B4-18 (AT-18) 重画从当前位置起算、原子替换剩余航路（revision 递增）；
 ##   B4-24 (AT-24) 未来航路点上限（起点之外最多 4 个）；
 ##   B4-35 (AT-35) 路线/计划 DTO 无 target_id / 真值字段。
+##   B4-C  (AT-01/24/35) MAP_ROUTE 为玩家唯一发射方式：程序链只吃地图航线，
+##          缺航线或缺编程器一律拒绝（绝不静默退化为 MANUAL）。
 
 
 func _initialize() -> void:
@@ -19,6 +21,7 @@ func _initialize() -> void:
 	_b4_18(fails)
 	_b4_24(fails)
 	_b4_35(fails)
+	_b4_c(fails)
 	_finish(fails)
 
 
@@ -146,6 +149,55 @@ func _b4_35(fails: Array) -> void:
 		var f := FileAccess.open(p, FileAccess.READ)
 		var txt: String = f.get_as_text() if f != null else ""
 		_assert(fails, txt.find("target_id") < 0, "B4-35 %s references no target_id" % p.get_file())
+
+
+# ---------------- AT-01/24/35：MAP_ROUTE 为玩家唯一发射方式 ----------------
+func _b4_c(fails: Array) -> void:
+	var prog: WeaponProgram = WeaponProgram.make_route(
+		[Vector2(0, 0), Vector2(0, 500), Vector2(500, 500)], 0.0
+	)
+	_assert(
+		fails,
+		prog.fire_mode == WeaponProgram.FireMode.MAP_ROUTE,
+		"B4-C map-route program carries FireMode.MAP_ROUTE"
+	)
+	_assert(fails, prog.route_points.size() == 3, "B4-C route points are preserved")
+	_assert(
+		fails,
+		absf(NavUtils.wrap180(prog.initial_course_deg - 0.0)) < 1e-6,
+		"B4-C map-route initial course follows the first segment"
+	)
+	var sc: Dictionary = ConfigLoader.load_scenario("stage1_basic_passive")
+	var w := World.new()
+	w.load_scenario(sc)
+	var lc := LaunchProgrammer.new()
+	var none: Dictionary = lc.build_program(
+		"MAP_ROUTE", w.weapons, w, FireControlContext.new(), null, ""
+	)
+	_assert(
+		fails,
+		not bool(none.get("ok", false)),
+		"B4-C MAP_ROUTE without a route is rejected (no silent MANUAL)"
+	)
+	lc.route_points = [Vector2(0, 0), Vector2(0, 800)]
+	var built: Dictionary = lc.build_program(
+		"MAP_ROUTE", w.weapons, w, FireControlContext.new(), null, ""
+	)
+	_assert(
+		fails,
+		(
+			bool(built.get("ok", false))
+			and built["program"].fire_mode == WeaponProgram.FireMode.MAP_ROUTE
+		),
+		"B4-C MAP_ROUTE builds from the player's route"
+	)
+	var fe := FireExecutor.new()
+	var no_prog: Dictionary = fe.execute(w.weapons, w, "MAP_ROUTE", "")
+	_assert(
+		fails,
+		not bool(no_prog.get("ok", false)),
+		"B4-C FireExecutor rejects MAP_ROUTE without a programmer"
+	)
 
 
 func _assert(fails: Array, cond: bool, name: String) -> void:
