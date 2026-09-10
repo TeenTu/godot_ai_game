@@ -41,6 +41,17 @@ static func spawn_burst(game: Node) -> int:
 static func tick_spawns(game: Node, delta: float) -> void:
 	if game.is_over or not game.match_started:
 		return
+	# M11 Boss 波由首领生命与奖励面板驱动，不读取普通波配额。
+	if game.boss_reward_pending:
+		return
+	if BoomBossSystem.is_active(game):
+		if not game.auto_spawn:
+			return
+		game._boss_add_cd -= delta
+		if game._boss_add_cd <= 0.0:
+			game._boss_add_cd = game.BOSS_ADD_INTERVAL
+			BoomBossSystem.summon_adds(game, 1)
+		return
 	if game._between_waves:
 		game._next_wave_cd -= delta
 		if game._next_wave_cd <= 0.0:

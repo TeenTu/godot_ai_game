@@ -11,6 +11,7 @@ func _review() -> void:
 	var capture_dir := ""
 	var capture_horde := false
 	var capture_ui := false
+	var capture_boss := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--capture-dir="):
 			capture_dir = arg.trim_prefix("--capture-dir=")
@@ -18,6 +19,8 @@ func _review() -> void:
 			capture_horde = true
 		elif arg == "--ui":
 			capture_ui = true
+		elif arg == "--boss":
+			capture_boss = true
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	var player: BoomPlayer = scene.sim.player
@@ -40,6 +43,9 @@ func _review() -> void:
 	)
 	scene.sim.set_physics_process(false)
 	scene.set_physics_process(false)
+	if capture_boss and not capture_dir.is_empty():
+		await _capture_m11_boss(scene, capture_dir)
+		return
 	if capture_ui and not capture_dir.is_empty():
 		assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
 		DirAccess.make_dir_recursive_absolute(capture_dir)
@@ -117,6 +123,45 @@ func _review() -> void:
 					% [scene.sim.enemies.size(), average_ms, horde_path]
 				)
 			)
+	scene.queue_free()
+	await process_frame
+	quit()
+
+
+func _capture_m11_boss(scene: Node, capture_dir: String) -> void:
+	assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
+	DirAccess.make_dir_recursive_absolute(capture_dir)
+	scene._select.hide()
+	scene.sim.restart()
+	scene.sim.set_weapon(BoomWeapons.default_id())
+	scene.skill_sys.set_weapon_tree(BoomWeapons.default_id())
+	scene.sim.wave = 10
+	scene.sim.match_started = true
+	scene.sim._begin_wave()
+	var boss := scene.sim.boss as BoomBoss
+	assert(boss != null, "W10 must create the first boss")
+	boss.position = Vector3(0.0, 0.0, -3.4)
+	boss._spawn_ttl = 0.0
+	boss.scale = Vector3.ONE
+	if boss._art != null:
+		boss._art.modulate = Color.WHITE
+	boss._attack_cooldown = 0.0
+	boss.physics_update(0.01, scene.sim.player.position, [], 26.0, 38.0)
+	scene._hud_refresh()
+	scene._boss_presenter.refresh()
+	await create_timer(1.15).timeout
+	await RenderingServer.frame_post_draw
+	var battle_path := capture_dir.path_join("m11_boss_battle.png")
+	assert(root.get_texture().get_image().save_png(battle_path) == OK)
+	print("VISUAL_CAPTURE " + battle_path)
+	boss.take_damage(boss.max_hp, Vector3.ZERO)
+	scene.sim._finalize_kill(boss)
+	await create_timer(0.25, true, false, true).timeout
+	await RenderingServer.frame_post_draw
+	var reward_path := capture_dir.path_join("m11_boss_reward.png")
+	assert(root.get_texture().get_image().save_png(reward_path) == OK)
+	print("VISUAL_CAPTURE " + reward_path)
+	paused = false
 	scene.queue_free()
 	await process_frame
 	quit()

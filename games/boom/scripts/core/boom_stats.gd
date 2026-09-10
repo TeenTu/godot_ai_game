@@ -51,6 +51,9 @@ var speed_stacks: int = 0
 var dodge_stacks: int = 0
 ## 防御力：整数评级；不随等级自动增加（§3.2/§7.1），只由特殊效果改变。
 var defense: int = 0
+## M11 首领奖励的局内稀有加成；不伪装成普通升级档数。
+var rare_crit_bonus: float = 0.0
+var rare_dodge_bonus: float = 0.0
 
 
 func reset() -> void:
@@ -62,6 +65,8 @@ func reset() -> void:
 	speed_stacks = 0
 	dodge_stacks = 0
 	defense = 0
+	rare_crit_bonus = 0.0
+	rare_dodge_bonus = 0.0
 
 
 ## 应用一档升级；KIND_HEAL 是一次性效果，本类不堆叠但视为成功（消费方处理回复）。
@@ -84,6 +89,20 @@ func apply(kind: String) -> bool:
 			dodge_stacks += 1
 		KIND_HEAL:
 			pass  # 一次性效果：不加堆叠，回复由 BoomGame 执行
+		_:
+			return false
+	return true
+
+
+## M11 首领稀有属性：固定数额、局内生效，不进入普通等级卡池。
+func apply_rare(reward_id: String) -> bool:
+	match reward_id:
+		"iron_paper":
+			defense += 15
+		"cinnabar_eye":
+			rare_crit_bonus += 0.06
+		"mist_body":
+			rare_dodge_bonus += 0.05
 		_:
 			return false
 	return true
@@ -114,7 +133,7 @@ func aspd_mult() -> float:
 
 ## 暴击率（0 → 3% → 6% …，上限 100%）。
 func crit_rate() -> float:
-	return minf(1.0, CRIT_PCT_PER_STACK * float(crit_stacks))
+	return minf(1.0, CRIT_PCT_PER_STACK * float(crit_stacks) + rare_crit_bonus)
 
 
 ## 暴击倍率：150% → 165% → 180% …（§6.2）。
@@ -139,7 +158,7 @@ func move_mult() -> float:
 
 ## 闪避率（0 → 3% → 6% …，20% 封顶，§8）。
 func dodge_rate() -> float:
-	return minf(DODGE_CAP, DODGE_PCT_PER_STACK * float(dodge_stacks))
+	return minf(DODGE_CAP, DODGE_PCT_PER_STACK * float(dodge_stacks) + rare_dodge_bonus)
 
 
 ## 减伤公式（§7.2）：min(40%, 防御力 / (防御力 + 100))。

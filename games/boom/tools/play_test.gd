@@ -61,12 +61,15 @@ var _main: Node
 var _m7_tests: RefCounted
 ## M8 测试分册（tools/play_test_m8.gd，控制本文件行数门禁）。
 var _m8_tests: RefCounted
+## M11 首领战与奖励测试分册。
+var _m11_tests: RefCounted
 
 
 func _initialize() -> void:
 	seed(20260902)
 	_m7_tests = preload("res://tools/play_test_m7.gd").new(self)
 	_m8_tests = preload("res://tools/play_test_m8.gd").new(self)
+	_m11_tests = preload("res://tools/play_test_m11.gd").new(self)
 	var ps := load("res://scenes/main.tscn") as PackedScene
 	if ps == null:
 		_check(false, "加载 scenes/main.tscn")
@@ -98,6 +101,7 @@ func _process(_delta: float) -> bool:
 		_test_m5_weapons()
 		_m7_tests.run_all()
 		_m8_tests.run_all()
+		_m11_tests.run_all()
 		_finish()
 	return false
 
@@ -580,11 +584,11 @@ func _test_m4_waves() -> void:
 	g.free()
 	# 一次刷新批量入场；高波次每次最多 4 只，仍受同屏/配额双上限约束。
 	var gh := BoomGame.new()
-	gh.wave = 10
+	gh.wave = 11  # W10 已由 M11 改为 Boss 波；用首个高阶普通波验证 burst。
 	gh.begin_match()
 	gh._spawn_cd = 0.0
 	gh.step(DT)
-	_check(gh.enemies.size() == 4, "W10 单次 burst 刷入 4 只")
+	_check(gh.enemies.size() == 4, "W11 普通波单次 burst 刷入 4 只")
 	_check(gh._spawned_total == 4, "burst 正确累计配额")
 	# 性能结构：2D 敌人不再创建隐藏回退网格；48 敌分离按四帧轮转。
 	var sample := gh.enemies[0] as BoomJelly
