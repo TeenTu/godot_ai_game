@@ -346,7 +346,7 @@ func _build_own_page(pg: VBoxContainer) -> void:
 	UiSection.body(sec_status).add_child(_lbl_status)
 	pg.add_child(sec_status)
 	var auto_panel := AutomationPanelUI.new()
-	auto_panel.bind(tracker, _auto_refit_track)
+	auto_panel.bind(tracker, _auto_refit_track, world)
 	var auto_sec := UiSection.make(UiText.t("sec_automation"))
 	UiSection.body(auto_sec).add_child(auto_panel)
 	pg.add_child(auto_sec)

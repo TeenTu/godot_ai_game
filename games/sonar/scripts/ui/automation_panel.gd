@@ -15,6 +15,9 @@ const AUTO_INTERVAL_S: float = 2.0
 var ctrl: AutomationController = AutomationController.new()
 var tracker: Tracker = null
 var main_ref: Control = null  # 主 UI 引用（执行 REFIT 回调）
+## S1-11 Batch 2：ASSIST 值班链运行器与数据源（世界测量流）。
+var assist: AssistRuntime = null
+var world_ref: World = null
 
 var _sim_now: float = 0.0
 var _accum: float = 0.0
@@ -27,6 +30,8 @@ var _lbl_state: Label = null
 
 func _ready() -> void:
 	add_theme_constant_override("separation", 4)
+	if assist == null:
+		assist = AssistRuntime.new(tracker)
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	add_child(row)
@@ -36,7 +41,7 @@ func _ready() -> void:
 	_mode_opt = OptionButton.new()
 	for m in AutomationController.MODE_NAMES:
 		_mode_opt.add_item(UiText.mode(str(m)))
-	_mode_opt.select(AutomationController.MODE_MANUAL)
+	_mode_opt.select(ctrl.mode)  # S1-11 D-11：默认 ASSISTED
 	_mode_opt.item_selected.connect(_on_mode)
 	row.add_child(_mode_opt)
 	_chk_fire = _mk_roe("auto_fire")
@@ -49,8 +54,13 @@ func _ready() -> void:
 
 
 ## 绑定数据源与执行回调（主 UI 在装配时调用一次）。
-func bind(tracker_ref: Tracker, refit_cb: Callable) -> void:
+func bind(tracker_ref: Tracker, refit_cb: Callable, world_src: World = null) -> void:
 	tracker = tracker_ref
+	world_ref = world_src
+	if assist == null:
+		assist = AssistRuntime.new(tracker_ref)
+	elif assist.chain != null:
+		assist.chain.tracker = tracker_ref
 	if refit_cb.is_valid():
 		refit_requested.connect(func(tid: String): refit_cb.call(tid))
 
@@ -62,7 +72,16 @@ func _process(delta: float) -> void:
 	if _accum < AUTO_INTERVAL_S:
 		return
 	_accum = 0.0
-	var r: Dictionary = ctrl.update(_sim_now, tracker.all_tracks())
+	var now: float = world_ref.sim_time if world_ref != null else _sim_now
+	# S1-11 Batch 2：ASSIST 值班链（自动 Mark/关联/分类/增量 Fit）。
+	if assist != null and world_ref != null:
+		assist.consume_passive(world_ref.measurements, ctrl.mode, now)
+		assist.classify_tracks(tracker.all_tracks(), now)
+		if ctrl.mode == AutomationController.Mode.ASSISTED:
+			for tid in assist.refit_requests(tracker.all_tracks()):
+				refit_requested.emit(str(tid))
+				assist.mark_fitted(tracker.track_by_id(str(tid)))
+	var r: Dictionary = ctrl.update(now, tracker.all_tracks())
 	_pending_proposals = r.get("proposals", [])
 	for a in r.get("actions", []):
 		if str(a.get("action", "")) == "REFIT":

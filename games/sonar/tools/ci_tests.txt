@@ -108,3 +108,6 @@ s1_11_batch0_test
 
 #   s1_11_batch1_test       S1-11 Batch 1：统一候选/关联/分类/自动 TMA（AT-50/55/56/57/58/60）
 s1_11_batch1_test
+
+#   s1_11_batch2_test       S1-11 Batch 2：ASSIST 默认 + 来袭鱼雷强制自动化（AT-56/57/59/65）
+s1_11_batch2_test
