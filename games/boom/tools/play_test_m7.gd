@@ -216,7 +216,7 @@ func test_skill_tree() -> void:
 	var fired_box: Array = [0]
 	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
 	var before: int = host._active_bullets(g)
-	sys.handle_slot(sys.equipped.find("lamp_firefly_volley"))
+	sys.handle_tap()
 	host._check(
 		host._active_bullets(g) == before + BoomGame.FAN_COUNT, "流萤散射施放 %d 枚灵印" % BoomGame.FAN_COUNT
 	)
@@ -262,7 +262,7 @@ func test_tree_passives() -> void:
 	var fired_box: Array = [0]
 	sys.skill_fired.connect(func(_id: String, _r: Variant) -> void: fired_box[0] += 1)
 	sys.reset()
-	sys.handle_slot(sys.equipped.find("lamp_quick_wick"))
+	sys.cast_skill("lamp_quick_wick")
 	host._check(fired_box[0] == 0, "被动技能不可施放（skill_fired 不触发）")
 	# 灯回响是独立的技能冷却乘区，并与角色直接冷却缩减相乘。
 	host._check(sys.unequip("lamp_bright_core"), "卸下亮灯芯腾出槽位")

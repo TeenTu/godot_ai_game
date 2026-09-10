@@ -11,8 +11,8 @@ const ARENA_HALF_X: float = 26.0
 const ARENA_HALF_Z: float = 38.0
 
 const SKILL_ZONE_X: float = 0.65  # 触点 x 归一 > 0.65 = 右侧技能手势区
-const TAP_MAX_TIME: float = 0.20
-const TAP_MAX_DIST: float = 14.0
+const TAP_MAX_TIME: float = 0.35
+const TAP_MAX_DIST: float = 24.0
 const SWIPE_MIN_DIST: float = 110.0
 
 # ---- 技能槽位 HUD（D6 §228：圆钮展示当前 equipped 槽位技能；与手势槽一一对应）----
@@ -63,10 +63,11 @@ var audio: BoomAudio
 var joystick: GameKitVirtualJoystick
 var skill_sys: BoomSkillSystem
 var skill_fx: BoomSkillFx
-var skill_btns: Dictionary = {}  # 槽位key("0"/"1"/"2")->按钮（D6：按钮=手势槽, 展示 equipped[slot]）
+var skill_btns: Dictionary = {}  # 槽位 key("0"/"1"/"2") -> 主动技能按钮
 var waypoints: WaypointLayer = null  # M3 屏幕边缘目标标记
 
 # M2 手势识别状态：touch_index -> {sx,sy,t,dx,dy}
+var _skill_presenter: BoomSkillPresenter
 var _gestures: Dictionary = {}
 
 var _score_label: Label
@@ -120,6 +121,11 @@ func _ready() -> void:
 	add_child(skill_sys)
 	skill_fx = BoomSkillFx.new()
 	world.add_child(skill_fx)
+	_skill_presenter = BoomSkillPresenter.new()
+	add_child(_skill_presenter)
+	_skill_presenter.setup(
+		sim, skill_sys, skill_fx, audio, cam, _trigger_kill_flash, _spawn_skill_float
+	)
 	_build_hud()
 	_boss_presenter = BoomBossPresenter.new()
 	add_child(_boss_presenter)
@@ -234,7 +240,7 @@ func _skill_button_at(cp: Vector2) -> String:
 
 
 ## 屏幕右侧(触点设计x > 屏宽*SKILL_ZONE_X)的触摸由本节点做手势识别：
-## tap = 爆裂弹幕 / ←swipe = 闪电链 / →swipe = 核爆。
+## tap / 左滑 / 右滑依次触发 active_equipped() 的第 0/1/2 项。
 ## 左侧触点不在此处理——交给虚拟摇杆(DYNAMIC,已设 exclude_right_x)。
 func _input(event: InputEvent) -> void:
 	if skill_sys == null or sim == null:
@@ -341,10 +347,12 @@ func _test_hook_get_state() -> Dictionary:
 	state["sk_ready"] = sk["ready"]
 	# D6：每槽技能 id（空槽 ""），供 vision-e2e 断言 HUD 与手势槽一致。
 	var slot_ids: Array[String] = []
-	var equipped: Array = skill_sys.equipped
+	var equipped: Array = skill_sys.active_equipped()
 	for slot in SKILL_SLOT_COUNT:
 		slot_ids.append(equipped[slot] if slot < equipped.size() else "")
 	state["sk_slots"] = slot_ids
+	state["sk_passives"] = skill_sys.passive_equipped()
+	state["sk_presentation"] = _skill_presenter.debug_state()
 	var boss_state: Dictionary = _boss_presenter.debug_state()
 	for key in boss_state:
 		state[key] = boss_state[key]
@@ -387,48 +395,7 @@ func _connect_signals() -> void:
 	sim.swing_released.connect(_on_swing_released)
 	sim.level_up.connect(_on_level_up)
 	sim.player_healed.connect(_on_player_healed)
-	skill_sys.skill_fired.connect(_on_skill_fired)
-
-
-func _on_skill_fired(skill_id: String, result: Variant) -> void:
-	var ppos: Vector3 = sim.player.position
-	var hits: Array = result if result is Array else []
-	match skill_id:
-		"fan", "lamp_firefly_volley":
-			audio.play("shoot", -9.0)
-			cam.add_trauma(0.15)  # §4.2 爆裂弹幕：极轻震屏
-			skill_fx.muzzle_flash(
-				ppos + Vector3(0.0, 0.5, 0.0), sim.player.facing, BoomSkillSystem.FAN_COLOR
-			)
-		"chain", "brush_ink_wave":
-			audio.play("graze", -6.0)
-			if not hits.is_empty():
-				# §4.2 闪电链：首跳 0.06s 顿帧 + ×0.6 震屏 + 0.10 alpha 白闪(~30ms)。
-				sim.trigger_freeze(0.06)
-				cam.add_trauma(0.3)
-				_trigger_kill_flash(0.10)
-				# P1-2：hits 含存活者（衰减伤害是常态），每个命中目标都画电弧。
-				var prev: Vector3 = ppos + Vector3(0.0, 0.5, 0.0)
-				for jelly in hits:
-					var target := jelly as BoomJelly
-					if target == null:
-						continue
-					var hp: Vector3 = target.position + Vector3(0.0, 0.5, 0.0)
-					skill_fx.arc_bolt(prev, hp, BoomSkillSystem.CHAIN_COLOR)
-					prev = hp
-				# §4.2 技能飘字"链!" 紫色大字 1 个（命中才出，与电弧反馈同条件），
-				# 替代 M2 起的 "CHAIN!" toast——语义重复，二选一防同屏刷字。
-				_spawn_skill_float(ppos, "chain")
-		"nuke", "lamp_soul_beacon", "brush_seal_domain":
-			audio.play("boom", -4.0)
-			cam.add_trauma(0.6)  # §4.2 核爆：×1.2 重震屏（击杀 0.5 基准）
-			_trigger_kill_flash()
-			skill_fx.shockwave(ppos, BoomGame.NUKE_RADIUS, BoomSkillSystem.NUKE_COLOR)
-			skill_fx.burst(ppos + Vector3(0.0, 0.6, 0.0), BoomSkillSystem.NUKE_COLOR, 40)
-			# §4.2 技能飘字"轰!" 金色巨型（玩家中心）；规格中的"+ 数字"由既有
-			# 伤害/得分飘字管线在命中点自然补齐，避免同点双飘字叠加刷屏。
-			# 替代 "NUKE!" toast，取舍同上。
-			_spawn_skill_float(ppos, "nuke")
+	skill_sys.skill_fired.connect(_skill_presenter.present)
 
 
 ## §4.2 技能飘字统一入口：按 BoomSkillSystem.float_text_for 规格（文案/颜色/字号）
@@ -735,8 +702,8 @@ func _build_coin_hud(hud: Control) -> void:
 
 
 func _build_skill_hud(hud: Control) -> void:
-	# D6 §228：3 圆钮 = 3 手势槽，展示当前 equipped 槽位技能；空槽灰显占位（成长设计）。
-	var equipped: Array = skill_sys.equipped if skill_sys != null else []
+	# 三个圆钮只展示主动触发槽；被动留在构筑中常驻生效，不再吞手势输入。
+	var equipped: Array = skill_sys.active_equipped() if skill_sys != null else []
 	for slot in SKILL_SLOT_COUNT:
 		var button := BoomSkillButton.new()
 		button.slot = slot
@@ -753,7 +720,7 @@ func _build_skill_hud(hud: Control) -> void:
 				color,
 				SKILL_GESTURES[slot],
 				str(SKILL_ABBREVS.get(sid, String(sid).left(1).to_upper())),
-				skill != null and skill.is_passive
+				false
 			)
 		else:
 			button.configure_empty(SKILL_GESTURES[slot])
@@ -761,7 +728,7 @@ func _build_skill_hud(hud: Control) -> void:
 		skill_btns[str(slot)] = button
 
 
-## D6：按当前 equipped 重建技能 HUD（开战确认时调用一次；槽位技能对局内不变）。
+## 按当前主动技能投影重建 HUD（开战确认时调用一次；槽位对局内不变）。
 func _rebuild_skill_hud() -> void:
 	for key in skill_btns:
 		var old := skill_btns[key] as Control
@@ -777,7 +744,7 @@ func _rebuild_skill_hud() -> void:
 func _refresh_gesture_hint() -> void:
 	if _hint_label == null or skill_sys == null:
 		return
-	var equipped: Array = skill_sys.equipped
+	var equipped: Array = skill_sys.active_equipped()
 	var parts: Array[String] = []
 	for slot in SKILL_SLOT_COUNT:
 		var label: String = SKILL_GESTURES[slot].replace(" ", "")
@@ -976,7 +943,7 @@ func _hud_refresh() -> void:
 		_coin_label.text = str(sim.coins)
 	if skill_sys != null:
 		var skill_state := skill_sys.get_state()
-		var equipped: Array = skill_sys.equipped
+		var equipped: Array = skill_sys.active_equipped()
 		for slot_key in skill_btns:
 			var btn := skill_btns[slot_key] as BoomSkillButton
 			if btn == null or btn.is_empty_slot:

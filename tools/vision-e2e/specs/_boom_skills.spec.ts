@@ -1,13 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-// M2 弹幕/技能系统 —— 真实产物手势路由验证（确定性 hook 断言 + 截图，无需视觉 key）。
+// M12 技能系统 —— 真实 Web 产物触摸路由验证（确定性 hook 断言 + 截图）。
 //
-// 设计（design_m2_danmaku.md / main.gd）：
-//   屏宽分界 SKILL_ZONE_X=0.65 -> 触点 canvas x > 720*0.65=468 = 右侧技能手势区。
-//   摇杆 exclude_right_x=0.65 -> 右侧触点不被摇杆认领，全部留给技能手势。
-//   手势：tap(≤0.2s 且位移≤14px)=Fan / ←swipe(|dx|≥110 且 |dx|>2|dy|)=Chain / →swipe=Nuke。
-// 验证：每次手势后其对应 sk_* 冷却从就绪(0)进入 CD(>0)，证明右区手势正确路由到目标技能。
-// __gameState.sk_fan/sk_chain/sk_nuke/sk_ready 由 _test_hook_get_state 每 0.1s 发布。
+// 默认构筑同时包含被动 lamp_quick_wick 与主动 lamp_firefly_volley；战斗触发槽
+// 必须只投影主动技能，避免 tap 被位于构筑首位的被动技能吞掉。
+// 手势容错：tap(≤0.35s 且位移≤24px)，右侧技能区起点 x > 720*0.65。
 
 async function getState(page: import("@playwright/test").Page): Promise<Record<string, unknown>> {
   return (await page.evaluate(
@@ -15,28 +12,27 @@ async function getState(page: import("@playwright/test").Page): Promise<Record<s
   )) as Record<string, unknown>;
 }
 
-test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown", async ({
-  browser,
-}) => {
+test("boom skills: passive does not swallow tap and active skill presents", async ({ browser }) => {
   const ctx = await browser.newContext({
     viewport: { width: 720, height: 1280 },
     hasTouch: true,
     isMobile: true,
   });
   const page = await ctx.newPage();
+  const pageErrors: string[] = [];
   page.on("console", (m) => {
-    const t = m.text();
-    if (m.type() === "error" || t.includes("ERROR")) console.log("[page-err]", t);
+    const message = m.text();
+    if (m.type() === "error" || message.includes("SCRIPT ERROR")) pageErrors.push(message);
   });
+  page.on("pageerror", (error) => pageErrors.push(error.message));
 
   await page.goto("http://localhost:8126/?test=1", { waitUntil: "load", timeout: 60_000 });
   for (let i = 0; i < 40; i++) {
     if (await getState(page)) break;
     await page.waitForTimeout(500);
   }
-  await page.waitForTimeout(1500); // 等技能三槽就绪 + 世界稳定
+  await page.waitForTimeout(1200);
 
-  // 触摸派发（同 _boom_touch/_boom_area 约定）：坐标为 canvas page 像素(720x1280 满幅)。
   const dispatch = (type: string, x: number, y: number, id: number) => {
     return page.evaluate(({ t, x, y, id }) => {
       const target = document.querySelector("canvas") as HTMLElement;
@@ -44,96 +40,68 @@ test("boom skills: right-zone tap/swipe route to fan/chain/nuke & enter cooldown
       const clientX = rect.left + x;
       const clientY = rect.top + y;
       const touch = new Touch({
-        identifier: id, target, clientX, clientY, pageX: clientX, pageY: clientY,
-        screenX: clientX, screenY: clientY, radiusX: 5, radiusY: 5, rotationAngle: 0, force: 1,
+        identifier: id,
+        target,
+        clientX,
+        clientY,
+        pageX: clientX,
+        pageY: clientY,
+        screenX: clientX,
+        screenY: clientY,
+        radiusX: 5,
+        radiusY: 5,
+        rotationAngle: 0,
+        force: 1,
       });
-      const ev = new TouchEvent(t, {
-        cancelable: true, bubbles: true,
-        touches: t === "touchend" ? [] : [touch],
-        targetTouches: t === "touchend" ? [] : [touch],
-        changedTouches: [touch],
-      });
-      target.dispatchEvent(ev);
+      target.dispatchEvent(
+        new TouchEvent(t, {
+          cancelable: true,
+          bubbles: true,
+          touches: t === "touchend" ? [] : [touch],
+          targetTouches: t === "touchend" ? [] : [touch],
+          changedTouches: [touch],
+        })
+      );
     }, { t: type, x, y, id });
   };
-  const num = (s: Record<string, unknown>, k: string) => Number(s[k] ?? 0);
-  // 3D 模型上线后首帧材质编译有抖动，技能生效可能比固定 sleep 晚一拍——
-  // 统一轮询等待 sk_* 进入 CD（以实际状态为准，不依赖固定读数窗口）。
-  const waitForSkillCD = async (
-    page: import("@playwright/test").Page,
-    key: string,
-    timeoutMs = 6000
-  ): Promise<Record<string, unknown>> => {
+  const num = (state: Record<string, unknown>, key: string) => Number(state[key] ?? 0);
+  const waitForSkillCD = async (key: string, timeoutMs = 6000) => {
     const deadline = Date.now() + timeoutMs;
-    let s = await getState(page);
+    let state = await getState(page);
     while (Date.now() < deadline) {
-      s = await getState(page);
-      if (num(s, key) > 0) return s;
+      state = await getState(page);
+      if (num(state, key) > 0) return state;
       await page.waitForTimeout(200);
     }
-    return s;
+    return state;
   };
-  const ZONE_X = 0.65; // SKILL_ZONE_X
-  const right = (frac: number) => 720 * ZONE_X + frac * (720 - 720 * ZONE_X); // x 落右区
-  const y_mid = 700;
 
-  // ---- 1) tap -> Fan（进入 fan CD=3）----
-  let s = await getState(page);
-  const fan0 = num(s, "sk_fan");
-  expect(fan0, "开局 fan 应就绪 (sk_fan=0)").toBeLessThanOrEqual(0.0);
-  const rx = right(0.5); // ~594
-  const ry = y_mid;
-  await dispatch("touchstart", rx, ry, 1);
-  await page.waitForTimeout(50); // < TAP_MAX_TIME(0.2s)
-  await dispatch("touchend", rx + 1, ry, 1); // 位移≈1px -> tap
-  s = await waitForSkillCD(page, "sk_fan");
-  console.log("TAP(→fan) state:", JSON.stringify(s));
-  expect(num(s, "sk_fan"), "tap 后 fan 进入 CD (sk_fan>0)").toBeGreaterThan(0.0);
-  expect(num(s, "bullets"), "fan 施放后有子弹").toBeGreaterThanOrEqual(0);
-  await page.screenshot({ path: "test-results/_boom_skills_1_fan.png" });
+  let state = await getState(page);
+  expect(state, "测试钩子应发布游戏状态").toBeTruthy();
+  expect(state.sk_slots, "HUD 触发槽只应包含主动技能").toEqual([
+    "lamp_firefly_volley",
+    "",
+    "",
+  ]);
+  expect(state.sk_passives, "被动技能仍应保留在构筑中").toContain("lamp_quick_wick");
+  expect(num(state, "sk_lamp_firefly_volley"), "开局流萤散射应就绪").toBeLessThanOrEqual(0);
 
-  // ---- 2) <-swipe -> Chain（进入 chain CD=8）----
-  // 等待 fan CD 走完避免与下方断言混淆(无碍，只查 chain 槽)
-  await page.waitForTimeout(3500); // 等 fan CD(3s) 归零 + 世界推进
-  s = await getState(page);
-  console.log("pre-chain state:", JSON.stringify(s));
-  const cStartX = right(0.75); // ~657
-  const cEndX = right(0.05); // ~480 (仍 >468 起始区即可)
-  await dispatch("touchstart", cStartX, y_mid, 2);
-  // 向左滑 ~177px，分多步成 swipe
-  const steps = 15;
-  for (let i = 1; i <= steps; i++) {
-    const x = cStartX + ((cEndX - cStartX) * i) / steps;
-    await dispatch("touchmove", x, y_mid, 2);
-    await page.waitForTimeout(16);
-  }
-  await page.waitForTimeout(120);
-  await dispatch("touchend", cEndX, y_mid, 2);
-  s = await waitForSkillCD(page, "sk_chain");
-  console.log("SWIPE_LEFT(→chain) state:", JSON.stringify(s));
-  expect(num(s, "sk_chain"), "←swipe 后 chain 进入 CD (sk_chain>0)").toBeGreaterThan(0.0);
-  await page.screenshot({ path: "test-results/_boom_skills_2_chain.png" });
+  // 右区短按：完整穿过浏览器 TouchEvent -> Godot 输入 -> 主动槽 0 -> 技能施放。
+  const tapX = 594;
+  const tapY = 700;
+  await dispatch("touchstart", tapX, tapY, 1);
+  await page.waitForTimeout(80);
+  await dispatch("touchend", tapX + 2, tapY + 1, 1);
+  state = await waitForSkillCD("sk_lamp_firefly_volley");
 
-  // ---- 3) ->swipe -> Nuke（进入 nuke CD=20）----
-  await page.waitForTimeout(250);
-  s = await getState(page);
-  const nStartX = right(0.05);
-  const nEndX = right(0.75);
-  await dispatch("touchstart", nStartX, y_mid, 3);
-  for (let i = 1; i <= steps; i++) {
-    const x = nStartX + ((nEndX - nStartX) * i) / steps;
-    await dispatch("touchmove", x, y_mid, 3);
-    await page.waitForTimeout(16);
-  }
-  await page.waitForTimeout(120);
-  await dispatch("touchend", nEndX, y_mid, 3);
-  s = await waitForSkillCD(page, "sk_nuke");
-  console.log("SWIPE_RIGHT(→nuke) state:", JSON.stringify(s));
-  expect(num(s, "sk_nuke"), "→swipe 后 nuke 进入 CD (sk_nuke>0)").toBeGreaterThan(0.0);
-  await page.screenshot({ path: "test-results/_boom_skills_3_nuke.png" });
+  expect(num(state, "sk_lamp_firefly_volley"), "tap 后流萤散射应进入冷却").toBeGreaterThan(0);
+  expect(state.sk_presentation).toMatchObject({
+    skill_id: "lamp_firefly_volley",
+    presentation: "firefly_fan",
+  });
+  expect(num(state, "bullets"), "流萤散射应生成弹体").toBeGreaterThan(0);
+  expect(pageErrors, "Web 运行期间不应出现脚本或页面错误").toEqual([]);
 
-  // ---- 4) 三技能独立：nuke 就绪前另两槽的 CD 状态互不干扰（nuke CD 长仍在转）----
-  expect(num(s, "sk_nuke"), "nuke CD 20s 应仍在 CD").toBeGreaterThan(0.0);
-
+  await page.screenshot({ path: "test-results/_boom_skills_m12_firefly.png" });
   await ctx.close();
 });

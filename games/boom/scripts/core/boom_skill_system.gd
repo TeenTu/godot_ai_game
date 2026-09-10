@@ -2,7 +2,8 @@ class_name BoomSkillSystem
 extends Node
 ## 技能系统逻辑层：每把武器一棵 2 分支 × 3 阶技能树。
 ## 普攻分支改变攻速/基础攻击/普攻形态；技能分支提供两个主动形态与冷却缩减。
-## 解锁消耗跨局货币（BoomSave.coins，user:// 持久化）；装备为局内 ≤3 槽手势映射。
+## 解锁消耗跨局货币（BoomSave.coins，user:// 持久化）；构筑最多装备 3 个节点。
+## 被动节点常驻生效但不占战斗触发位；tap / 左滑 / 右滑按主动技能装备顺序映射。
 ## 纯逻辑，不含视觉/粒子/音频；只发信号，效果由 main.gd 订阅后触发。
 
 # 冷却结束（就绪）
@@ -39,14 +40,6 @@ const HEAL_COLOR: Color = Color(0.45, 0.95, 0.75)
 # M7R 树内顺序解锁价（design_m7_progression.md §5.3）：树内第 1 个免费（默认解锁），
 # 其余 60/120/200/300/420 递增。unlock_cost 返回 -1 表示免费/不可购买。
 const TREE_PRICES: Array[int] = [0, 120, 300]
-
-# M7R skill_id -> BoomGame 施放方法名（扩容登记一处；查表规避 lint max-returns）。
-const CAST_METHODS: Dictionary = {
-	"lamp_firefly_volley": "cast_fan_shot",
-	"lamp_soul_beacon": "cast_ring_shot",
-	"brush_ink_wave": "cast_brush_ink_wave",
-	"brush_seal_domain": "cast_brush_seal_domain",
-}
 
 # §4.2 技能飘字规格：fan=黄"嘭!"小字 / chain=紫"链!"大字 / nuke=金"轰!"巨型。
 const TEXT_FAN: String = "POP!"
@@ -92,7 +85,7 @@ var pool: Dictionary = {}
 # M7R 当前武器树（BoomWeapons.get_def(weapon_id).tree["skills"] 的 6 槽序列）。
 var weapon_id: String = "bubble"
 var tree: Array[String] = []
-# M7 本局装备槽（顺序 = 手势槽：0=tap / 1=←swipe / 2=→swipe）。
+# M7 本局构筑槽（主动与被动混排，最多 3 个）；手势槽读取 active_equipped()。
 var equipped: Array[String] = []
 ## M11 本局主动技能进化，不写跨局存档；restart/reset 时清空。
 var evolved_skills: Array[String] = []
@@ -174,6 +167,27 @@ func pool_ids() -> Array[String]:
 
 func get_skill(skill_id: String) -> BoomSkill:
 	return pool.get(skill_id) as BoomSkill
+
+
+## 战斗触发槽投影：只保留构筑中的主动技能，顺序稳定。
+## 这样被动仍消耗构筑容量并持续生效，但永远不会吞掉 tap / swipe 输入。
+func active_equipped() -> Array[String]:
+	var ids: Array[String] = []
+	for skill_id in equipped:
+		var skill := get_skill(skill_id)
+		if skill != null and not skill.is_passive:
+			ids.append(skill_id)
+	return ids
+
+
+## 当前构筑中的被动节点，供 UI/test hook 明确展示，不与主动触发槽混为一谈。
+func passive_equipped() -> Array[String]:
+	var ids: Array[String] = []
+	for skill_id in equipped:
+		var skill := get_skill(skill_id)
+		if skill != null and skill.is_passive:
+			ids.append(skill_id)
+	return ids
 
 
 static func icon_path(skill_id: String) -> String:
@@ -337,33 +351,40 @@ func _refresh_passives() -> void:
 # ------------------------------------------------------------------ 施放入口
 
 
-## 右区单击 -> 装备槽 0（默认 fan）。
+## 右区单击 -> 主动触发槽 0。
 func handle_tap() -> void:
 	handle_slot(0)
 
 
-## 左滑 -> 装备槽 1（默认 chain）。
+## 左滑 -> 主动触发槽 1。
 func handle_swipe_left() -> void:
 	handle_slot(1)
 
 
-## 右滑 -> 装备槽 2（默认 nuke）。
+## 右滑 -> 主动触发槽 2。
 func handle_swipe_right() -> void:
 	handle_slot(2)
 
 
-## M7 统一槽位入口：槽位越界静默忽略（3 槽手势映射到装备顺序）。
+## 统一触发入口：槽位越界静默忽略；槽位映射到 active_equipped()，不再被被动吞掉。
 func handle_slot(slot: int) -> void:
-	if slot < 0 or slot >= equipped.size():
+	var active := active_equipped()
+	if slot < 0 or slot >= active.size():
 		return
-	cast_skill(equipped[slot])
+	cast_skill(active[slot])
 
 
-## 施放指定技能：CD 未就绪 / game 未注入 / 未知 id / 被动技能 静默忽略。
+## 施放指定技能：未装备 / CD 未就绪 / game 未注入 / 未知 id / 被动技能静默忽略。
 ## M8 技能急速（design_m8_attributes.md §3.1）：实际冷却 = 基础 CD ÷ haste_mult()。
 func cast_skill(skill_id: String) -> void:
 	var skill := get_skill(skill_id)
-	if skill == null or skill.is_passive or game == null or not skill.is_ready():
+	if (
+		skill == null
+		or skill.is_passive
+		or not active_equipped().has(skill_id)
+		or game == null
+		or not skill.is_ready()
+	):
 		return
 	skill.cooldown_left = (
 		skill.cooldown * game.skill_cooldown_mult * (1.0 - game.stats.cooldown_reduction())
@@ -373,20 +394,20 @@ func cast_skill(skill_id: String) -> void:
 
 
 func _dispatch_cast(skill_id: String) -> Variant:
-	if evolved_skills.has(skill_id):
-		match skill_id:
-			"lamp_firefly_volley":
-				return game.cast_fan_shot(7, deg_to_rad(20.0))
-			"lamp_soul_beacon":
-				return game.cast_ring_shot(18)
-			"brush_ink_wave":
-				return game.cast_brush_ink_wave(true)
-			"brush_seal_domain":
-				return game.cast_brush_seal_domain(true)
-	var method := CAST_METHODS.get(skill_id, "") as String
-	if method == "":
-		return null
-	return game.call(method)
+	var evolved := evolved_skills.has(skill_id)
+	var effect := BoomSkillEffects.get_effect(skill_id, evolved)
+	match skill_id:
+		"lamp_firefly_volley":
+			return game.cast_fan_shot(
+				int(effect["projectiles"]), deg_to_rad(float(effect["arc_deg"]) * 0.5)
+			)
+		"lamp_soul_beacon":
+			return game.cast_ring_shot(int(effect["projectiles"]))
+		"brush_ink_wave":
+			return game.cast_brush_ink_wave(evolved)
+		"brush_seal_domain":
+			return game.cast_brush_seal_domain(evolved)
+	return null
 
 
 ## 供 test_hook / UI 读取的快照：全池冷却 + 装备槽 + 就绪列表。
@@ -399,6 +420,8 @@ func get_state() -> Dictionary:
 			ready_ids.append(skill_id)
 	var state: Dictionary = {
 		"equipped": equipped.duplicate(),
+		"active": active_equipped(),
+		"passive": passive_equipped(),
 		"evolved": evolved_skills.duplicate(),
 		"ready": ready_ids,
 		"weapon": weapon_id,
@@ -426,10 +449,18 @@ func debug_grant(skill_id: String) -> void:
 ## 未登记的 skill_id 返回空字典（上层跳过生成）。
 static func float_text_for(skill_id: String) -> Dictionary:
 	match skill_id:
-		"fan", "lamp_firefly_volley":
+		"fan":
 			return {"text": TEXT_FAN, "color": TEXT_COLOR_FAN, "scale": TEXT_SCALE_FAN}
-		"chain", "brush_ink_wave":
+		"chain":
 			return {"text": TEXT_CHAIN, "color": TEXT_COLOR_CHAIN, "scale": TEXT_SCALE_CHAIN}
-		"nuke", "lamp_soul_beacon", "brush_seal_domain":
+		"nuke":
 			return {"text": TEXT_NUKE, "color": TEXT_COLOR_NUKE, "scale": TEXT_SCALE_NUKE}
+		"lamp_firefly_volley":
+			return {"text": "FLARE!", "color": FAN_COLOR, "scale": TEXT_SCALE_FAN}
+		"lamp_soul_beacon":
+			return {"text": "BEACON!", "color": RING_COLOR, "scale": TEXT_SCALE_CHAIN}
+		"brush_ink_wave":
+			return {"text": "INK!", "color": CHAIN_COLOR, "scale": TEXT_SCALE_CHAIN}
+		"brush_seal_domain":
+			return {"text": "SEALED!", "color": NUKE_COLOR, "scale": TEXT_SCALE_NUKE}
 	return {}

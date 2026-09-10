@@ -423,7 +423,12 @@ func _build_hand_art() -> void:
 		var path := STRIP_DIR + (spec[0] as String) + ".png"
 		if not ResourceLoader.exists(path):
 			continue
-		var strip := Image.load_from_file(ProjectSettings.globalize_path(path))
+		# Web 导出会把源 PNG 重映射为导入后的纹理；直接按文件路径读 Image 会在 PCK 中失败。
+		# 统一先走 ResourceLoader，再从 Texture2D 取得可裁切的像素数据。
+		var strip_texture := load(path) as Texture2D
+		if strip_texture == null:
+			continue
+		var strip := strip_texture.get_image()
 		if strip == null:
 			continue
 		sf.add_animation(action)
