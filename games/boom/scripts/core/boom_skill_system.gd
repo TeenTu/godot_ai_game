@@ -42,9 +42,9 @@ const HEAL_COLOR: Color = Color(0.45, 0.95, 0.75)
 const TREE_PRICES: Array[int] = [0, 120, 300]
 
 # §4.2 技能飘字规格：fan=黄"嘭!"小字 / chain=紫"链!"大字 / nuke=金"轰!"巨型。
-const TEXT_FAN: String = "POP!"
-const TEXT_CHAIN: String = "ZAP!"
-const TEXT_NUKE: String = "BOOM!"
+const TEXT_FAN: String = "嘭!"
+const TEXT_CHAIN: String = "链!"
+const TEXT_NUKE: String = "轰!"
 const TEXT_COLOR_FAN: Color = Color(1.0, 0.9, 0.3)
 const TEXT_COLOR_CHAIN: Color = Color(0.7, 0.4, 1.0)
 const TEXT_COLOR_NUKE: Color = Color(1.0, 0.78, 0.25)
@@ -63,18 +63,18 @@ const SKILL_COOLDOWN_MULT: float = 0.85
 const MAX_EQUIPPED: int = 3
 
 const SKILL_DESCRIPTIONS: Dictionary = {
-	"lamp_quick_wick": "Basic rate +15%",
-	"lamp_bright_core": "Base attack +20%",
-	"lamp_threefold_seal": "Every 3rd shot becomes a triple seal",
-	"lamp_firefly_volley": "Fire a five-seal fan volley",
-	"lamp_echo": "Active skill cooldown -15%",
-	"lamp_soul_beacon": "Release a full-circle soul beacon",
-	"brush_firm_grip": "Base attack +20%",
-	"brush_flowing_script": "Basic combo speed +15%",
-	"brush_verdict": "Wider combo arcs and +25% combo damage",
-	"brush_ink_wave": "Sweep a focused frontal ink wave",
-	"brush_focus": "Active skill cooldown -15%",
-	"brush_seal_domain": "Seal and strike a wide domain",
+	"lamp_quick_wick": "普攻速度 +15%",
+	"lamp_bright_core": "基础攻击力 +20%",
+	"lamp_threefold_seal": "每第 3 次普攻化为三重灵印",
+	"lamp_firefly_volley": "向目标扇射 5 枚流萤灵印",
+	"lamp_echo": "主动技能冷却 ×0.85",
+	"lamp_soul_beacon": "360° 环射 12 枚灵印",
+	"brush_firm_grip": "基础攻击力 +20%",
+	"brush_flowing_script": "连挥节奏速度 +15%",
+	"brush_verdict": "挥击扩至 180°/360°，连段伤害 ×1.25",
+	"brush_ink_wave": "泼出前方 100° 墨浪，最多 8 目标",
+	"brush_focus": "主动技能冷却 ×0.85",
+	"brush_seal_domain": "封域 4.5m，最多 16 目标",
 }
 
 # 注入的对局引用，由 main.gd 赋值
@@ -92,25 +92,25 @@ var evolved_skills: Array[String] = []
 
 
 func _init() -> void:
-	_add_passive("lamp_quick_wick", "QUICK WICK", FAN_COLOR)
-	_add_passive("lamp_bright_core", "BRIGHT CORE", FAN_COLOR)
-	_add_passive("lamp_threefold_seal", "THREEFOLD SEAL", FAN_COLOR)
+	_add_passive("lamp_quick_wick", "速燃灯芯", FAN_COLOR)
+	_add_passive("lamp_bright_core", "明芯", FAN_COLOR)
+	_add_passive("lamp_threefold_seal", "三重灵印", FAN_COLOR)
 	pool["lamp_firefly_volley"] = BoomSkill.new(
-		"lamp_firefly_volley", "FIREFLY VOLLEY", LAMP_VOLLEY_COOLDOWN, FAN_COLOR
+		"lamp_firefly_volley", "流萤齐射", LAMP_VOLLEY_COOLDOWN, FAN_COLOR
 	)
-	_add_passive("lamp_echo", "LANTERN ECHO", RING_COLOR)
+	_add_passive("lamp_echo", "灯影回响", RING_COLOR)
 	pool["lamp_soul_beacon"] = BoomSkill.new(
-		"lamp_soul_beacon", "SOUL BEACON", LAMP_BEACON_COOLDOWN, RING_COLOR
+		"lamp_soul_beacon", "引魂灯", LAMP_BEACON_COOLDOWN, RING_COLOR
 	)
-	_add_passive("brush_firm_grip", "FIRM GRIP", WHIRL_COLOR)
-	_add_passive("brush_flowing_script", "FLOWING SCRIPT", WHIRL_COLOR)
-	_add_passive("brush_verdict", "SCARLET VERDICT", NUKE_COLOR)
+	_add_passive("brush_firm_grip", "稳执笔", WHIRL_COLOR)
+	_add_passive("brush_flowing_script", "行云笔意", WHIRL_COLOR)
+	_add_passive("brush_verdict", "朱砂判", NUKE_COLOR)
 	pool["brush_ink_wave"] = BoomSkill.new(
-		"brush_ink_wave", "INK WAVE", BRUSH_WAVE_COOLDOWN, CHAIN_COLOR
+		"brush_ink_wave", "泼墨横波", BRUSH_WAVE_COOLDOWN, CHAIN_COLOR
 	)
-	_add_passive("brush_focus", "ONE-BREATH SCRIPT", CHAIN_COLOR)
+	_add_passive("brush_focus", "一气呵成", CHAIN_COLOR)
 	pool["brush_seal_domain"] = BoomSkill.new(
-		"brush_seal_domain", "SEAL DOMAIN", BRUSH_DOMAIN_COOLDOWN, NUKE_COLOR
+		"brush_seal_domain", "封域", BRUSH_DOMAIN_COOLDOWN, NUKE_COLOR
 	)
 	# 默认泡泡树；解锁进度从跨局存档加载（无存档 = 各树第 1 技能默认解锁）。
 	set_weapon_tree("bubble")
@@ -199,7 +199,7 @@ static func description_for(skill_id: String) -> String:
 
 
 static func branch_title(branch_id: String) -> String:
-	return "BASIC ATTACK" if branch_id == "basic" else "ACTIVE SKILLS"
+	return "普攻" if branch_id == "basic" else "主动技能"
 
 
 ## 每帧驱动整个技能池的冷却，并在技能从 CD 中归零时广播 skill_ready。
@@ -456,11 +456,11 @@ static func float_text_for(skill_id: String) -> Dictionary:
 		"nuke":
 			return {"text": TEXT_NUKE, "color": TEXT_COLOR_NUKE, "scale": TEXT_SCALE_NUKE}
 		"lamp_firefly_volley":
-			return {"text": "FLARE!", "color": FAN_COLOR, "scale": TEXT_SCALE_FAN}
+			return {"text": "萤!", "color": FAN_COLOR, "scale": TEXT_SCALE_FAN}
 		"lamp_soul_beacon":
-			return {"text": "BEACON!", "color": RING_COLOR, "scale": TEXT_SCALE_CHAIN}
+			return {"text": "引!", "color": RING_COLOR, "scale": TEXT_SCALE_CHAIN}
 		"brush_ink_wave":
-			return {"text": "INK!", "color": CHAIN_COLOR, "scale": TEXT_SCALE_CHAIN}
+			return {"text": "墨!", "color": CHAIN_COLOR, "scale": TEXT_SCALE_CHAIN}
 		"brush_seal_domain":
-			return {"text": "SEALED!", "color": NUKE_COLOR, "scale": TEXT_SCALE_NUKE}
+			return {"text": "封!", "color": NUKE_COLOR, "scale": TEXT_SCALE_NUKE}
 	return {}

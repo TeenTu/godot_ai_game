@@ -45,6 +45,8 @@ extends SceneTree
 ##              对局金币即时入档、restart 保留、结算落盘
 ##   [m7-tree-ui] M7R 选单技能配置区（§5.5）：按当前武器切换 6 行、跨树技能不可见、
 ##              价格标注、行点击解锁/勾选
+##   [m10-font] M10 §9 Web CJK 字体：ui_theme.tres/default_font = 中文字集，
+##              全部可见文案（技能/描述/分支/首领/升级卡/稀有奖励）字形齐备
 ##   [m8-*]      M8 属性/战斗数值/升级卡/属性面板分册 → tools/play_test_m8.gd
 ##
 ## 用法：godot --headless --path games/boom --script res://tools/play_test.gd
@@ -108,8 +110,62 @@ func _process(_delta: float) -> bool:
 		_m8_tests.run_all()
 		_m11_tests.run_all()
 		_m12_tests.run_all()
+		_test_ui_font()
 		_finish()
 	return false
+
+
+## [m10-font] Web 无系统 CJK 回退（DESIGN_M10 §9）：内嵌中文字集覆盖全部可见
+## 文案，且顶层 Control 主题确实继承到该字体——否则线上中文全变豆腐块。
+## 覆盖范围：12 技能名 + 12 描述 + 技能飘字 + 连击播报 + 手势提示 + 圆心缩写
+## + 2 分支标题 + 首领名 + 升级卡 + 稀有奖励 + HUD 内联提示。
+func _test_ui_font() -> void:
+	print("[m10-font]")
+	var theme := load("res://assets/fonts/ui_theme.tres") as Theme
+	var font := load("res://assets/fonts/ui_subset.ttf") as FontFile
+	_check(theme != null and font != null, "ui_theme.tres / ui_subset.ttf 均可加载")
+	if theme == null or font == null:
+		return
+	_check(theme.default_font == font, "主题 default_font 指向中文字集字体")
+	# 运行时取值链：Control.theme → default_font（Label 无自备字体时用的就是它）。
+	var probe := Control.new()
+	probe.theme = theme
+	_check(probe.get_theme_default_font() == font, "控件经主题继承取到中文字集字体")
+	probe.free()
+	var sample := "0123456789%/+-·：×° "
+	var sys := BoomSkillSystem.new()
+	var pool_ids := sys.pool_ids()
+	for skill_id in pool_ids:
+		var skill := sys.get_skill(skill_id)
+		sample += skill.display_name + BoomSkillSystem.description_for(skill_id)
+		# 技能飘字走 Label3D（不继承 Control 主题），单独覆盖。
+		sample += String(BoomSkillSystem.float_text_for(skill_id).get("text", ""))
+	sys.free()
+	# 击杀播报大字（HUD Control + Label3D 双路径）。
+	for combo in [2, 3, 5]:
+		sample += BoomGame.announce_for_combo(combo)
+	# 顶层 HUD 常量：手势提示 + 无位图技能的圆心缩写（main.gd 无 class_name，
+	# 经脚本常量表读取，避免测试里重复硬编码）。
+	var main_script := load("res://scripts/main.gd") as GDScript
+	var main_consts: Dictionary = main_script.get_script_constant_map()
+	for gesture in main_consts.get("SKILL_GESTURES", []):
+		sample += String(gesture)
+	for abbrev in (main_consts.get("SKILL_ABBREVS", {}) as Dictionary).values():
+		sample += String(abbrev)
+	sample += "闪避气血"  # HUD 闪避提示 / 回血飘字（main.gd 内联字面量）
+	for branch in ["basic", "skill"]:
+		sample += BoomSkillSystem.branch_title(branch)
+	sample += BoomBoss.DISPLAY_NAME
+	for card: Dictionary in BoomLevelUpPanel.CARD_DEFS.values():
+		sample += String(card["title"]) + String(card["desc"])
+	for rare: Dictionary in BoomBossRewards.RARE_DEFS:
+		sample += String(rare["title"]) + String(rare["desc"])
+	var missing := ""
+	for i in sample.length():
+		var c := sample[i]
+		if not missing.contains(c) and not font.has_char(c.unicode_at(0)):
+			missing += c
+	_check(missing == "", "全部可见文案有字形（缺字=%s）" % ("无" if missing == "" else missing))
 
 
 func _check(cond: bool, msg: String) -> void:
@@ -430,13 +486,13 @@ func _test_skill_float_text() -> void:
 	print("[skill-float]")
 	# 文案/颜色/字号映射（§4.2 规格表：fan 黄小字 / chain 紫大字 / nuke 金巨型）。
 	var fan_spec: Dictionary = BoomSkillSystem.float_text_for("fan")
-	_check(fan_spec["text"] == "POP!", "fan 飘字文案 = 嘭!")
+	_check(fan_spec["text"] == "嘭!", "fan 飘字文案 = 嘭!")
 	_check(fan_spec["color"] == BoomSkillSystem.TEXT_COLOR_FAN, "fan 飘字颜色 = 黄")
 	var chain_spec: Dictionary = BoomSkillSystem.float_text_for("chain")
-	_check(chain_spec["text"] == "ZAP!", "chain 飘字文案 = 链!")
+	_check(chain_spec["text"] == "链!", "chain 飘字文案 = 链!")
 	_check(chain_spec["color"] == BoomSkillSystem.TEXT_COLOR_CHAIN, "chain 飘字颜色 = 紫")
 	var nuke_spec: Dictionary = BoomSkillSystem.float_text_for("nuke")
-	_check(nuke_spec["text"] == "BOOM!", "nuke 飘字文案 = 轰!")
+	_check(nuke_spec["text"] == "轰!", "nuke 飘字文案 = 轰!")
 	_check(nuke_spec["color"] == BoomSkillSystem.TEXT_COLOR_NUKE, "nuke 飘字颜色 = 金")
 	# 字号阶梯：小字 < 大字 < 巨型。
 	var fan_sc: float = fan_spec["scale"]
@@ -467,7 +523,7 @@ func _test_skill_float_text() -> void:
 		g.step(DT)
 	_check(hn.active_count() > 0, "fan 命中后技能飘字入池")
 	var lbl: Label3D = hn.first_active()
-	_check(lbl != null and lbl.text == "POP!", "fan 命中飘字文本 = 嘭!")
+	_check(lbl != null and lbl.text == "嘭!", "fan 命中飘字文本 = 嘭!")
 	root.remove_child(hn)
 	hn.free()
 	g.free()
@@ -525,11 +581,11 @@ func _test_m3_logic() -> void:
 	print("[m3-logic]")
 	_check(BoomGame.announce_for_combo(0) == "", "combo 0 不播报")
 	_check(BoomGame.announce_for_combo(1) == "", "combo 1 不播报")
-	_check(BoomGame.announce_for_combo(2) == "DOUBLE", "combo 2 → DOUBLE")
-	_check(BoomGame.announce_for_combo(3) == "TRIPLE", "combo 3 → TRIPLE")
-	_check(BoomGame.announce_for_combo(4) == "TRIPLE", "combo 4 维持 TRIPLE 档")
-	_check(BoomGame.announce_for_combo(5) == "RAMPAGE", "combo 5 → RAMPAGE")
-	_check(BoomGame.announce_for_combo(9) == "RAMPAGE", "combo 9 → RAMPAGE")
+	_check(BoomGame.announce_for_combo(2) == "双杀", "combo 2 → 双杀")
+	_check(BoomGame.announce_for_combo(3) == "三杀", "combo 3 → 三杀")
+	_check(BoomGame.announce_for_combo(4) == "三杀", "combo 4 维持三杀档")
+	_check(BoomGame.announce_for_combo(5) == "狂暴", "combo 5 → 狂暴")
+	_check(BoomGame.announce_for_combo(9) == "狂暴", "combo 9 → 狂暴")
 	_check(BoomGame.result_stars(1) == 0, "wave 1 → 0 星")
 	_check(BoomGame.result_stars(2) == 1, "wave 2 → 1 星")
 	_check(BoomGame.result_stars(4) == 2, "wave 4 → 2 星")

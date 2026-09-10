@@ -65,12 +65,12 @@ func _build_panel() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	var title := _make_label("CHOOSE WEAPON", 46, COL_CREAM)
+	var title := _make_label("选择武器", 46, COL_CREAM)
 	title.position = Vector2(0.0, 32.0)
 	title.size = Vector2(720.0, 60.0)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
-	var subtitle := _make_label("New weapon, new playstyle", 20, Color(1.0, 0.94, 0.85, 0.72))
+	var subtitle := _make_label("换一把武器 换一种打法", 20, Color(1.0, 0.94, 0.85, 0.72))
 	subtitle.position = Vector2(0.0, 96.0)
 	subtitle.size = Vector2(720.0, 30.0)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -84,9 +84,7 @@ func _build_panel() -> void:
 
 	_fight_btn = _build_fight_button()
 	_build_skill_panel()
-	var note := _make_label(
-		"Choose up to 3 nodes · unlock each branch in order", 17, Color(1.0, 1.0, 1.0, 0.55)
-	)
+	var note := _make_label("最多装备 3 个节点 · 每分支按前置逐阶解锁", 17, Color(1.0, 1.0, 1.0, 0.55))
 	note.position = Vector2(0.0, 1056.0)
 	note.size = Vector2(720.0, 30.0)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -180,7 +178,7 @@ func _build_card(def: BoomWeaponDef, pos: Vector2) -> Button:
 
 func _build_new_badge(card: Button) -> void:
 	var badge := Label.new()
-	badge.text = "NEW"
+	badge.text = "新"
 	badge.add_theme_font_size_override("font_size", 22)
 	badge.add_theme_color_override("font_color", Color(0.5, 0.18, 0.0, 1.0))
 	badge.position = Vector2(CARD_W - 96.0, 14.0)
@@ -195,13 +193,13 @@ func _build_new_badge(card: Button) -> void:
 func _stat_text(def: BoomWeaponDef) -> String:
 	var parts: Array = []
 	if def.kind == BoomWeaponDef.AttackKind.RANGED:
-		parts.append("RATE %d/s" % int(round(1.0 / maxf(def.fire_cd, 0.001))))
-		parts.append("DMG %d" % def.proj_dmg)
+		parts.append("攻速 %d/秒" % int(round(1.0 / maxf(def.fire_cd, 0.001))))
+		parts.append("伤害 %d" % def.proj_dmg)
 	else:
-		parts.append("DMG %d" % def.swing_dmg)
-		parts.append("ARC %d" % int(def.swing_arc_deg))
-	parts.append("SPD %d%%" % int(round(def.move_mult * 100.0)))
-	parts.append("HP +%d" % def.max_hp_bonus)
+		parts.append("伤害 %d" % def.swing_dmg)
+		parts.append("扇角 %d°" % int(def.swing_arc_deg))
+	parts.append("移速 %d%%" % int(round(def.move_mult * 100.0)))
+	parts.append("生命 +%d" % def.max_hp_bonus)
 	return " ".join(parts)
 
 
@@ -220,7 +218,7 @@ func _build_fight_button() -> Button:
 	btn.pressed.connect(_on_fight_pressed)
 	add_child(btn)
 	var label := Label.new()
-	label.text = "FIGHT!"
+	label.text = "开  战"
 	label.position = Vector2.ZERO
 	label.size = BTN_SIZE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -238,7 +236,7 @@ func _on_card_pressed(weapon_id: String) -> void:
 
 ## 技能配置区：两列分别代表普攻与主动技能分支，每列三阶并显示连接线。
 func _build_skill_panel() -> void:
-	_skill_header = _make_label("WEAPON TREE", 26, COL_GOLD)
+	_skill_header = _make_label("武器技能树", 26, COL_GOLD)
 	_skill_header.position = Vector2(50.0, SKILL_HEADER_Y)
 	_skill_header.size = Vector2(620.0, 32.0)
 	for branch in ["basic", "skill"]:
@@ -349,17 +347,17 @@ func _refresh_skill_row_labels(row: Button, skill_id: String) -> void:
 		return
 	var status := ""
 	if skill_sys.is_unlocked(skill_id):
-		status = " · EQUIPPED" if skill_sys.equipped.has(skill_id) else " · READY"
+		status = " · 已装备" if skill_sys.equipped.has(skill_id) else " · 可用"
 	elif skill_sys.unlock_cost(skill_id) > 0:
-		status = " · %d COINS" % skill_sys.unlock_cost(skill_id)
+		status = " · %d 金币" % skill_sys.unlock_cost(skill_id)
 	else:
-		status = " · LOCKED"
+		status = " · 未解锁"
 	title.text = skill.display_name + status
-	var kind := "PASSIVE" if skill.is_passive else "ACTIVE"
+	var kind := "被动" if skill.is_passive else "主动"
 	detail.text = "%s · %s" % [kind, BoomSkillSystem.description_for(skill_id)]
 
 
-## 单行文案：树序. 名称 + [EQUIPPED]（已勾选）/ 无标记（已解锁）/ [UNLOCK n]（未解锁）。
+## 单行文案：树序. 名称 + [已装备]（已勾选）/ 无标记（已解锁）/ [解锁 n]（未解锁）。
 func _skill_row_text(skill_id: String) -> String:
 	if skill_sys == null:
 		return skill_id
@@ -368,15 +366,15 @@ func _skill_row_text(skill_id: String) -> String:
 	var tag := ""
 	if skill_sys.is_unlocked(skill_id):
 		if skill_sys.equipped.has(skill_id):
-			tag = "  [EQUIPPED]"
+			tag = "  [已装备]"
 	elif skill_sys.unlock_cost(skill_id) > 0:
-		tag = " · UNLOCK %d" % skill_sys.unlock_cost(skill_id)
+		tag = " · 解锁 %d" % skill_sys.unlock_cost(skill_id)
 	else:
 		var node := skill_sys.tree_node(skill_id)
 		var prerequisite: String = str(node.get("depends_on", ""))
 		var previous := skill_sys.get_skill(prerequisite)
-		tag = " · REQUIRES %s" % (previous.display_name if previous != null else "PRIOR NODE")
-	var kind := "PASSIVE" if skill != null and skill.is_passive else "ACTIVE"
+		tag = " · 需前置 %s" % (previous.display_name if previous != null else "前置节点")
+	var kind := "被动" if skill != null and skill.is_passive else "主动"
 	return (
 		"        %s%s\n        %s · %s"
 		% [name_txt, tag, kind, BoomSkillSystem.description_for(skill_id)]

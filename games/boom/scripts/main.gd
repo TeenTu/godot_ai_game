@@ -4,6 +4,11 @@ extends Node
 const HUD_W: float = 720.0
 const HUD_H: float = 1280.0
 
+# Web 无系统 CJK 回退：顶层 Control.theme 指向内嵌中文字集主题，经主题继承
+# 覆盖全部子控件（HUD/选武器/属性/升级/首领/结算）。见 DESIGN_M10 §9。
+const UI_THEME_PATH: String = "res://assets/fonts/ui_theme.tres"
+const UI_FONT_PATH: String = "res://assets/fonts/ui_subset.ttf"
+
 # 百怪夜巡场域：相对旧嘉年华场地（26×38）扩大到 52×76，面积约 4 倍。
 const ARENA_WIDTH: float = 52.0
 const ARENA_DEPTH: float = 76.0
@@ -19,30 +24,30 @@ const SWIPE_MIN_DIST: float = 110.0
 const SKILL_SLOT_COUNT: int = 3
 const SKILL_BTN_X: float = 596.0
 const SKILL_BTN_YS = [760.0, 886.0, 1012.0]  # 3 槽按钮 Y（对齐原 fan/chain/nuke 布局）
-const SKILL_GESTURES = ["TAP", "< SWIPE", "SWIPE >"]
+const SKILL_GESTURES = ["点按", "← 左滑", "右滑 →"]
 ## 无位图技能的圆心缩写（configure_empty 用 "—"）。
 const SKILL_ABBREVS: Dictionary = {
-	"fan": "F",
-	"chain": "C",
-	"nuke": "N",
-	"ring": "R",
-	"twin": "TW",
-	"rapid": "RX",
+	"fan": "爆",
+	"chain": "链",
+	"nuke": "轰",
+	"ring": "环",
+	"twin": "双",
+	"rapid": "速",
 	"heal": "+",
-	"whirl": "W",
-	"titan": "T",
-	"lamp_quick_wick": "QW",
-	"lamp_bright_core": "BC",
-	"lamp_threefold_seal": "3S",
-	"lamp_firefly_volley": "FV",
-	"lamp_echo": "LE",
-	"lamp_soul_beacon": "SB",
-	"brush_firm_grip": "FG",
-	"brush_flowing_script": "FS",
-	"brush_verdict": "SV",
-	"brush_ink_wave": "IW",
-	"brush_focus": "OF",
-	"brush_seal_domain": "SD",
+	"whirl": "旋",
+	"titan": "巨",
+	"lamp_quick_wick": "速",
+	"lamp_bright_core": "明",
+	"lamp_threefold_seal": "印",
+	"lamp_firefly_volley": "萤",
+	"lamp_echo": "响",
+	"lamp_soul_beacon": "魂",
+	"brush_firm_grip": "握",
+	"brush_flowing_script": "云",
+	"brush_verdict": "判",
+	"brush_ink_wave": "墨",
+	"brush_focus": "成",
+	"brush_seal_domain": "封",
 }
 
 const COL_CREAM: Color = Color("fff6e8")
@@ -101,6 +106,9 @@ var _in_select := false
 
 func _ready() -> void:
 	Engine.time_scale = 1.0  # 场景重载/复用时兜底复位（Engine 级状态不随场景重置）。
+	# Web 无系统 CJK 回退：经代码 load 引用，保证中文字集字体被打进导出 pck
+	# （project.godot 的 theme/custom 不参与导出依赖扫描）。
+	ThemeDB.fallback_font = load(UI_FONT_PATH)
 	if not _is_test_mode():
 		randomize()
 	world = _build_world()
@@ -460,7 +468,7 @@ func _on_enemy_died(pos: Vector3) -> void:
 	if hitnum != null:
 		var scale_p := 1.3 if sim.combo >= 2 else 1.0
 		hitnum.spawn(pos, "+%d" % BoomGame.KILL_SCORE, BoomHitNum.COLOR_SCORE, scale_p)
-	# M3 击杀播报：DOUBLE / TRIPLE / RAMPAGE 大字 + 过冲抖动 0.3s。
+	# M3 击杀播报：双杀 / 三杀 / 狂暴 大字 + 过冲抖动 0.3s。
 	_show_combo_announce(BoomGame.announce_for_combo(sim.combo))
 	if _hint_label != null:
 		_hint_label.queue_free()
@@ -483,7 +491,7 @@ func _on_skill_bullet_hit(pos: Vector3, skill_id: String) -> void:
 ## 弹 3 张随机卡 → 选择后立即应用 → 恢复战斗。
 func _on_level_up(new_level: int) -> void:
 	audio.play("wave_clear", -8.0)
-	_show_toast("LEVEL UP!  LV %d" % new_level)
+	_show_toast("升级！ Lv.%d" % new_level)
 	if sim == null or sim.pending_upgrades <= 0:
 		return
 	# headless（CI）与 web ?test=1 自动消费"伤害"卡，避免暂停阻塞测试管线。
@@ -497,18 +505,18 @@ func _on_level_up(new_level: int) -> void:
 	_level_panel.open_with(float(sim.player.hp) / float(sim.player.max_hp))
 
 
-## M8 闪避成功反馈（§8）：不扣血/不受击红屏/不受击音效，仅短暂 "DODGE" 提示。
+## M8 闪避成功反馈（§8）：不扣血/不受击红屏/不受击音效，仅短暂 "闪避" 提示。
 func _on_player_dodged(_from_pos: Vector3) -> void:
 	if hitnum != null:
 		var pos := sim.player.position + Vector3(0.0, 1.2, 0.0)
-		hitnum.spawn(pos, "DODGE", Color("5fc5ad"), 1.1)
+		hitnum.spawn(pos, "闪避", Color("5fc5ad"), 1.1)
 
 
 ## M7 heal 应急维修反馈：金色 "+N HP" 飘字 + 拾取音。
 func _on_player_healed(amount: int) -> void:
 	audio.play("pickup", -6.0)
 	if hitnum != null:
-		hitnum.spawn(sim.player.position + Vector3(0.0, 1.0, 0.0), "+%d HP" % amount, COL_GOLD, 1.2)
+		hitnum.spawn(sim.player.position + Vector3(0.0, 1.0, 0.0), "+%d 气血" % amount, COL_GOLD, 1.2)
 
 
 func _on_player_damaged(_amount: int, _from_pos: Vector3) -> void:
@@ -521,18 +529,18 @@ func _on_wave_started(wave: int) -> void:
 	audio.play("wave", -12.0)
 	# M4 §5 波次开场横幅：复用 M3 播报大字管线；精英波/台阶波换文案与颜色。
 	if BoomBossSystem.is_boss_wave(sim, wave):
-		_show_wave_banner("WAVE %d · BOSS" % wave, COL_DANGER)
+		_show_wave_banner("第 %d 波 · 首领" % wave, COL_DANGER)
 	elif wave % BoomGame.ELITE_EVERY_N == 0:
-		_show_wave_banner("WAVE %d · ELITE!" % wave, COL_DANGER)
+		_show_wave_banner("第 %d 波 · 精英！" % wave, COL_DANGER)
 	elif wave % BoomGame.WAVE_STAGE_EVERY == 0:
-		_show_wave_banner("WAVE %d — STAGE UP!" % wave, COL_GOLD)
+		_show_wave_banner("第 %d 波 — 境界提升！" % wave, COL_GOLD)
 	else:
-		_show_wave_banner("WAVE %d" % wave, COL_ACCENT)
+		_show_wave_banner("第 %d 波" % wave, COL_ACCENT)
 
 
 func _on_wave_cleared(wave: int, bonus: int) -> void:
 	audio.play("wave_clear", -6.0)
-	_show_toast("WAVE %d CLEARED  +%d" % [wave, bonus])
+	_show_toast("第 %d 波 通过  +%d" % [wave, bonus])
 	# M4 §5：波结算奖励飘字（波中心 = 玩家位置，bonus 此前已发但无表现）。
 	if hitnum != null:
 		hitnum.spawn(sim.player.position + Vector3(0.0, 1.2, 0.0), "+%d" % bonus, COL_GOLD, 1.3)
@@ -559,6 +567,9 @@ func _build_hud() -> void:
 	hud.position = Vector2.ZERO
 	hud.size = Vector2(HUD_W, HUD_H)  # 父节点是 Node，不能仅靠 anchors 推导设计尺寸。
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# 全 UI 唯一顶层 Control：主题在此挂一次，全部子面板继承中文字集字体
+	# （gui/theme/custom 运行时不改变默认主题字体解析）。
+	hud.theme = load(UI_THEME_PATH)
 	add_child(hud)
 	_hud = hud
 	_build_battle_frame(hud)
@@ -582,7 +593,7 @@ func _build_hud() -> void:
 	_add_hud_card(hud, Vector2(522, 20), Vector2(184, 86), Color(1.0, 0.69, 0.16, 0.90))
 	_score_label = _make_label(hud, "0", 30, COL_CREAM, Vector2(28, 28))
 	_kills_label = _make_label(hud, "", 15, Color(1, 1, 1, 0.82), Vector2(28, 68))
-	_wave_label = _make_label(hud, "WAVE 1", 32, COL_CREAM, Vector2(210, 29))
+	_wave_label = _make_label(hud, "第 1 波", 32, COL_CREAM, Vector2(210, 29))
 	_wave_label.size = Vector2(320, 46)
 	_wave_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_build_coin_hud(hud)
@@ -627,7 +638,7 @@ func _build_hud() -> void:
 ## M8 属性面板入口 + 升级三选一卡面板（§12.2/§11.3）：隐藏态构建。
 func _build_stats_ui(hud: Control) -> void:
 	_stats_btn = Button.new()
-	_stats_btn.text = "STATS"
+	_stats_btn.text = "属性"
 	_stats_btn.position = Vector2(626, 112)
 	_stats_btn.size = Vector2(80, 64)
 	_stats_btn.add_theme_font_size_override("font_size", 22)
@@ -749,8 +760,18 @@ func _refresh_gesture_hint() -> void:
 	for slot in SKILL_SLOT_COUNT:
 		var label: String = SKILL_GESTURES[slot].replace(" ", "")
 		var sid: String = equipped[slot] if slot < equipped.size() else ""
-		parts.append("%s:%s" % [label, sid.to_upper() if sid != "" else "-"])
-	_hint_label.text = "LEFT: MOVE  ·  RIGHT  " + "  ·  ".join(parts)
+		parts.append("%s:%s" % [label, _skill_short_name(sid) if sid != "" else "—"])
+	_hint_label.text = "左侧移动  ·  右侧手势  " + "  ·  ".join(parts)
+
+
+## 底部提示用的技能短名：优先 display_name（中文），未登记回退 id 大写。
+func _skill_short_name(skill_id: String) -> String:
+	if skill_id == "":
+		return "—"
+	var skill := skill_sys.get_skill(skill_id) if skill_sys != null else null
+	if skill != null and skill.display_name != "":
+		return skill.display_name
+	return skill_id.to_upper()
 
 
 func _build_hp(hud: Control) -> void:
@@ -885,14 +906,14 @@ func _show_combo_announce(text: String) -> void:
 	if text == "":
 		return
 	var color := COL_ACCENT
-	if text == "RAMPAGE":
+	if text == "狂暴":
 		color = COL_DANGER
-	elif text == "DOUBLE":
+	elif text == "双杀":
 		color = Color.WHITE
 	_show_announce(text, color)
 
 
-## M4 §5 波次横幅：WAVE N（默认金）/ 台阶波（金）/ 精英波（红），复用播报动画。
+## M4 §5 波次横幅：第 N 波（默认金）/ 台阶波（金）/ 精英波（红），复用播报动画。
 func _show_wave_banner(text: String, color: Color) -> void:
 	_show_announce(text, color)
 
@@ -926,13 +947,13 @@ func _hud_refresh() -> void:
 	var rp := _over_panel as BoomResultPanel
 	if rp == null or not rp.counting:
 		_score_label.text = str(sim.score)
-	_kills_label.text = "KILLS %d   COMBO x%d" % [sim.kills, maxi(1, sim.combo)]
-	_wave_label.text = "WAVE %d" % sim.wave
+	_kills_label.text = "击杀 %d   连击 x%d" % [sim.kills, maxi(1, sim.combo)]
+	_wave_label.text = "第 %d 波" % sim.wave
 	# M4 §5：间歇期显示"下一波 N"倒计时，最后 1s 变红提示。
 	if _wave_cd_label != null:
 		if sim._between_waves and sim._next_wave_cd > 0.0:
 			_wave_cd_label.visible = true
-			_wave_cd_label.text = "NEXT IN %d" % int(ceilf(sim._next_wave_cd))
+			_wave_cd_label.text = "下一波 %d" % int(ceilf(sim._next_wave_cd))
 			var urgent := sim._next_wave_cd <= 1.0
 			_wave_cd_label.add_theme_color_override(
 				"font_color", COL_DANGER if urgent else COL_CREAM

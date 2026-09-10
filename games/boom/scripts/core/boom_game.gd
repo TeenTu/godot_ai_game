@@ -560,11 +560,11 @@ func trigger_freeze(dur: float) -> void:
 ## M3 击杀播报：按当前连杀数给出播报文案（空串 = 不播报）；阈值 2/3/5，4 连杀维持 TRIPLE 档。
 static func announce_for_combo(combo: int) -> String:
 	if combo >= ANNOUNCE_RAMPAGE:
-		return "RAMPAGE"
+		return "狂暴"
 	if combo >= ANNOUNCE_TRIPLE:
-		return "TRIPLE"
+		return "三杀"
 	if combo >= ANNOUNCE_DOUBLE:
-		return "DOUBLE"
+		return "双杀"
 	return ""
 
 
