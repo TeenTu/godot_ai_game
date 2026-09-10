@@ -114,3 +114,6 @@ s1_11_batch2_test
 
 #   s1_11_batch3_test       S1-11 Batch 3：三页 UI/接触卡/地图减载（AT-60/61/62/63/64）
 s1_11_batch3_test
+
+#   s1_11_batch4_test       S1-11 Batch 4（数据模型）：航线模型与单一地图发射（AT-02/03/05/06/18/24/35）
+s1_11_batch4_test
