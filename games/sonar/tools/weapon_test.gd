@@ -6,7 +6,7 @@ extends SceneTree
 ## 补装，S1-07 §3.1）。
 ##
 ## 断言（对应 S1-07 §1.2 必须更新项）：
-##   w1  发射后鱼雷在水中（LAUNCHING→WIRE_RUN）
+##   w1  发射后鱼雷在水中（LAUNCHING→TRANSIT）
 ##   w2  默认正交状态：PASSIVE_LISTEN / ACTIVE_TX OFF / WIRE CONNECTED /
 ##       WIRE_ONLY / FUZE SAFE（REQ-DECISION-01/02）
 ##   w3  引信按 arm distance 独立解保（FUZE_ARMED），与自主/主动解耦
@@ -76,7 +76,7 @@ func _initialize() -> void:
 		_finish(fails)
 		return
 
-	# 事件收集（LAUNCH 在 connect 前已由 fire 发出，忽略；关注 WIRE_RUN 等）
+	# 事件收集（LAUNCH 在 connect 前已由 fire 发出，忽略；关注 TRANSIT 等）
 	var kinds: Dictionary = {}
 	tp.event_occurred.connect(func(_tid: String, kind: String, _d: Dictionary): kinds[kind] = true)
 
@@ -90,15 +90,15 @@ func _initialize() -> void:
 	if tube_idx >= 0 and world.weapons.tubes[tube_idx]["state"] != WeaponSystem.TubeState.EMPTY:
 		fails.append("w1c tube not EMPTY right after launch")
 
-	# 推进到 WIRE_RUN
+	# 推进到 TRANSIT
 	var guard: int = 0
 	while tp.mission_state == Torpedo.MissionState.LAUNCHING and guard < 40:
 		world.tick()
 		guard += 1
-	if tp.mission_state != Torpedo.MissionState.WIRE_RUN:
-		fails.append("w1b torpedo never reached WIRE_RUN")
-	if not kinds.has("WIRE_RUN"):
-		fails.append("w1d no WIRE_RUN event")
+	if tp.mission_state != Torpedo.MissionState.TRANSIT:
+		fails.append("w1b torpedo never reached TRANSIT")
+	if not kinds.has("TRANSIT"):
+		fails.append("w1d no TRANSIT event")
 
 	# w2 默认正交状态
 	if tp.seeker_state != Torpedo.SeekerState.PASSIVE_LISTEN:

@@ -80,10 +80,11 @@ const _EVENT := {
 const _TP_STATE := {
 	"STOWED": "在库",
 	"LAUNCHING": "发射中",
-	"WIRE_RUN": "线导航行",
-	"SEARCH": "搜索",
-	"ATTACK": "攻击",
-	"TERMINAL": "末段",
+	"TRANSIT": "线导航行",
+	"ACQUIRING": "捕获中",
+	"LOCKED_ATTACK": "已锁定",
+	"COAST": "短时丢失",
+	"LOST_REACQUIRE": "重搜",
 	"DEAD": "终止",
 }
 

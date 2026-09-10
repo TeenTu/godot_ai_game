@@ -8,7 +8,7 @@ extends SceneTree
 ##          事件日志一行一事件（不用 " | " 拼接）；真实事件名映射。
 ##   PE-03  P0-08 combat scenario：s1_combat.json 装配 enemy_spawn/doctrine/
 ##          countermeasures；UI 同配置（auto_measurements=false）端到端可跑。
-##   PE-04  P2-01 搜索扫掠连续初始化：进入 SEARCH 时从当前航向开始，
+##   PE-04  P2-01 搜索扫掠连续初始化：开始扫掠时从当前航向起，
 ##          不跳到全局相位；随后扫掠持续推进。
 ##   PE-05  P1-03 侧栏宽度契约常量与钳制（300/340/420）。
 ##   PE-06  P1-03.5 候选摘要含 bearing_sigma_deg。
@@ -185,7 +185,7 @@ func _pe_03_combat_scenario(fails: Array) -> void:
 func _pe_04_search_continuity(fails: Array) -> void:
 	var w := _mk_world()
 	var tp: Torpedo = w.weapons.fire_manual(90.0, 0.0, 0.0, 0.0, 50.0)
-	w.run_steps(4)  # → WIRE_RUN
+	w.run_steps(4)  # → TRANSIT
 	# 把仿真时间推进到远离 0 的全局相位（暴露全局相位跳变）。
 	for i in range(400):
 		w.run_steps(1)
@@ -193,8 +193,9 @@ func _pe_04_search_continuity(fails: Array) -> void:
 	_assert_bool(fails, "PE-04a sim advanced", w.sim_time > 100.0, true)
 	var crs_before: float = tp.course_deg
 	_assert_bool(fails, "PE-04b1 autonomy ok", tp.authorize_autonomy(), true)
-	_assert_bool(fails, "PE-04b2 entered SEARCH", tp.mission_state_name() == "SEARCH", true)
-	# 进入 SEARCH 后第一个期望航向应接近当前航向（连续初始化，不跳全局相位）。
+	# S1-11 D-03：授权自主不切换任务态（保持 TRANSIT），但无航线自主弹仍执行搜索扫掠。
+	_assert_bool(fails, "PE-04b2 stays TRANSIT", tp.mission_state_name() == "TRANSIT", true)
+	# 开始扫掠后第一个期望航向应接近当前航向（连续初始化，不跳全局相位）。
 	var desired0: float = tp._search_sweep_course(w.sim_time)
 	var err0: float = absf(NavUtils.wrap180(desired0 - crs_before))
 	_assert_bool(fails, "PE-04c continuity err<25deg", err0 < 25.0, true)

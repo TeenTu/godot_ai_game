@@ -2,7 +2,7 @@ extends SceneTree
 ## s1_07_state_model_test.gd — S1-07 Commit 1 正交状态模型 + WeaponProgram 无头验收。
 ##
 ## 覆盖（S1-07 §3 / §5 / §17 本批范围）：
-##   SM1  发射后默认正交状态：MissionState→WIRE_RUN、SeekerState=PASSIVE_LISTEN、
+##   SM1  发射后默认正交状态：MissionState→TRANSIT、SeekerState=PASSIVE_LISTEN、
 ##        ActiveTxState=OFF、WireState=CONNECTED、Guidance=WIRE_ONLY、Fuze=SAFE
 ##        （REQ-DECISION-01/02：被动默认 ON、主动默认 OFF，互不耦合）。
 ##   SM2  WeaponProgram 快照不可变：发射后修改原程序不影响在水鱼雷。
@@ -85,13 +85,13 @@ func _initialize() -> void:
 	var ev: bool = tp.step(DT, sim_t + DT, null)
 	sim_t += DT
 	_assert_bool(fails, "SM1g step ok", ev, false)
-	# LAUNCH_TRANSITION_S=1.0：第 1 步(0.5s)仍 LAUNCHING，第 2 步后 WIRE_RUN
+	# LAUNCH_TRANSITION_S=1.0：第 1 步(0.5s)仍 LAUNCHING，第 2 步后 TRANSIT
 	if tp.mission_state != Torpedo.MissionState.LAUNCHING:
 		fails.append("SM1g2 mission left LAUNCHING too early")
 	tp.step(DT, sim_t + DT, null)
 	sim_t += DT
-	if tp.mission_state != Torpedo.MissionState.WIRE_RUN:
-		fails.append("SM1h did not reach WIRE_RUN after launch transition")
+	if tp.mission_state != Torpedo.MissionState.TRANSIT:
+		fails.append("SM1h did not reach TRANSIT after launch transition")
 	# 直航 60s：航向不变、无任何捕获/命中类事件、无 target_id 泄漏
 	for i in range(120):
 		tp.step(DT, sim_t, null)
@@ -112,8 +112,8 @@ func _initialize() -> void:
 		fails.append("SM4 fuze never ARMED")
 	if not events.has("FUZE_ARMED"):
 		fails.append("SM4b no FUZE_ARMED event")
-	# 引信解保期间任务仍 WIRE_RUN、主动仍 OFF（解耦）
-	if tp.mission_state != Torpedo.MissionState.WIRE_RUN:
+	# 引信解保期间任务仍 TRANSIT、主动仍 OFF（解耦）
+	if tp.mission_state != Torpedo.MissionState.TRANSIT:
 		fails.append("SM4c fuze arming changed mission state")
 	if tp.active_tx_state != Torpedo.ActiveTxState.OFF:
 		fails.append("SM4d fuze arming changed active_tx")

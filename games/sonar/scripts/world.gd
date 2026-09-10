@@ -594,7 +594,9 @@ func _enemy_fire(a: Dictionary) -> void:
 		return
 	var e: TruthEntity = enemy_ai.entity
 	var prog := WeaponProgram.make_bearing_only(float(a.get("bearing_deg", 0.0)))
-	prog.guidance_authority = WeaponProgram.GuidanceAuthority.WIRE_ONLY
+	# D-01：敌方 AI 为独立体系。该弹无线（wire_guidance_enabled=false），发射即自主
+	# 制导，不经过玩家侧「线导授权」链（旧代码曾隐式依赖 WIRE_ONLY 门控缺失才接线）。
+	prog.guidance_authority = WeaponProgram.GuidanceAuthority.AUTONOMOUS
 	prog.wire_guidance_enabled = false
 	prog.active_enable_mode = WeaponProgram.ActiveEnableMode.TIME
 	prog.active_enable_time_s = float(enemy_ai.doctrine.get("torpedo_active_enable_time_s", 60.0))

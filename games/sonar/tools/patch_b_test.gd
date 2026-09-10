@@ -7,7 +7,8 @@ extends SceneTree
 ##   PB-02（P0-04）同扫描 Return×Track 一对一关联：一条 return 与一条 track
 ##         在一个 scan 内最多使用一次（旧实现允许双 return 重复更新同航迹）。
 ##   PB-03（P0-02.5）accept_seeker_track 成功 → guidance_authority=ASSISTED。
-##   PB-04（P0-02.4）authorize_autonomy 无锁 → 进入 SEARCH 并实际扫掠。
+##   PB-04（P0-02.4 / S1-11 D-03）authorize_autonomy 无锁 → 任务态保持 TRANSIT；
+##         无航线的自主弹仍执行搜索扫掠（旧「授权即切 SEARCH」契约已作废）。
 ##   PB-05（P0-02.2/3）无导线程序（wire_guidance_enabled=false）主程序距离
 ##         自主触发必须生效 → AUTONOMOUS + SEARCH + 扫掠（旧实现只有 fallback
 ##         能推进自主 → 永久直航）。
@@ -124,16 +125,16 @@ func _pb_04_authorize_enters_search(fails: Array) -> void:
 	for i in range(4):
 		tp.step(DT, sim_t, ctx)
 		sim_t += DT
-	_assert_bool(fails, "PB-04a in WIRE_RUN", tp.mission_state_name() == "WIRE_RUN", true)
+	_assert_bool(fails, "PB-04a in TRANSIT", tp.mission_state_name() == "TRANSIT", true)
 	var ok: bool = tp.authorize_autonomy()
 	_assert_bool(fails, "PB-04b authorize accepted", ok, true)
 	_assert_bool(
 		fails,
-		"PB-04c entered SEARCH (got %s)" % tp.mission_state_name(),
-		tp.mission_state_name() == "SEARCH",
+		"PB-04c stays TRANSIT (got %s)" % tp.mission_state_name(),
+		tp.mission_state_name() == "TRANSIT",
 		true
 	)
-	# 无目标：SEARCH 扇区扫掠实际改变航向（旧实现无现成路径进扫掠）。
+	# 无目标：无航线自主弹的搜索扫掠实际改变航向（D-01 敌方 AI 独立体系）。
 	# P2-01（Patch E）后扫掠自当前航向连续初始化：单步期望变化 = 扫掠率
 	# （默认 SNAKE 1.5°/s → 0.75°/步），不再有跳相位造成的 >1°/步 伪影；
 	# 断言改为单步持续推进 + 20s 累计净漂移 >5°（语义不变：确实在扫掠）。
@@ -178,8 +179,8 @@ func _pb_05_nowire_program_autonomy(fails: Array) -> void:
 	)
 	_assert_bool(
 		fails,
-		"PB-05c mission SEARCH/ATTACK (got %s)" % tp.mission_state_name(),
-		tp.mission_state_name() == "SEARCH" or tp.mission_state_name() == "ATTACK",
+		"PB-05c mission TRANSIT (got %s)" % tp.mission_state_name(),
+		tp.mission_state_name() == "TRANSIT",
 		true
 	)
 	var prev: float = tp.course_deg
@@ -209,8 +210,8 @@ func _pb_06_attack_requires_authority(fails: Array) -> void:
 		return
 	_assert_bool(
 		fails,
-		"PB-06b WIRE_ONLY no ATTACK (got %s)" % tp.mission_state_name(),
-		tp.mission_state_name() != "ATTACK" and tp.mission_state_name() != "TERMINAL",
+		"PB-06b WIRE_ONLY no LOCKED_ATTACK (got %s)" % tp.mission_state_name(),
+		tp.mission_state_name() != "LOCKED_ATTACK",
 		true
 	)
 

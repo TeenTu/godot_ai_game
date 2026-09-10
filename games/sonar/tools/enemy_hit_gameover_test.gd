@@ -123,8 +123,12 @@ func _run_torpedo_to_end(w: World) -> bool:
 	prog.speed_mode = WeaponProgram.SpeedMode.HIGH
 	prog.guidance_authority = WeaponProgram.GuidanceAuthority.WIRE_ONLY
 	prog.wire_guidance_enabled = false
+	# 搜索授权距离取 doctrine 默认 800m：本场景交战距离 757m < 800m，故该弹整段行程
+	# 均为直航（S1-11 D-03：未获自主权不操舵），与上方脚手架注释的
+	# 「直航鱼雷沿发射方位精确扫过本艇」一致（此前写死 100m 会让鱼雷在 100m 处
+	# 转入搜索蛇形，偏离该几何）。
 	prog.autonomy_enable_mode = WeaponProgram.AutonomyEnableMode.DISTANCE
-	prog.autonomy_enable_distance_m = 100.0
+	prog.autonomy_enable_distance_m = 800.0
 	prog.warhead_arm_distance_m = 300.0
 	prog.fallback_program = prog.make_default_fallback()
 	var tp: Torpedo = w.enemy_weapons.fire_program(

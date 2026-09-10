@@ -49,28 +49,33 @@ func _int_a_full_kill_chain(fails: Array) -> void:
 	# 主动回波给出距离估计——场景 A 的标准程序化开启路径）。
 	tp.program.active_enable_mode = WeaponProgram.ActiveEnableMode.TIME
 	tp.program.active_enable_time_s = 30.0
-	var phases := {"wire_run": false, "attack": false, "terminal": false, "dead": false}
-	# 线导接近：行进 300m 后授权自主（模拟玩家 AUTHORIZE_AUTONOMY）。
-	var authorized: bool = false
+	var phases := {"in_water": false, "locked": false, "coast": false, "dead": false}
+	# S1-11 D-04：自主权在发射时即具备（地图航线程序默认 AUTONOMOUS），稳定捕获后
+	# 自动强制锁定并接管制导——不再有「行进 N 米后玩家手工授权」这一步。
+	for i in range(8):
+		w.run_steps(1)
+		if tp.mission_state_name() != "LAUNCHING":
+			break
+	var authorized: bool = tp.authorize_autonomy()
+	_assert_bool(fails, "INT-A6a authorize at launch", authorized, true)
 	for i in range(1500):
 		w.run_steps(1)
-		if not authorized and tp.traveled_m >= 300.0:
-			authorized = tp.authorize_autonomy()
 		match tp.mission_state_name():
-			"WIRE_RUN", "SEARCH":
-				phases["wire_run"] = true
-			"ATTACK":
-				phases["attack"] = true
-			"TERMINAL":
-				phases["terminal"] = true
+			"TRANSIT", "ACQUIRING", "LOST_REACQUIRE":
+				phases["in_water"] = true
+			"LOCKED_ATTACK":
+				phases["locked"] = true
+			"COAST":
+				phases["coast"] = true
 			"DEAD":
 				phases["dead"] = true
 				break
 	# REQ 批：爆炸证据按 t_emit + R/c 到达——命中后留出传播窗口再收证据。
 	for i in range(20):
 		w.run_steps(1)
-	for k in phases:
-		_assert_bool(fails, "INT-A3 phase %s reached" % k, bool(phases[k]), true)
+	_assert_bool(fails, "INT-A3 in water", phases["in_water"], true)
+	_assert_bool(fails, "INT-A3 locked attack reached", phases["locked"], true)
+	_assert_bool(fails, "INT-A3 dead reached", phases["dead"], true)
 	# Truth 战果（内核侧）。
 	_assert_bool(
 		fails, "INT-A4 enemy sunk in Truth", str(w.world["targets"][0].damage_state) == "sunk", true
