@@ -2,12 +2,15 @@ class_name WeaponPanelUI
 extends VBoxContainer
 ## weapon_panel.gd — 武器发射面板（阶段四，从 main_ui 拆出控制行数）。
 ##
-## 信息链纪律：Fire 请求交由 main_ui 执行——有 SystemSolution 走 SOLUTION；
-## 无解但有选中接触走 BEARING_ONLY；否则 MANUAL（沿本艇艏向）。本面板不持有
-## Truth own、不直接调用 weapons.fire，只负责「展示 + 触发 + 模式提示」。
+## 信息链纪律：S1-11 D-01 起玩家唯一发射方式是**地图航线**（MAP_ROUTE），
+## 本面板不再有 SOLUTION/BEARING_ONLY/MANUAL 选择器，只发出「触发绘制 /
+## 撤销 / 清除 / 发射」请求，执行与联锁仍交由 main_ui → FireExecutor。
+## 本面板不持有 Truth own、不直接调用 weapons.fire。
 
 signal fire_requested
-signal fire_mode_changed(mode: String)  # REQ-B1-04：显式发射模式选择
+signal route_draw_toggled(on: bool)  # S1-11 D-01：进入/退出地图航线绘制
+signal route_undo_requested  # 撤销最后一个航路点
+signal route_clear_requested  # 清除整条航线
 signal status(msg: String)
 
 const MAX_LOG: int = 5
@@ -21,7 +24,8 @@ var now_time: float = 0.0  # 由 main_ui 每帧注入（脉冲动画/龄期衰�
 var programmer := LaunchProgrammer.new()
 
 var _btn_fire: Button = null
-var _opt_fire_mode: OptionButton = null  # REQ-B1-04
+var _chk_route: CheckButton = null  # S1-11 D-01：地图航线绘制开关
+var _lbl_route: Label = null  # 航线状态（航路点数 / 可发射性）
 var _chk_shallow: CheckBox = null
 var _sel_preset: OptionButton = null
 var _lbl_fire_hint: Label = null
@@ -41,21 +45,32 @@ func _build() -> void:
 	_btn_fire.pressed.connect(func(): fire_requested.emit())
 	_btn_fire.disabled = true
 	add_child(_btn_fire)
-	# REQ-B1-04：FIRE MODE 显式选择——SOLUTION 只用选中 Contact 的解。
-	var fm_row := HBoxContainer.new()
-	var fm_lbl := Label.new()
-	fm_lbl.text = UiText.t("fire_mode")
-	fm_lbl.add_theme_font_size_override("font_size", 12)
-	fm_row.add_child(fm_lbl)
-	_opt_fire_mode = OptionButton.new()
-	for m in ["SOLUTION", "BEARING_ONLY", "MANUAL"]:
-		_opt_fire_mode.add_item(UiText.fire_mode(m))
-	_opt_fire_mode.select(0)
-	_opt_fire_mode.item_selected.connect(
-		func(i: int): fire_mode_changed.emit(["SOLUTION", "BEARING_ONLY", "MANUAL"][i])
-	)
-	fm_row.add_child(_opt_fire_mode)
-	add_child(fm_row)
+	# S1-11 D-01：玩家唯一发射方式 = 地图航线（起点吸附本艇实测位置，最多
+	# 4 个未来航路点）。旧 SOLUTION/BEARING_ONLY/MANUAL 选择器随契约作废删除；
+	# 本面板只负责「触发绘制 + 撤销/清除 + 状态明示」，绘制与坐标全在地图层。
+	var rt_row := HBoxContainer.new()
+	rt_row.add_theme_constant_override("separation", 3)
+	_chk_route = CheckButton.new()
+	_chk_route.text = UiText.t("btn_route_draw")
+	_chk_route.add_theme_font_size_override("font_size", 12)
+	_chk_route.toggled.connect(func(on: bool): route_draw_toggled.emit(on))
+	rt_row.add_child(_chk_route)
+	var btn_undo := Button.new()
+	btn_undo.text = UiText.t("btn_route_undo")
+	btn_undo.add_theme_font_size_override("font_size", 12)
+	btn_undo.pressed.connect(func(): route_undo_requested.emit())
+	rt_row.add_child(btn_undo)
+	var btn_clear := Button.new()
+	btn_clear.text = UiText.t("btn_route_clear")
+	btn_clear.add_theme_font_size_override("font_size", 12)
+	btn_clear.pressed.connect(func(): route_clear_requested.emit())
+	rt_row.add_child(btn_clear)
+	add_child(rt_row)
+	_lbl_route = Label.new()
+	_lbl_route.text = UiText.t("route_none")
+	_lbl_route.add_theme_font_size_override("font_size", 12)
+	_lbl_route.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	add_child(_lbl_route)
 	# REQ-01：浅水攻击定深开关（水面/浅深目标；有限升降速率逼近，非瞬移）。
 	_chk_shallow = CheckBox.new()
 	_chk_shallow.text = UiText.t("chk_shallow")
@@ -108,11 +123,23 @@ func bind(p_weapons: WeaponSystem, p_chart: ChartView, p_on_dirty: Callable) -> 
 	_refresh()
 
 
-## 发射上下文提示（S1-07 §5.2）：SOLUTION / BEARING_ONLY / MANUAL + 风险说明。
+## 发射上下文提示（S1-11 §5.3）：航线就绪度 / 发射拒绝原因 / 在水状态。
 ## Fire 可用性不依赖解，只依赖有装填管（_refresh 内判定）。
 func set_fire_context(text: String) -> void:
 	if _lbl_fire_hint != null:
 		_lbl_fire_hint.text = text
+
+
+## 航线状态明示（航路点数 / 可发射性 / 当前是否在绘制）。
+func set_route_status(text: String) -> void:
+	if _lbl_route != null:
+		_lbl_route.text = text
+
+
+## 同步绘制开关（取消/提交后由 main_ui 回写，避免 UI 与地图层状态不一致）。
+func set_route_drawing(on: bool) -> void:
+	if _chk_route != null and _chk_route.button_pressed != on:
+		_chk_route.set_pressed_no_signal(on)
 
 
 ## REQ-B4-01：完整发射前程序编辑区（搜索扇区/模式、主动/自治授权条件、
@@ -269,7 +296,7 @@ func _refresh() -> void:
 		% [weapons.loaded_count(), weapons.tubes.size(), weapons.torpedoes.size()]
 	)
 	if _btn_fire != null:
-		# Commit 3：随时可发射 = 有装填管（无解也允许 MANUAL/BEARING_ONLY）。
+		# S1-11 D-01：随时可发射 = 有装填管 + 有可发射地图航线（main_ui 判定）。
 		_btn_fire.disabled = weapons.loaded_count() == 0
 	if not _weapon_log.is_empty():
 		# P1-03.2：一行一事件（不用长 " | " 拼接），配合 autowrap 不撑宽侧栏。

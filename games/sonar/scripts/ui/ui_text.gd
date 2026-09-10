@@ -326,6 +326,13 @@ const LABELS := {
 	# ---- 武器页 ----
 	"btn_fire": "发射鱼雷",
 	"fire_mode": "发射模式",
+	# S1-11 D-01：玩家唯一发射方式 = 地图航线。
+	"btn_route_draw": "绘制航线",
+	"btn_route_undo": "撤销航点",
+	"btn_route_clear": "清除航线",
+	"route_none": "航线：未绘制（点「绘制航线」后在海图上点选航路点）",
+	"route_drawing_fmt": "航线：绘制中 %d/%d 个航路点（右键空白可退出）",
+	"route_ready_fmt": "航线：%d 个航路点，可发射",
 	"chk_shallow": "浅深攻击（12 米）",
 	"program_prelaunch": "发射前参数（航向/深度/引信）",
 	"wire_label": "线导",
@@ -367,6 +374,9 @@ const LABELS := {
 	"evt_fire_mode": "发射模式",
 	"evt_torpedo_away": "鱼雷出管",
 	"evt_fire_reject": "发射被拒",
+	"evt_route_needed": "请先在地图上绘制航线再发射",
+	"evt_route_cleared": "航线已清除",
+	"evt_route_committed": "航线已就绪，可发射",
 	"evt_submit": "系统解提交",
 	"evt_low_quality": "质量偏低",
 	"evt_submit_reject": "提交被拒",

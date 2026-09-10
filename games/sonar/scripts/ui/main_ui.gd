@@ -68,12 +68,12 @@ var _processed_meas: int = 0
 var _track_colors: Dictionary = {}  # track_id -> Color
 var _dirty: bool = true
 var _last_meas_count: int = -1
-var _fire_mode: String = "SOLUTION"
 var _lowq_confirmed: bool = false
 var _own_track_pts: Array = []
 var _scenario_name: String = ""  # P0-08 实际加载的场景名
 var _game_over: GameOverOverlay = null  # REQ-B5-04 终局覆盖层
 var _towed := TowedUi.new()  # S1-03 拖曳阵操作胶水（拆出控行数）
+var _route_overlay: MapRouteOverlay = null  # S1-11 D-01 地图航线绘制层
 
 
 func _ready() -> void:
@@ -133,7 +133,7 @@ func _ready() -> void:
 
 	if _weapon_panel != null and world.weapons != null:
 		_weapon_panel.bind(world.weapons, _chart, func(): _dirty = true)
-		_weapon_panel.set_fire_context("No FC solution — MANUAL / BEARING_ONLY allowed")
+		_weapon_panel.set_fire_context(UiText.t("route_none"))
 
 	if _own_panel != null:
 		_own_panel.bind_world(world)
@@ -192,6 +192,12 @@ func _build_ui() -> void:
 	_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_chart.tick_selected.connect(_on_tick_selected)
 	_chart.threat_selected.connect(_on_threat_selected)
+	# S1-11 §5.3/D-01：地图航线绘制层覆盖在海图上（不侵入 ChartView 的 _draw）。
+	# 仅绘制态捕获点击，空闲时 mouse_filter=IGNORE 完全不挡地图交互。
+	_route_overlay = MapRouteOverlay.new()
+	_route_overlay.chart = _chart
+	_route_overlay.route_changed.connect(_on_route_changed)
+	_chart.add_child(_route_overlay)
 	main_row.add_child(_chart)
 	_depth_bar = DepthBandDisplay.new()
 	main_row.add_child(_depth_bar)
@@ -331,7 +337,9 @@ func _build_weapons_page(pg: VBoxContainer) -> void:
 	_weapon_panel = WeaponPanelUI.new()
 	pg.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
-	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
+	_weapon_panel.route_draw_toggled.connect(_on_route_draw_toggled)
+	_weapon_panel.route_undo_requested.connect(_on_route_undo)
+	_weapon_panel.route_clear_requested.connect(_on_route_clear)
 	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
 	_in_water_panel = InWaterWeaponPanel.new()
 	pg.add_child(_in_water_panel)
@@ -941,39 +949,84 @@ func _on_enter_solution() -> void:
 		return
 	system_sol = res["solution"]
 	if _weapon_panel != null:
-		_weapon_panel.set_fire_context("SOLUTION ready — %s (src %s)" % [st, tid])
+		_weapon_panel.set_fire_context("建议航线就绪 — %s (src %s)；航线仍需在地图上绘制" % [st, tid])
 	_update_status(UiText.t("evt_submit") + " " + tid + "（" + UiText.fit(st) + "）")
 
 
-## REQ-B1-04：发射模式玩家显式选择（FIRE MODE），执行/联锁在 FireExecutor。
+## ---- S1-11 §5.3 / D-01：地图航线绘制（玩家唯一发射方式）----
+func _on_route_draw_toggled(on: bool) -> void:
+	if _route_overlay == null:
+		return
+	if on:
+		var own: RefCounted = world.world["own"]
+		# 起点吸附本艇实测位置（本艇自知位置，非真值读取）。
+		_route_overlay.begin(float(own.position_east_m), float(own.position_north_m))
+		_update_status(UiText.t("btn_route_draw"))
+	else:
+		_route_overlay.cancel()
+		_dirty = true
+
+
+func _on_route_undo() -> void:
+	if _route_overlay != null and _route_overlay.undo_last():
+		_dirty = true
+
+
+func _on_route_clear() -> void:
+	if _route_overlay == null:
+		return
+	_route_overlay.cancel()
+	if _weapon_panel != null:
+		_weapon_panel.set_route_drawing(false)
+		_weapon_panel.set_route_status(UiText.t("route_none"))
+	_update_status(UiText.t("evt_route_cleared"))
+	_dirty = true
+
+
+## 航线层任何变化（加点/撤销/取消）→ 刷新面板状态行 + 地图重绘。
+func _on_route_changed() -> void:
+	_dirty = true
+	if _weapon_panel == null or _route_overlay == null:
+		return
+	var n: int = _route_overlay.future_point_count()
+	if _route_overlay.active:
+		_weapon_panel.set_route_status(
+			UiText.t("route_drawing_fmt") % [n, MapRouteOverlay.MAX_FUTURE_POINTS]
+		)
+	elif _route_overlay.can_commit():
+		_weapon_panel.set_route_status(UiText.t("route_ready_fmt") % n)
+	else:
+		_weapon_panel.set_route_status(UiText.t("route_none"))
+
+
+## S1-11 D-01：发射 = 沿地图航线（唯一方式），执行/联锁仍在 FireExecutor。
 func _on_fire_torpedo() -> void:
 	if world == null or world.weapons == null:
 		return
-	var res: Dictionary = fire_exec.execute(world.weapons, world, _fire_mode, selected_track_id)
+	if _route_overlay == null or not _route_overlay.can_commit():
+		_update_status(UiText.t("evt_fire_reject") + "：" + UiText.t("evt_route_needed"))
+		return
+	fire_exec.programmer.route_points = _route_overlay.route_snapshot()
+	var res: Dictionary = fire_exec.execute(world.weapons, world, "MAP_ROUTE", selected_track_id)
 	if not bool(res.get("ok", false)):
 		_update_status(
-			(
-				"%s [%s]：%s"
-				% [
-					UiText.t("evt_fire_reject"),
-					UiText.fire_mode(_fire_mode),
-					UiText.reject(str(res.get("reason", "?")))
-				]
-			)
+			UiText.t("evt_fire_reject") + "：" + UiText.reject(str(res.get("reason", "?")))
 		)
 		return
 	var tp: Torpedo = res["tp"]
-	var mode: String = str(res["mode"])
-	if tp != null:
-		_update_status(
-			"%s（%s / %s）" % [UiText.t("evt_torpedo_away"), tp.torpedo_id, UiText.fire_mode(mode)]
-		)
-		_dirty = true
-		if _weapon_panel != null:
-			_weapon_panel.set_fire_context("In-water: %s (%s)" % [tp.torpedo_id, mode])
-			_weapon_panel.refresh()
-	else:
-		_update_status("%s — 无已装管或参数非法（%s）" % [UiText.t("evt_fire_reject"), UiText.fire_mode(mode)])
+	if tp == null:
+		_update_status(UiText.t("evt_fire_reject") + " — 无已装管或参数非法")
+		return
+	_update_status("%s（%s / 地图航线）" % [UiText.t("evt_torpedo_away"), tp.torpedo_id])
+	_dirty = true
+	# 发射后清除航线层（同一条航线不重复使用），并复位面板状态。
+	_route_overlay.cancel()
+	if _weapon_panel != null:
+		_weapon_panel.set_route_drawing(false)
+		_weapon_panel.set_fire_context("In-water: %s（MAP_ROUTE）" % tp.torpedo_id)
+		_weapon_panel.refresh()
+	if not _route_overlay.can_commit():
+		_on_route_changed()
 
 
 func _update_status(msg: String) -> void:

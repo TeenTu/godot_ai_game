@@ -198,6 +198,59 @@ func _b4_c(fails: Array) -> void:
 		not bool(no_prog.get("ok", false)),
 		"B4-C FireExecutor rejects MAP_ROUTE without a programmer"
 	)
+	_b4_c2(fails)
+
+
+# ---------------- AT-01/05/24：地图航线绘制层与 UI 契约 ----------------
+func _b4_c2(fails: Array) -> void:
+	var ov := MapRouteOverlay.new()
+	ov.begin(100.0, 200.0)
+	_assert(
+		fails,
+		ov.active and ov.points.size() == 1 and ov.points[0] == Vector2(100, 200),
+		"B4-C2 draw mode starts at the own ship's measured position"
+	)
+	_assert(fails, not ov.can_commit(), "B4-C2 a lone start point is not launchable")
+	var added: int = 0
+	for i in range(MapRouteOverlay.MAX_FUTURE_POINTS + 3):
+		if ov.add_point(100.0 + float(i) * 100.0, 200.0):
+			added += 1
+	_assert(
+		fails,
+		(
+			added == MapRouteOverlay.MAX_FUTURE_POINTS
+			and ov.future_point_count() == MapRouteOverlay.MAX_FUTURE_POINTS
+		),
+		"B4-C2 future waypoints are capped at %d" % MapRouteOverlay.MAX_FUTURE_POINTS
+	)
+	_assert(fails, ov.can_commit(), "B4-C2 route with waypoints is launchable")
+	_assert(
+		fails, ov.undo_last() and ov.future_point_count() == 3, "B4-C2 undo drops the last point"
+	)
+	var frozen: Array = ov.commit()
+	_assert(
+		fails,
+		not ov.active and frozen.size() == 4 and ov.route_snapshot().size() == 4,
+		"B4-C2 commit freezes the route and leaves draw mode"
+	)
+	ov.cancel()
+	_assert(
+		fails,
+		not ov.active and ov.points.is_empty() and not ov.can_commit(),
+		"B4-C2 cancel clears the route"
+	)
+	var wp_src: String = (load("res://scripts/ui/weapon_panel.gd") as Script).source_code
+	var ui_src: String = (load("res://scripts/ui/main_ui.gd") as Script).source_code
+	_assert(
+		fails,
+		wp_src.find("fire_mode_changed") < 0 and wp_src.find("route_draw_toggled") >= 0,
+		"B4-C2 weapon panel drops the fire-mode selector for route controls"
+	)
+	_assert(
+		fails,
+		ui_src.find("MapRouteOverlay") >= 0 and ui_src.find("_fire_mode") < 0,
+		"B4-C2 main UI fires MAP_ROUTE through the map route layer"
+	)
 
 
 func _assert(fails: Array, cond: bool, name: String) -> void:
