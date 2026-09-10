@@ -161,10 +161,9 @@ func _build_weapon_select() -> void:
 	if _hud == null:
 		return
 	_select = BoomWeaponSelect.new()
-	_hud.add_child(_select)
-	_select.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_select.position = Vector2.ZERO
 	_select.size = Vector2(HUD_W, HUD_H)
+	_hud.add_child(_select)
 	_select.skill_sys = skill_sys  # M7R：技能配置区按当前武器树解锁/装备。
 	_select.confirmed.connect(_on_weapon_confirmed)
 	_select.visible = false
@@ -563,7 +562,7 @@ func _build_world() -> Node3D:
 func _build_hud() -> void:
 	var hud := Control.new()
 	hud.name = "HUD"
-	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud.position = Vector2.ZERO
 	hud.size = Vector2(HUD_W, HUD_H)  # 父节点是 Node，不能仅靠 anchors 推导设计尺寸。
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
