@@ -73,6 +73,7 @@ var _lowq_confirmed: bool = false
 var _own_track_pts: Array = []
 var _scenario_name: String = ""  # P0-08 实际加载的场景名
 var _game_over: GameOverOverlay = null  # REQ-B5-04 终局覆盖层
+var _towed := TowedUi.new()  # S1-03 拖曳阵操作胶水（拆出控行数）
 
 
 func _ready() -> void:
@@ -120,6 +121,11 @@ func _ready() -> void:
 	fire_exec.tracker = tracker
 	if _op_panel != null:
 		_op_panel.set_towed_available(op.towed_available())
+	# S1-03：拖曳阵操作胶水（信号 → 世界命令 + 状态行），从本文件拆出控行数。
+	_towed.world = world
+	_towed.op = op
+	_towed.op_panel = _op_panel
+	_towed.status = _update_status
 
 	trial = TrialSolution.new()
 	system_sol = null
@@ -252,10 +258,10 @@ func _build_sonar_page(pg: VBoxContainer) -> void:
 		func(on: bool):
 			_update_status(UiText.t("st_autocrew_on") if on else UiText.t("st_autocrew_off"))
 	)
-	_op_panel.towed_deploy_requested.connect(_on_towed_deploy)
-	_op_panel.towed_retract_requested.connect(_on_towed_retract)
-	_op_panel.towed_hold_requested.connect(_on_towed_hold)
-	_op_panel.towed_length_commanded.connect(_on_towed_length_commanded)
+	_op_panel.towed_deploy_requested.connect(_towed.on_deploy)
+	_op_panel.towed_retract_requested.connect(_towed.on_retract)
+	_op_panel.towed_hold_requested.connect(_towed.on_hold)
+	_op_panel.towed_length_commanded.connect(_towed.on_length_commanded)
 	_op_panel.ping_requested.connect(_on_ping_requested)
 	_op_panel.active_undo_requested.connect(_on_active_undo)
 	_op_panel.active_return_selected.connect(_on_active_return_selected)
@@ -992,7 +998,7 @@ func _op_step() -> void:
 	# REQ-B1-03：镜像证据修订（autocrew/主动回波等改动证据时自动置 stale）。
 	for t in tracker.all_tracks():
 		fcc.sync_revision(t)
-	_refresh_towed_status()
+	_towed.refresh_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
 		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
@@ -1020,68 +1026,6 @@ func _op_step() -> void:
 			_dirty = true
 			_update_status(UiText.t("st_autocrew_mark"))
 	_op_panel.refresh(op)
-
-
-func _towed_ref() -> TowedArray:
-	if world == null:
-		return null
-	return world.world.get("own", null).get("towed")
-
-
-func _on_towed_deploy() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.stream()
-	_update_status(UiText.t("st_towed_stream") + " %.0f m" % t.commanded_tow_length_m)
-
-
-func _on_towed_retract() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.retrieve()
-	_update_status(UiText.t("st_towed_retract"))
-
-
-func _on_towed_hold() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.hold()
-	_update_status(UiText.t("st_towed_hold") + " %.0f m" % t.actual_tow_length_m)
-
-
-## S1-03：缆长命令（frac ∈ 0..1 × max_tow_length_m，来自滑条/预设按钮）。
-func _on_towed_length_commanded(frac: float) -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.set_length_command(frac * t.max_tow_length_m)
-	_update_status(UiText.t("st_towed_cmd") + " %.0f m" % t.commanded_tow_length_m)
-
-
-## 刷新 TOWED 状态行 + 控件可用性（S1-03；ACT/CMD 分离显示）。
-func _refresh_towed_status() -> void:
-	if _op_panel == null:
-		return
-	var t: TowedArray = _towed_ref()
-	var on_towed: bool = op != null and op.active_array_id == "TOWED"
-	if t == null or not on_towed:
-		_op_panel.set_towed_status("Towed: n/a", false)
-		return
-	var line: String = (
-		"Towed: %s | ACT %.0fm / CMD %.0fm | arr %.0f° | usable %d%%"
-		% [
-			t.state_name(),
-			t.actual_tow_length_m,
-			t.commanded_tow_length_m,
-			t.array_heading_deg,
-			int(t.usable_fraction() * 100.0),
-		]
-	)
-	_op_panel.set_towed_status(line, true)
-	_op_panel.update_towed_controls(t)
 
 
 func _on_ping_requested() -> void:
