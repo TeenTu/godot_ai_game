@@ -113,7 +113,7 @@ BoomStats
 
 - `add_xp(amount)` 返回升级次数，支持跨级（一次精英击杀可能直接升 1 级 + 余 3 XP）。
 - 每升 1 级发一次 `leveled_up(new_level)`；`BoomGame` 转发为 `level_up` 信号 +
-  `pending_upgrades` 计数，main.gd 弹 "LEVEL UP! LV N" toast。
+  `pending_upgrades` 计数，main.gd 弹 "升级！ Lv.N" toast。
 - 波次配额（W10≈18 敌）下，纯普杀到 W6–8 约升 4–5 级、精英波跳 1 级出头——
   成长曲线与波次难度曲线（HP 档 ×1.34/波5）大致同频，不掀桌。
 
@@ -186,7 +186,7 @@ BoomStats
 - 卡片压缩让位后，选单下方为 `SKILL TREE` 配置区：按**当前选中武器**显示该树
   6 技能行（树序编号 + 名称 + 状态标签）。
 - 已解锁行：点击勾选/取消勾选（≤3 由 `equip()` 拒绝兜底）；未解锁行：显示
-  `[UNLOCK n]`，点击花跨局金币解锁（余额不足静默失败）。
+  `[解锁 n]`，点击花跨局金币解锁（余额不足当前为静默失败，待补反馈）。
 - 切武器卡即 `set_weapon_tree` 切树，列表随之切换；跨树技能不可见。
 - 进局携带的就是所配武器树已勾选技能（main `_start_match_with` →
   `skill_sys.set_weapon_tree(weapon_id)` 后再 `begin_match`）。
@@ -222,7 +222,7 @@ BoomStats
 
 ## 7. 表现层接线（main.gd，最小增量）
 
-- `sim.level_up` → toast "LEVEL UP!  LV N" + 提示音。
+- `sim.level_up` → toast "升级！ Lv.N" + 提示音。
 - `sim.player_healed(amount)` → 玩家头顶金色 "+N HP" 飘字 + 拾取音。
 - test_hook state 增补 `level / xp / pending_upgrades`（vision-e2e 可读）。
 - 选单注入 `skill_sys` 引用，技能配置区直接走逻辑层 API（解锁/装备零新管线）。
@@ -242,7 +242,7 @@ BoomStats
 | `[m7-tree]` | 全池 9 定义；双武器树 6 槽序列逐字比对；跨树过滤（bubble 树看不到 heal/whirl/titan 及其解锁价）；树内顺序价 60/120/200/300/420；新档仅 fan 解锁；解锁扣**跨局币**并写档；装备 ≤3 与换装；twin/ring 槽位施放；切树装备重置；heal 补 2/满血 0；restart 保留解锁与跨局币 |
 | `[m7-passive]` | rapid 装备/卸落 `skill_fire_cd_mult`；被动不进施放管线（无 skill_fired、无 CD）；titan 弧斩 +1 与 whirl 伤害 4；whirl 命中数与 8 敌封顶 |
 | `[m7-save]` | 新档默认结构；货币入账/消费/余额不足；roundtrip（写盘→清内存→重读一致，金币+解锁）；对局拾取金币即时入档；restart 后局内币清零、跨局币与解锁保留；精英雨 40 即时入档；结算落盘文件存在 |
-| `[m7-tree-ui]` | 选单技能区 6 行按当前武器切换；bubble 区不含 sword 专属；未解锁行显示价格；fan 行 EQUIPPED；行点击勾选/取消 |
+| `[m7-tree-ui]` | 选单技能区 6 行按当前武器切换；bubble 区不含 sword 专属；未解锁行显示价格；根节点行显示 已装备；行点击勾选/取消 |
 
 - lint：`gdlint games/boom/ shared/` 全绿；改动文件过 `gdformat`。
 - 结果：`PLAY_TEST result=PASS`（基线 228 → 250+）。
