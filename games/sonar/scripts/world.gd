@@ -4,7 +4,7 @@ extends RefCounted
 ##   按 update_interval 触发测量并收集测量流。Truth 隔离：只产出 Measurement， 绝不把 Truth 位置直接暴露给上层 UI。
 
 signal mission_ended(result: Dictionary)
-enum MissionState { RUNNING, PLAYER_DEFEATED }
+enum MissionState { RUNNING, PLAYER_DEFEATED, PLAYER_VICTORY }
 
 const ACTIVE_SENSOR_ID: String = "hull_active"
 
@@ -676,6 +676,27 @@ func is_mission_running() -> bool:
 	return mission_state == MissionState.RUNNING
 
 
+## S1-11 D-10：终局状态可读名（UI 决定显示失败/胜利；内部枚举保持英文）。
+func mission_state_name() -> String:
+	match mission_state:
+		MissionState.PLAYER_DEFEATED:
+			return "PLAYER_DEFEATED"
+		MissionState.PLAYER_VICTORY:
+			return "PLAYER_VICTORY"
+	return "RUNNING"
+
+
+## S1-11 D-10/AT-40：任务敌方目标集合（命中即胜利）。
+## 只含场景敌对 Truth 实体——诱饵虽进武器接触表但绝不在此列（默认不算胜利）。
+func is_mission_target(entity: RefCounted) -> bool:
+	if entity == null:
+		return false
+	for t in world.get("targets", []):
+		if t == entity:
+			return true
+	return false
+
+
 ## REQ-B5-05：终局后所有操作命令的统一拒绝原因。
 func command_reject_reason() -> String:
 	return "" if is_mission_running() else "MISSION_ENDED"
@@ -694,6 +715,7 @@ func end_mission(state: int, reason: String) -> bool:
 		. emit(
 			{
 				"state": state,
+				"state_name": mission_state_name(),
 				"reason": reason,
 				"time": sim_time,
 				"own_damage_state": str(world["own"].damage_state),

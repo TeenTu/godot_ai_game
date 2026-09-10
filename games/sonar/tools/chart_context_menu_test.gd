@@ -135,10 +135,18 @@ func _at32_hits_and_items(fails: Array, ui: Control, tid: String) -> void:
 	_assert(fails, "AT-32g torpedo hit", str(ctx.get("hit_kind")) == "OWN_TORPEDO", true)
 	_assert(fails, "AT-32h torpedo hit_id", str(ctx.get("hit_id")) == "PT9", true)
 	texts = menu.item_texts()
+	# S1-11 §4.3：右键己方鱼雷条目收敛为「选择/主动开关/重画剩余航线/居中/切线」，
+	# 删除「转到线导控制」旧入口（线导控制已并入地图浮动栏）。
 	_assert(
 		fails,
 		"AT-32i torpedo zh menu",
-		texts.has("选择该武器") and texts.has("转到线导控制") and texts.has("居中该武器") and texts.has("切断导线…"),
+		(
+			texts.has("选择该鱼雷")
+			and texts.has("立即开启/关闭主动声呐")
+			and texts.has("重画剩余航线")
+			and texts.has("居中")
+			and texts.has("切断导线…")
+		),
 		true
 	)
 	ctx = _right_click(ui, Vector2(-6000, -6000))
@@ -170,15 +178,19 @@ func _at32_hits_and_items(fails: Array, ui: Control, tid: String) -> void:
 	chart._gui_input(mm)
 	_assert(fails, "AT-32o drag resumes after close", absf(chart.cam_center.x - cam0.x) > 1.0, true)
 	texts = menu.item_texts()
+	# S1-11 §4.3/§9.1 + AT-24：空白地图菜单改为「绘制/清除鱼雷航线」真实入口，
+	# 删除未实现的「开始测距尺」占位（可选但无效的按钮不得保留）。
 	_assert(
 		fails,
 		"AT-32l empty zh menu",
 		(
-			texts.has("以此处为地图中心")
-			and texts.has("开始测距尺")
+			texts.has("绘制鱼雷航线")
+			and texts.has("清除鱼雷航线")
+			and texts.has("以此处为地图中心")
 			and texts.has("自动取景")
 			and texts.has("清除选择")
 			and texts.has("图层设置")
+			and not texts.has("开始测距尺")
 		),
 		true
 	)

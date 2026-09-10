@@ -219,7 +219,7 @@ func _flush_return_batch(ping_id: int) -> void:
 		if hits.size() > 1:
 			multi = "（%d 重回波）" % hits.size()
 		last_summary = (
-			"回波 方位 %.0f° 距离 %.2fkm SE%+.0fdB %s"
+			"回波 方位 %.0f° 距离 %.2f 千米 余量%+.0f dB %s"
 			% [
 				float(best["bearing_deg"]),
 				float(best["range_m"]) / 1000.0,

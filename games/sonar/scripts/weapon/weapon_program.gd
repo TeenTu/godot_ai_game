@@ -21,6 +21,8 @@ enum FireMode { SOLUTION, BEARING_ONLY, MANUAL, MAP_ROUTE }
 enum SpeedMode { QUIET, CRUISE, HIGH }
 enum SearchPattern { SNAKE, CIRCLE }
 enum GuidanceAuthority { WIRE_ONLY, ASSISTED, AUTONOMOUS }
+## S1-11 §6.4/AT-24：WAYPOINT 保留为数据模型（敌方 AI/内部构造），玩家 UI 不再
+## 暴露任何"可选但不生效"的下拉项——地图航线与开机点由地图直接表达。
 enum ActiveEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT, IMMEDIATE }
 enum AutonomyEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT }
 ## REQ-DEP-02：搜索深度预设——SURFACE=浅水攻击（配置化深度）；UPPER/LOWER=

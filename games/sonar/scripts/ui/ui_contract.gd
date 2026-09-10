@@ -21,6 +21,29 @@ const COMBAT_SCENARIO: String = "s1_combat"
 const META_SCENARIO: String = "_startup_scenario_override"
 const META_SEED: String = "_startup_seed_override"
 const META_LAST_SEED: String = "_last_combat_seed"
+const META_TOUCH: String = "_touch_hit_override"
+## AT-44：触摸模式下的最小命中半径（px）。鼠标细指针用各控件自己的小半径，
+## 触摸时统一放大到本值，保证航线点/鱼雷图标/开机标记都好按且不误触平移。
+const TOUCH_HIT_PX: float = 26.0
+
+
+## 触摸命中覆盖（测试用）：true/false 强制，null/清除恢复自动判定。
+static func set_touch_override(on: Variant) -> void:
+	var ml: Object = Engine.get_main_loop()
+	if ml == null:
+		return
+	if on == null:
+		ml.remove_meta(META_TOUCH)
+	else:
+		ml.set_meta(META_TOUCH, bool(on))
+
+
+## 当前是否触摸模式（meta 覆盖 > 设备触摸屏）。
+static func touch_mode() -> bool:
+	var ml: Object = Engine.get_main_loop()
+	if ml != null and ml.has_meta(META_TOUCH):
+		return bool(ml.get_meta(META_TOUCH))
+	return DisplayServer.is_touchscreen_available()
 
 
 ## 启动覆写（REQ-AI-01）：StartMenu 选定后调用；scenario 为空/-1 表示清除。

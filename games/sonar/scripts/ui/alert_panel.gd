@@ -74,7 +74,7 @@ func sync() -> void:
 		if group == "BDA":
 			bda_counts[tag] = int(bda_counts.get(tag, 0)) + 1
 		var line: String = (
-			"%s T+%ds %s"
+			"%s T+%d 秒 %s"
 			% [UiText.group(group), int(float(e.get("timestamp", 0.0))), UiText.event(tag)]
 		)
 		if e.has("bearing_deg"):

@@ -66,8 +66,10 @@ func _uiw_01_02_in_water_panel(fails: Array) -> void:
 	tp._enter_fallback()
 	p.sync()
 	var btns: Dictionary = p._sections[str(tp.torpedo_id)]["btns"]
+	# S1-11 §9.1/AT-25：武器页只保留「主动开关 / 切断导线」两个安全动作
+	# （授权自主/返回线导/接受航迹已删除），断线禁用断言改用 cut。
 	_assert_bool(
-		fails, "UIW-02b buttons disabled when wire cut", (btns["autonomy"] as Button).disabled, true
+		fails, "UIW-02b buttons disabled when wire cut", (btns["cut"] as Button).disabled, true
 	)
 	var before: float = tp.course_deg
 	p._cmd(tp, "course", 30.0)

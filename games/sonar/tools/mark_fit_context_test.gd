@@ -158,15 +158,9 @@ func _initialize() -> void:
 	_assert(fails, ui_src.find("MarkGroupPanel.new()") >= 0, "explicit mark group panel wired")
 	# S1-11 D-01：玩家唯一发射方式是地图航线，旧 FIRE MODE 选择器随契约作废。
 	_assert(
-		fails,
-		ui_src.find("fire_mode_changed") < 0,
-		"S1-11 D-01: legacy FIRE MODE selector removed"
+		fails, ui_src.find("fire_mode_changed") < 0, "S1-11 D-01: legacy FIRE MODE selector removed"
 	)
-	_assert(
-		fails,
-		ui_src.find("MapRouteOverlay") >= 0,
-		"S1-11 D-01: map-route drawing layer wired"
-	)
+	_assert(fails, ui_src.find("MapRouteOverlay") >= 0, "S1-11 D-01: map-route drawing layer wired")
 	_assert(fails, ui_src.find("FireExecutor.new()") >= 0, "fire executor controller wired")
 	_assert(
 		fails,

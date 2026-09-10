@@ -180,7 +180,7 @@ func _init() -> void:
 	add_child(disp_row)
 	var pal_opt := OptionButton.new()
 	for p in ["HOT", "GRAYSCALE", "BLUE", "AMBER"]:
-		pal_opt.add_item(p)
+		pal_opt.add_item(UiText.palette(p))
 	pal_opt.item_selected.connect(
 		func(i: int):
 			wf_bb.set_palette(["HOT", "GRAYSCALE", "BLUE", "AMBER"][i])
@@ -190,7 +190,7 @@ func _init() -> void:
 	disp_row.add_child(pal_opt)
 	var agc_opt := OptionButton.new()
 	for m in ["AGC SLOW", "AGC FAST", "AGC OFF"]:
-		agc_opt.add_item(m)
+		agc_opt.add_item(UiText.agc(m))
 	agc_opt.select(0)
 	agc_opt.item_selected.connect(
 		func(i: int):

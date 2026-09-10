@@ -232,7 +232,7 @@ func set_data(d: Dictionary) -> void:
 	_lbl_freq.text = "%.1f kHz" % float(params.get("freq_khz", 0.0))
 	_lbl_sl.text = "%.0f dB" % float(params.get("sl_db", 0.0))
 	_lbl_listen.text = (
-		"%.0f s / max %.1f km"
+		"%.0f 秒 / 最远 %.1f 千米"
 		% [float(params.get("listen_s", 0.0)), float(params.get("max_range_km", 0.0))]
 	)
 	_lbl_exposure.text = UiText.exposure(str(params.get("exposure", "-")))
@@ -275,9 +275,7 @@ func set_data(d: Dictionary) -> void:
 	var fi: int = FIT_MODES.find(fm)
 	_opt_fit_mode.select(fi if fi >= 0 else 1)
 	_opt_fit_mode.tooltip_text = (
-		"AUTO: refit Trial on every active range\n"
-		+ "ASSISTED: ask before applying range to Trial\n"
-		+ "MANUAL: keep evidence, Trial only changes on manual Auto Fit"
+		"自动：每次有效测距后自动重拟合试拟解\n" + "辅助：将距离应用到试拟解前先询问\n" + "手动：保留证据，仅在手动自动拟合时更新试拟解"
 	)
 	var pending: bool = bool(d.get("pending_apply", false))
 	_prompt_box.visible = pending and fm == "ASSISTED"
@@ -318,7 +316,7 @@ func _fmt_return(r: Dictionary) -> String:
 	var sig_txt: String = ""
 	var range_m: float = float(r.get("range_m", -1.0))
 	if range_m >= 0.0:
-		range_txt = "%.1fkm" % (range_m / 1000.0)
+		range_txt = "%.1f 千米" % (range_m / 1000.0)
 		sig_txt = "±%.0fm" % float(r.get("range_sigma_m", 0.0))
 	var se_txt: String = ""
 	if r.has("se_db"):

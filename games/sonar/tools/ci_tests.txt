@@ -117,3 +117,12 @@ s1_11_batch3_test
 
 #   s1_11_batch4_test       S1-11 Batch 4（数据模型）：航线模型与单一地图发射（AT-02/03/05/06/18/24/35）
 s1_11_batch4_test
+
+#   s1_11_batch5_test       S1-11 Batch 5：地图鱼雷控制浮动栏/开机点/导线门控/旧控件删除（AT-05/22/24/25/26）
+s1_11_batch5_test
+
+#   s1_11_batch6_test       S1-11 Batch 6：自动锁定/脱锁重搜/深度证据与概率带/终局胜利（AT-09/10/13/14/15/16/27..33/40）
+s1_11_batch6_test
+
+#   s1_11_batch7_test       S1-11 Batch 7：全中文收口/触摸命中/终局恰好一次/全链 E2E（AT-39..45）
+s1_11_batch7_test

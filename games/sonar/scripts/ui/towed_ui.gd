@@ -65,12 +65,12 @@ func refresh_status() -> void:
 	var t: TowedArray = towed_ref()
 	var on_towed: bool = op != null and op.active_array_id == "TOWED"
 	if t == null or not on_towed:
-		op_panel.set_towed_status("Towed: n/a", false)
+		op_panel.set_towed_status(UiText.t("towed_none"), false)
 		return
 	var line: String = (
-		"Towed: %s | ACT %.0fm / CMD %.0fm | arr %.0f° | usable %d%%"
+		UiText.t("towed_line_fmt")
 		% [
-			t.state_name(),
+			UiText.towed_state(t.state_name()),
 			t.actual_tow_length_m,
 			t.commanded_tow_length_m,
 			t.array_heading_deg,

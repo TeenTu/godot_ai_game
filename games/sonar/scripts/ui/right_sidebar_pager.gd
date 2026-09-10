@@ -1,16 +1,15 @@
 class_name RightSidebarPager
 extends VBoxContainer
-## right_sidebar_pager.gd — S109 §8 右栏：固定顶栏 + 四页容器。
+## right_sidebar_pager.gd — S109 §8 右栏：固定顶栏 + 三页容器。
 ##
 ## 固定顶栏 = 任务时间/暂停/倍速（time_row 由 main_ui 注入控件）+ 当前选中
 ## 摘要（selection_slot）+ 来袭鱼雷固定告警条（alert_slot）+ 分页按钮。
 ## 每页独立 ScrollContainer（横向禁用）；切页只切 visible：不销毁/重建业务
 ## 对象，并保留各页滚动位置（§8.4；AT-28/29/31）。实际宽度 = max(契约钳制,
 ## 页面内容固有宽)——横向禁用滚动保证永不出现水平滚动条（与旧单列侧栏一致）。
-## 文案暂英文（Batch 7 统一中文 + 字体 cmap 校验）。
+## 文案中文化见 UiText（S1-11 Batch 7 / AT-42）。
 
-const PAGE_SPECS: Array = [["sonar", "Sonar"], ["tactics", "Tactics"], ["weapons", "Weapons"]]
-const WIDE_COLS_X: float = 440.0  # 宽于此四按钮一行；窄（含 1280×720）2×2，§8.4
+const WIDE_COLS_X: float = 440.0  # 宽于此三按钮一行；窄（含 1280×720）2×2，§8.4
 
 var top_bar: VBoxContainer = null
 var time_row: HBoxContainer = null

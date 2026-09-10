@@ -8,7 +8,7 @@ extends VBoxContainer
 ##
 ## 输入只允许 ThreatTrackManager.ui_snapshots() 净化 DTO；本类零玩法写入，
 ## "View" 只居中相机到该威胁估计中心（§5.3 不得改普通选择）。
-## 文案暂英文（Batch 7 统一中文 + 字体 cmap 校验）。
+## 文案中文化见 UiText（S1-11 Batch 7 / AT-42）。
 
 const STATE_RANK := {"RANGE_AIDED": 0, "TRACKING": 1, "TENTATIVE": 2, "COASTING": 3, "LOST": 4}
 const FLASH_S: float = 6.0
@@ -133,17 +133,17 @@ func _line(s: Dictionary, sim_now: float) -> String:
 	]
 	if s.get("range_est_m") != null:
 		parts.append(
-			"距离 %.0f±%.0fm" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
+			"距离 %.0f±%.0f 米" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
 		)
 	if s.get("ellipse_a_m") != null:
 		parts.append(
-			"95%% 椭圆 %.0fx%.0fm" % [float(s["ellipse_a_m"]), float(s.get("ellipse_b_m", 0.0))]
+			"95%% 椭圆 %.0f×%.0f 米" % [float(s["ellipse_a_m"]), float(s.get("ellipse_b_m", 0.0))]
 		)
 	(
 		parts
 		. append(
 			(
-				"p=%.2f ev=%d %ds"
+				"概率 %.2f 证据 %d 距今 %d 秒"
 				% [
 					float(s["p_torpedo"]),
 					int(s["evidence_count"]),

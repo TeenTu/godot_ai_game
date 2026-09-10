@@ -238,7 +238,7 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 		lines
 		. append(
 			(
-				"基准 t=%.0fs 过期=%.0fs 段=%d"
+				"基准 时刻=%.0f 秒 过期=%.0f 秒 段=%d"
 				% [
 					float(r.get("reference_time", 0.0)),
 					float(r.get("stale_seconds", 0.0)),
@@ -255,12 +255,12 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 	else:
 		lines.append("行：方位 用%d 弃%d%s" % [b_used, b_rej, ev_txt])
 	var cond: float = float(r.get("condition_number", 0.0))
-	var cond_txt: String = "inf" if is_inf(cond) else "%.0f" % cond
+	var cond_txt: String = "无穷大" if is_inf(cond) else "%.0f" % cond
 	(
 		lines
 		. append(
 			(
-				"RMSE %.2f° 秩=%d 条件数=%s"
+				"均方根误差 %.2f° 秩=%d 条件数=%s"
 				% [
 					float(r.get("angular_rmse", 0.0)),
 					int(r.get("jacobian_rank", 0)),
@@ -272,9 +272,9 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 	# S1-04B-REQ-15：主动测距进入拟合时明确标注 RANGE AIDED 与采用的测距数。
 	if bool(r.get("has_range_measurements", false)):
 		var rng_rmse: String = (
-			"%.0fm" % float(r.get("range_rmse_m", 0.0))
+			"%.0f 米" % float(r.get("range_rmse_m", 0.0))
 			if float(r.get("range_rmse_m", -1.0)) >= 0.0
-			else "n/a"
+			else "不可用"
 		)
 		(
 			lines
@@ -295,7 +295,7 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 			lines
 			. append(
 				(
-					"Pos 95%% ±%.0fm  Spd ±%.1fkn"
+					"位置 95%% ±%.0f 米 速度 ±%.1f 节"
 					% [
 						unc,
 						NavUtils.ms_to_kn(float(r.get("velocity_uncertainty_ms", 0.0))),
@@ -304,9 +304,9 @@ static func summary(r: Dictionary, sel: Track = null) -> String:
 			)
 		)
 	else:
-		lines.append("Uncertainty: N/A (insufficient geometry / multi-modal)")
+		lines.append("不确定度：不可用（几何不足 / 多峰）")
 	if bool(r.get("boundary_hit", false)):
-		lines.append("!! BOUNDARY_HIT: solution at parameter limit")
+		lines.append("!! 触及参数边界：解落在参数边界")
 	var text: String = ""
 	for ln in lines:
 		text += ln + "\n"

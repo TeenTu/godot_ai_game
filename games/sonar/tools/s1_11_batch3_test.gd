@@ -23,7 +23,9 @@ func _run() -> void:
 	root.add_child(ui)
 	await process_frame
 	await process_frame
-	_at62_three_pages(fails, ui)
+	# AT-62 内含 await（切页后需等帧）：必须 await，否则协程会在 ui.queue_free()
+	# 之后才恢复，断言全部丢失（曾出现 "previously freed" 且静默跳过）。
+	await _at62_three_pages(fails, ui)
 	_at63_contact_card(fails, ui)
 	_at64_details(fails, ui)
 	_at61_lob_load(fails, ui)

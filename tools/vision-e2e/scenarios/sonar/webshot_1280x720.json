@@ -1,0 +1,14 @@
+{
+	"name": "sonar-webshot-1280x720",
+	"desc": "S1-11 AT-45：1280×720（契约最小分辨率）——开始菜单全中文 + 进局三页布局/无横向滚动。",
+	"url": "http://127.0.0.1:8330/index.html",
+	"out_dir": "evidence/sonar/1280x720",
+	"viewport": [1280, 720],
+	"steps": [
+		{ "kind": "wait", "ms": 14000 },
+		{ "kind": "shot", "name": "menu" },
+		{ "kind": "click", "x": 0.2, "y": 0.428 },
+		{ "kind": "wait", "ms": 7000 },
+		{ "kind": "shot", "name": "game" }
+	]
+}

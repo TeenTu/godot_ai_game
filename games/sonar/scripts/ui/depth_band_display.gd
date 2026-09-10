@@ -10,6 +10,7 @@ extends Control
 const WIDTH_PX: float = 96.0
 
 var _world: World = null
+var _tracker: Tracker = null
 
 
 func _init() -> void:
@@ -17,8 +18,10 @@ func _init() -> void:
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 
 
-func bind(w: World) -> void:
+func bind(w: World, tr: Tracker = null) -> void:
 	_world = w
+	if tr != null:
+		_tracker = tr
 
 
 func sync() -> void:
@@ -105,6 +108,62 @@ func _draw() -> void:
 				Color(0.9, 0.9, 0.3),
 				Rect2(0, 0, 0, 0)
 			)
+	_draw_enemy_depth_bands(x0, bar_w, y_of, upper_hold, lower_hold)
+
+
+## S1-11 §7.4/AT-27..33：敌方深度只画**半透明概率带**——绝不画伪精确深度点。
+## 无合法证据（置信度 < 0.55）一律不画（显式"深度未知"，不默认上层、不用 0m）。
+func _draw_enemy_depth_bands(
+	x0: float, bar_w: float, y_of: Callable, upper_hold: float, lower_hold: float
+) -> void:
+	if _tracker == null:
+		return
+	var f := get_theme_default_font()
+	var rows: int = 0
+	for t in _tracker.all_tracks():
+		if t == null or t.depth_estimator == null:
+			continue
+		var s: Dictionary = t.depth_estimate_summary()
+		var conf: float = float(s.get("confidence", 0.0))
+		if conf < 0.55:
+			continue  # AT-27：无证据/低置信 → 深度未知（不画）
+		var dom: String = str(s.get("dominant", "UNKNOWN"))
+		var z: float = _band_depth(dom, upper_hold, lower_hold)
+		if z < 0.0:
+			continue
+		var p: float = clampf(float(s.get("probability", 0.0)), 0.0, 1.0)
+		var y: float = y_of.call(z)
+		# 半透明概率带（透明度 ∝ 概率；宽度覆盖整条深度刻度）。
+		draw_rect(
+			Rect2(x0 - 22.0, y - 7.0, bar_w + 30.0, 14.0), Color(0.95, 0.8, 0.25, 0.10 + 0.28 * p)
+		)
+		draw_line(
+			Vector2(x0 - 22.0, y), Vector2(x0 + bar_w + 8.0, y), Color(0.95, 0.85, 0.4, 0.55), 1.0
+		)
+		draw_string(
+			f,
+			Vector2(x0 - 22.0, y - 10.0),
+			UiText.depth_band_summary(s),
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			10,
+			Color(0.98, 0.9, 0.6)
+		)
+		rows += 1
+		if rows >= 3:
+			break  # 减载：深度条最多展开 3 条敌方深度带
+
+
+## 主导层 → 该层代表深度（SURFACE=-1 表示"近水面"画在 0m 处）。
+func _band_depth(dom: String, upper_hold: float, lower_hold: float) -> float:
+	match dom:
+		"SURFACE_LIKELY":
+			return 0.0
+		"UPPER_LIKELY":
+			return upper_hold
+		"LOWER_LIKELY":
+			return lower_hold
+	return -1.0
 
 
 func _commanded(e: RefCounted) -> float:

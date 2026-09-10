@@ -53,9 +53,9 @@ static func draw(chart: ChartView, snaps: Array, sim_now: float) -> void:
 			_cross(chart, center, alpha)
 		var lab: String = "%s %s" % [str(s.get("track_id", "?")), st]
 		if s.get("range_est_m") != null:
-			lab += " R%.0f+-%.0fm" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
+			lab += " 距%.0f±%.0f 米" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
 		if st == "COASTING":
-			lab += " extrapolated"
+			lab += " 外推"
 		chart._draw_label(
 			chart.world_to_screen(center) + Vector2(11, 14),
 			lab,

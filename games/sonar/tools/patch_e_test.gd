@@ -108,10 +108,20 @@ func _pe_02_panel_lifecycle(fails: Array) -> void:
 	_assert_bool(
 		fails, "PE-02a header kept after rebuild", titles_before == 1 and titles_after == 1, true
 	)
-	# b) 无候选时 Accept 按钮 disabled（候选出现后 enable 在 _refresh_section）。
+	# b) S1-11 §9.1/AT-25：武器页只保留「主动开关 / 切断导线」两个安全动作，
+	# 授权自主/返回线导/接受航迹等旧按钮必须已删除（不再存在 disabled 控件）。
 	var btns: Dictionary = p._sections[str(tp.torpedo_id)]["btns"]
 	_assert_bool(
-		fails, "PE-02b accept disabled no candidate", (btns["accept"] as Button).disabled, true
+		fails,
+		"PE-02b only safety actions kept",
+		(
+			btns.has("active")
+			and btns.has("cut")
+			and not btns.has("accept")
+			and not btns.has("autonomy")
+			and not btns.has("return_wire")
+		),
+		true
 	)
 	# c) WeaponPanel 事件日志：一行一事件（无 " | " 拼接），真实事件名可读。
 	var wp := WeaponPanelUI.new()

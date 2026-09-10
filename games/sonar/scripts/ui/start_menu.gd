@@ -39,14 +39,14 @@ func _ready() -> void:
 	brief.custom_minimum_size = Vector2(620, 0)
 	brief.text = (
 		"简报：教学局为被动探测流程（无敌方接触）；战斗局由声呐定位随机出生"
-		+ "的敌方潜艇并防其反击。seed 决定敌方出生位置与声学随机流："
-		+ "「新一局」抽随机 seed，「重玩同 seed」复现上一局完全相同的局面。"
+		+ "的敌方潜艇并防其反击。随机种子决定敌方出生位置与声学随机流："
+		+ "「新一局」抽随机种子，「重玩同种子」复现上一局完全相同的局面。"
 		+ "游戏内按 M 返回本菜单。\n\n"
 		+ "教程（S1-08）：① 声呐面板监听宽带，瀑布游标 Mark 建立接触；"
-		+ "② 接触累计 ≥4 条证据后在「拟合详情」做 TMA 拟合并提交系统 Solution"
+		+ "② 接触累计 ≥4 条证据后在「拟合详情」做 TMA 拟合并提交系统解"
 		+ "；③ 武器面板发射并线控，深度用层带预设；"
-		+ "④ 遇袭时在「反制措施」放诱饵规避（JAMMER 覆盖 800–1200 Hz）。"
-		+ "⑤ 「自动化」面板可切 辅助/全自动 让系统自动重拟合（ROE 可调）。"
+		+ "④ 遇袭时在「反制措施」放诱饵规避（干扰器覆盖 800–1200 Hz）。"
+		+ "⑤ 「自动化」面板可切 辅助/全自动 让系统自动重拟合（交战规则可调）。"
 	)
 	box.add_child(brief)
 	box.add_child(
@@ -54,11 +54,11 @@ func _ready() -> void:
 	)
 	box.add_child(
 		_mk_btn(
-			"战斗 · 新一局（随机 seed）", func() -> void: _start(UiContract.COMBAT_SCENARIO, _random_seed())
+			"战斗 · 新一局（随机种子）", func() -> void: _start(UiContract.COMBAT_SCENARIO, _random_seed())
 		)
 	)
 	_btn_replay = _mk_btn(
-		"战斗 · 重玩同 seed", func() -> void: _start(UiContract.COMBAT_SCENARIO, UiContract.last_seed())
+		"战斗 · 重玩同种子", func() -> void: _start(UiContract.COMBAT_SCENARIO, UiContract.last_seed())
 	)
 	box.add_child(_btn_replay)
 	_lbl_seed = Label.new()
@@ -75,7 +75,7 @@ func refresh_state() -> void:
 func _refresh_replay() -> void:
 	var last: int = UiContract.last_seed()
 	_btn_replay.disabled = last < 0
-	_lbl_seed.text = "上一局战斗 seed：%s" % (str(last) if last >= 0 else "—（先开一局战斗）")
+	_lbl_seed.text = "上一局战斗种子：%s" % (str(last) if last >= 0 else "—（先开一局战斗）")
 
 
 func _mk_btn(text: String, on_pressed: Callable) -> Button:

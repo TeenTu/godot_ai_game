@@ -122,5 +122,28 @@ func steer(
 	}
 
 
+## S1-11 §6.3：把世界点投影到折线上，返回沿折线的累计距离（m，钳制到 [0,总长]）。
+static func project_along(points: Array, p: Vector2) -> float:
+	if points.size() < 2:
+		return 0.0
+	var best: float = 0.0
+	var best_d: float = INF
+	var acc: float = 0.0
+	for i in range(1, points.size()):
+		var a: Vector2 = points[i - 1]
+		var b: Vector2 = points[i]
+		var seg: Vector2 = b - a
+		var seg_len: float = seg.length()
+		if seg_len < 0.001:
+			continue
+		var t: float = clampf((p - a).dot(seg) / (seg_len * seg_len), 0.0, 1.0)
+		var d: float = a.lerp(b, t).distance_to(p)
+		if d < best_d:
+			best_d = d
+			best = acc + seg_len * t
+		acc += seg_len
+	return best
+
+
 func _course_between(a: Vector2, b: Vector2) -> float:
 	return NavUtils.wrap360(rad_to_deg(atan2(b.x - a.x, b.y - a.y)))
