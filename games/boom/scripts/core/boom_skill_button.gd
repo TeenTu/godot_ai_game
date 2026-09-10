@@ -2,9 +2,9 @@ class_name BoomSkillButton
 extends Control
 ## 战斗 HUD 的技能槽位按钮：位图图标（缺失时用缩写大字）+ 程序化 CD 圆环 + 手势标签。
 ## 纯展示、不抢手势输入（点按由 main.gd 全局触摸按槽位分发）。
-## D6(design_m7_progression §228)：HUD 圆钮展示当前 equipped 槽位技能；空槽灰显占位。
+## HUD 圆钮只展示 active_equipped() 触发槽；空槽灰显占位。
 
-var slot: int = -1  # 手势槽：0=tap / 1=←swipe / 2=→swipe（与 equipped 索引对齐）
+var slot: int = -1  # 主动触发槽：0=tap / 1=←swipe / 2=→swipe
 var skill_id: String = ""
 var total_cooldown: float = 1.0
 var cooldown_left: float = 0.0
@@ -124,7 +124,11 @@ func configure_empty(gesture: String) -> void:
 
 
 func set_cooldown(left: float) -> void:
-	cooldown_left = maxf(0.0, left)
+	var next_left := maxf(0.0, left)
+	# 实际 CD 会被武器被动和人物急速缩短；新一轮 CD 起跳时同步环形分母。
+	if next_left > cooldown_left + 0.05:
+		total_cooldown = maxf(0.01, next_left)
+	cooldown_left = next_left
 	if is_empty_slot:
 		return
 	if _cd_label != null:

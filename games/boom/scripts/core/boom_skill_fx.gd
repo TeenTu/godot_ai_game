@@ -19,6 +19,10 @@ const SHOCK_LIFE: float = 0.6
 const RING_SEGMENTS: int = 44
 const RING_START: float = 0.7  # 圆环起始半径（几何半径，节点不做缩放）
 const RING_WIDTH: float = 0.6  # 圆环带宽，扩散过程中保持恒定
+const SECTOR_COUNT: int = 4  # 流萤扇与泼墨锋共用的扇面对象池
+const SECTOR_LIFE: float = 0.34
+const SECTOR_SEGMENTS: int = 32
+const SECTOR_WIDTH: float = 0.85
 
 var _muzzles: Array = []  # 枪口闪光（锥形短促小粒子）
 var _bursts: Array = []  # 通用粒子爆（核爆中心金色大爆）
@@ -41,6 +45,19 @@ var _ring_mats: Array = []
 var _ring_tweens: Array = []
 var _ring_idx: int = 0
 
+# 方向扇面：保持真实技能扇角与半径，避免“判定是扇形、画面却是电弧”。
+var _sector_nodes: Array = []
+var _sector_meshes: Array = []
+var _sector_mats: Array = []
+var _sector_tweens: Array = []
+var _sector_idx: int = 0
+
+# 无头测试/视觉回归读取的最近一次表现参数。
+var _last_shape: String = ""
+var _last_radius: float = 0.0
+var _last_arc_deg: float = 0.0
+var _last_burst_count: int = 0
+
 var _shared_sphere: SphereMesh = null
 
 
@@ -53,6 +70,8 @@ func _ready() -> void:
 		_build_bolt()
 	for i in SHOCK_COUNT:
 		_build_ring()
+	for i in SECTOR_COUNT:
+		_build_sector()
 
 
 ## 粒子发射器：方向发射时按调用方覆盖，这里只管尺寸/速度/寿命等通用参数。
@@ -139,6 +158,25 @@ func _build_ring() -> void:
 	_ring_tweens.append(null)
 
 
+## 预建一片 XZ 平面扇形墨迹/灯火轨迹。
+func _build_sector() -> void:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.albedo_color = Color(0.35, 0.78, 0.68, 0.0)
+	var node := MeshInstance3D.new()
+	node.mesh = ImmediateMesh.new()
+	node.material_override = mat
+	node.visible = false
+	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(node)
+	_sector_nodes.append(node)
+	_sector_meshes.append(node.mesh)
+	_sector_mats.append(mat)
+	_sector_tweens.append(null)
+
+
 func _sphere_mesh() -> SphereMesh:
 	if _shared_sphere == null:
 		_shared_sphere = SphereMesh.new()
@@ -163,6 +201,7 @@ func muzzle_flash(pos: Vector3, dir: Vector3, color: Color) -> void:
 	p.global_rotation = Vector3.ZERO
 	p.visible = true
 	p.emitting = true
+	_last_shape = "muzzle"
 
 
 ## 闪电链单段：a→b 一条黄色抖动电弧。闪烁用 alpha 高配比重复抖动后淡出，
@@ -224,6 +263,43 @@ func shockwave(center: Vector3, radius: float, color: Color) -> void:
 	tw.tween_method(func(p: float) -> void: _grow_ring(im, mat, p, target), 0.0, 1.0, SHOCK_LIFE)
 	tw.tween_callback(func() -> void: n.visible = false)
 	_ring_tweens[idx] = tw
+	_last_shape = "ring"
+	_last_radius = radius
+	_last_arc_deg = 360.0
+
+
+## 方向扇面：从角色处沿 dir 推进，扇角/终点半径与真实技能判定共用参数。
+func sector_wave(
+	center: Vector3, dir: Vector3, radius: float, arc_deg: float, color: Color
+) -> void:
+	if dir.length_squared() < 0.0001 or radius <= 0.0 or arc_deg <= 0.0:
+		return
+	var idx := _sector_idx
+	_sector_idx = (_sector_idx + 1) % _sector_nodes.size()
+	var node := _sector_nodes[idx] as MeshInstance3D
+	var mesh := _sector_meshes[idx] as ImmediateMesh
+	var mat := _sector_mats[idx] as StandardMaterial3D
+	var old := _sector_tweens[idx] as Tween
+	if old != null and old.is_valid():
+		old.kill()
+	var flat_dir := Vector3(dir.x, 0.0, dir.z).normalized()
+	var yaw := atan2(flat_dir.z, flat_dir.x)
+	node.global_position = center + Vector3(0.0, 0.10, 0.0)
+	node.global_rotation = Vector3.ZERO
+	mat.albedo_color = color
+	node.visible = true
+	var tween := create_tween()
+	tween.tween_method(
+		func(p: float) -> void: _grow_sector(mesh, mat, p, radius, arc_deg, yaw),
+		0.0,
+		1.0,
+		SECTOR_LIFE
+	)
+	tween.tween_callback(func() -> void: node.visible = false)
+	_sector_tweens[idx] = tween
+	_last_shape = "sector"
+	_last_radius = radius
+	_last_arc_deg = arc_deg
 
 
 ## 通用粒子爆（核爆中心金色大爆用），count≈40。
@@ -239,6 +315,7 @@ func burst(pos: Vector3, color: Color, count: int) -> void:
 	p.global_rotation = Vector3.ZERO
 	p.visible = true
 	p.emitting = true
+	_last_burst_count = p.amount
 
 
 ## 电弧折带路径：两端固定 + 横向抖动 + 轻微上抛，让短弧有"跳跃"感。
@@ -262,9 +339,9 @@ func _bolt_draw(im: ImmediateMesh, pts: Array[Vector3], width: float) -> void:
 	for j in pts.size():
 		var off := _side_of(_tangent_at(pts, j))
 		var c: Vector3 = pts[j]
-		im.surface_add_normal(off)
+		im.surface_set_normal(off)
 		im.surface_add_vertex(c + off * half_w)
-		im.surface_add_normal(-off)
+		im.surface_set_normal(-off)
 		im.surface_add_vertex(c - off * half_w)
 	im.surface_end()
 
@@ -304,6 +381,16 @@ func _grow_ring(im: ImmediateMesh, mat: StandardMaterial3D, p: float, target: fl
 	mat.albedo_color = c
 
 
+func _grow_sector(
+	im: ImmediateMesh, mat: StandardMaterial3D, p: float, target: float, arc_deg: float, yaw: float
+) -> void:
+	var front := lerpf(0.7, target, pow(p, 0.72))
+	_sector_draw(im, front, arc_deg, yaw)
+	var color := mat.albedo_color
+	color.a = 0.82 * pow(1.0 - p, 0.75)
+	mat.albedo_color = color
+
+
 ## 重建一条 XZ 平面的环带：外圈 front、内圈 front-RING_WIDTH（下限夹住避免负半径）。
 func _ring_draw(im: ImmediateMesh, front: float) -> void:
 	im.clear_surfaces()
@@ -313,8 +400,33 @@ func _ring_draw(im: ImmediateMesh, front: float) -> void:
 		var a := TAU * float(i) / float(RING_SEGMENTS)
 		var c := cos(a)
 		var s := sin(a)
-		im.surface_add_normal(Vector3.UP)
+		im.surface_set_normal(Vector3.UP)
 		im.surface_add_vertex(Vector3(front * c, 0.0, front * s))
-		im.surface_add_normal(Vector3.UP)
+		im.surface_set_normal(Vector3.UP)
 		im.surface_add_vertex(Vector3(inner * c, 0.0, inner * s))
 	im.surface_end()
+
+
+func _sector_draw(im: ImmediateMesh, front: float, arc_deg: float, yaw: float) -> void:
+	im.clear_surfaces()
+	var inner := maxf(front - SECTOR_WIDTH, 0.04)
+	var half_arc := deg_to_rad(arc_deg) * 0.5
+	im.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP)
+	for i in SECTOR_SEGMENTS + 1:
+		var ratio := float(i) / float(SECTOR_SEGMENTS)
+		var angle := yaw - half_arc + ratio * half_arc * 2.0
+		var direction := Vector3(cos(angle), 0.0, sin(angle))
+		im.surface_set_normal(Vector3.UP)
+		im.surface_add_vertex(direction * front)
+		im.surface_set_normal(Vector3.UP)
+		im.surface_add_vertex(direction * inner)
+	im.surface_end()
+
+
+func debug_state() -> Dictionary:
+	return {
+		"shape": _last_shape,
+		"radius": _last_radius,
+		"arc_deg": _last_arc_deg,
+		"burst_count": _last_burst_count,
+	}

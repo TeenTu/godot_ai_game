@@ -12,6 +12,7 @@ func _review() -> void:
 	var capture_horde := false
 	var capture_ui := false
 	var capture_boss := false
+	var capture_skills := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--capture-dir="):
 			capture_dir = arg.trim_prefix("--capture-dir=")
@@ -21,6 +22,8 @@ func _review() -> void:
 			capture_ui = true
 		elif arg == "--boss":
 			capture_boss = true
+		elif arg == "--skills":
+			capture_skills = true
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	var player: BoomPlayer = scene.sim.player
@@ -45,6 +48,9 @@ func _review() -> void:
 	scene.set_physics_process(false)
 	if capture_boss and not capture_dir.is_empty():
 		await _capture_m11_boss(scene, capture_dir)
+		return
+	if capture_skills and not capture_dir.is_empty():
+		await _capture_m12_skills(scene, capture_dir)
 		return
 	if capture_ui and not capture_dir.is_empty():
 		assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
@@ -165,3 +171,47 @@ func _capture_m11_boss(scene: Node, capture_dir: String) -> void:
 	scene.queue_free()
 	await process_frame
 	quit()
+
+
+func _capture_m12_skills(scene: Node, capture_dir: String) -> void:
+	assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
+	DirAccess.make_dir_recursive_absolute(capture_dir)
+	scene._select.hide()
+	scene.sim.set_weapon("bubble")
+	scene.skill_sys.set_weapon_tree("bubble")
+	scene._rebuild_skill_hud()
+	scene._skill_presenter.present(BoomSkillEffects.LAMP_FIREFLY_VOLLEY, 5)
+	await _save_after_effect(capture_dir.path_join("m12_firefly_volley.png"))
+	scene._skill_presenter.present(BoomSkillEffects.LAMP_SOUL_BEACON, 12)
+	await _save_after_effect(capture_dir.path_join("m12_soul_beacon.png"))
+	scene.sim.set_weapon("greatsword")
+	scene.skill_sys.set_weapon_tree("greatsword")
+	scene._rebuild_skill_hud()
+	_spawn_review_targets(scene)
+	scene._skill_presenter.present(BoomSkillEffects.BRUSH_INK_WAVE, [])
+	await _save_after_effect(capture_dir.path_join("m12_ink_wave.png"))
+	scene._skill_presenter.present(BoomSkillEffects.BRUSH_SEAL_DOMAIN, [])
+	await _save_after_effect(capture_dir.path_join("m12_seal_domain.png"))
+	scene.queue_free()
+	await process_frame
+	quit()
+
+
+func _save_after_effect(path: String) -> void:
+	await create_timer(0.09).timeout
+	await RenderingServer.frame_post_draw
+	assert(root.get_texture().get_image().save_png(path) == OK)
+	print("VISUAL_CAPTURE " + path)
+	await create_timer(0.75).timeout
+
+
+func _spawn_review_targets(scene: Node) -> void:
+	for index in 10:
+		var angle := TAU * float(index) / 10.0
+		var enemy: BoomJelly = scene.sim.spawn_enemy_at(
+			Vector3(cos(angle) * 3.8, 0.0, sin(angle) * 3.8)
+		)
+		enemy._spawn_ttl = 0.0
+		enemy.scale = Vector3.ONE * enemy.base_scale
+		if enemy._art != null:
+			enemy._art.modulate.a = 1.0

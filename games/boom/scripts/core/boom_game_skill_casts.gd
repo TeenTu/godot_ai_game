@@ -86,9 +86,10 @@ static func ink_wave(g: BoomGame, evolved: bool = false) -> Array:
 	var hits: Array = []
 	var targets: Array[BoomJelly] = []
 	var facing: Vector3 = g.player.facing.normalized()
-	var half_arc: float = deg_to_rad(65.0 if evolved else 50.0)
-	var max_targets := 12 if evolved else 8
-	var max_range := 6.0 if evolved else 5.0
+	var effect := BoomSkillEffects.get_effect(BoomSkillEffects.BRUSH_INK_WAVE, evolved)
+	var half_arc: float = deg_to_rad(float(effect["arc_deg"]) * 0.5)
+	var max_targets: int = int(effect["max_targets"])
+	var max_range: float = float(effect["range"])
 	for entry in g.enemies:
 		if targets.size() >= max_targets:
 			break
@@ -103,7 +104,7 @@ static func ink_wave(g: BoomGame, evolved: bool = false) -> Array:
 		if acos(clampf(facing.dot(offset / distance), -1.0, 1.0)) <= half_arc:
 			targets.append(jelly)
 	for jelly in targets:
-		var multiplier := 2.4 if evolved else 1.8
+		var multiplier: float = float(effect["damage_mult"])
 		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * multiplier)), hits)
 	return hits
 
@@ -112,8 +113,9 @@ static func ink_wave(g: BoomGame, evolved: bool = false) -> Array:
 static func seal_domain(g: BoomGame, evolved: bool = false) -> Array:
 	var hits: Array = []
 	var targets: Array[BoomJelly] = []
-	var max_targets := 24 if evolved else 16
-	var radius := 5.5 if evolved else 4.5
+	var effect := BoomSkillEffects.get_effect(BoomSkillEffects.BRUSH_SEAL_DOMAIN, evolved)
+	var max_targets: int = int(effect["max_targets"])
+	var radius: float = float(effect["range"])
 	for entry in g.enemies:
 		if targets.size() >= max_targets:
 			break
@@ -123,7 +125,7 @@ static func seal_domain(g: BoomGame, evolved: bool = false) -> Array:
 		if g.player.position.distance_to(jelly.position) <= radius:
 			targets.append(jelly)
 	for jelly in targets:
-		var multiplier := 3.2 if evolved else 2.5
+		var multiplier: float = float(effect["damage_mult"])
 		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * multiplier)), hits)
 	if not hits.is_empty():
 		g.trigger_freeze(0.10)

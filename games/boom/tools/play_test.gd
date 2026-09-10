@@ -63,13 +63,18 @@ var _m7_tests: RefCounted
 var _m8_tests: RefCounted
 ## M11 首领战与奖励测试分册。
 var _m11_tests: RefCounted
+## M12 技能完成度与触发链测试分册。
+var _m12_tests: RefCounted
 
 
 func _initialize() -> void:
 	seed(20260902)
+	# 主场景构建前先清测试档，避免本机试玩解锁状态污染默认主动槽断言。
+	BoomSave.test_reset()
 	_m7_tests = preload("res://tools/play_test_m7.gd").new(self)
 	_m8_tests = preload("res://tools/play_test_m8.gd").new(self)
 	_m11_tests = preload("res://tools/play_test_m11.gd").new(self)
+	_m12_tests = preload("res://tools/play_test_m12.gd").new(self)
 	var ps := load("res://scenes/main.tscn") as PackedScene
 	if ps == null:
 		_check(false, "加载 scenes/main.tscn")
@@ -102,6 +107,7 @@ func _process(_delta: float) -> bool:
 		_m7_tests.run_all()
 		_m8_tests.run_all()
 		_m11_tests.run_all()
+		_m12_tests.run_all()
 		_finish()
 	return false
 
@@ -146,9 +152,10 @@ func _test_smoke() -> void:
 	_check(_main.get("hitnum") != null, "hitnum 飘字模块已注入")
 	_check(_main.get("skill_sys") != null, "skill_sys 技能系统已注入")
 	_check(_main.get("skill_fx") != null, "skill_fx 技能特效已注入")
+	_check(_main.get("_skill_presenter") != null, "四主动技能表现协调器已注入")
 	var btns: Dictionary = _main.get("skill_btns")
 	_check(btns.size() == 3, "技能 HUD 3 个圆形按钮已构建 (n=%d)" % btns.size())
-	# 双分支新档默认装备两根节点：槽0 被动、槽1 主动、槽2 空置。
+	# 双分支新档仍装备两根节点；HUD 只投影主动技能，防止被动吞掉手势。
 	_check(btns.has("0") and btns.has("1") and btns.has("2"), "HUD 按钮按槽位 key 0/1/2")
 	var skill_sys_hud: BoomSkillSystem = _main.get("skill_sys")
 	if (
@@ -156,11 +163,11 @@ func _test_smoke() -> void:
 		and skill_sys_hud.equipped == ["lamp_quick_wick", "lamp_firefly_volley"]
 	):
 		var slot2: Control = btns["2"]
-		_check(slot2 != null and slot2.get("is_empty_slot") == true, "默认档第三槽为空槽灰显")
+		_check(slot2 != null and slot2.get("is_empty_slot") == true, "默认档第三主动槽为空槽灰显")
 	var slot0: Control = btns["0"]
 	var slot1: Control = btns["1"]
-	_check(slot0 != null and slot0.get("skill_id") == "lamp_quick_wick", "默认档槽0 展示镇夜灯普攻根节点")
-	_check(slot1 != null and slot1.get("skill_id") == "lamp_firefly_volley", "默认档槽1 展示镇夜灯技能根节点")
+	_check(slot0 != null and slot0.get("skill_id") == "lamp_firefly_volley", "默认 tap 槽展示流萤散射")
+	_check(slot1 != null and slot1.get("is_empty_slot") == true, "默认左滑主动槽为空")
 	_check(_main.get("waypoints") != null, "waypoint 边缘标记层已构建")
 	_check(_main.get("_combo_label") != null, "击杀播报大字 Label 已构建")
 	if not has_sim:
@@ -169,7 +176,7 @@ func _test_smoke() -> void:
 	_check(sim.player != null, "sim.player 存在")
 	# M5：玩家动画管线 2D 化（design §6/§7）——默认泡泡形态 + AnimatedSprite3D 激活。
 	_check(sim.player.anim_form == "bubble", "默认武器形态 = 泡泡")
-	_check(sim.player.hp == sim.player.max_hp, "开局满血 hp=5")
+	_check(sim.player.hp == sim.player.max_hp, "开局为当前武器满血")
 	_check(sim.player.is_2d_form(), "玩家 2D 动画管线已激活（AnimatedSprite3D）")
 	_check(sim.wave == 1, "初始波次 1")
 	_check(
@@ -485,25 +492,25 @@ func _test_skill_system_cd() -> void:
 			ids_box.append(id)
 	)
 	_check(sys.equipped == ["lamp_quick_wick", "lamp_firefly_volley"], "新档默认装备镇夜灯两条分支根节点")
-	# 槽0 是被动，tap 静默；槽1 主动由左滑施放。
+	_check(sys.active_equipped() == ["lamp_firefly_volley"], "主动触发槽过滤被动根节点")
+	_check(sys.passive_equipped() == ["lamp_quick_wick"], "被动根节点保留在构筑并持续生效")
+	# tap 始终触发第一个主动技能。
 	sys.handle_tap()
-	_check(fired_box[0] == 0, "被动根节点不进入施放管线")
-	sys.handle_swipe_left()
-	_check(fired_box[0] == 1, "左滑触发槽1 流萤散射")
-	_check(ids_box[-1] == "lamp_firefly_volley", "左滑路由到镇夜灯主动技能")
+	_check(fired_box[0] == 1, "tap 触发第一个主动技能")
+	_check(ids_box[-1] == "lamp_firefly_volley", "tap 路由到流萤散射")
 	var st: Dictionary = sys.get_state()
 	_check(st["lamp_firefly_volley"] > 0.0, "流萤散射施放后进入 CD (%.2f)" % st["lamp_firefly_volley"])
-	sys.handle_swipe_left()
+	sys.handle_tap()
 	_check(fired_box[0] == 1, "冷却中不可重复施放")
 	sys.tick(BoomSkillSystem.LAMP_VOLLEY_COOLDOWN + 0.1)
 	var st2: Dictionary = sys.get_state()
 	_check(st2["lamp_firefly_volley"] <= 0.0, "tick 越过 CD 后冷却归零")
-	# 解锁技能终阶并装入第三槽，验证右滑映射与环形形态。
+	# 解锁技能终阶并装入构筑第三槽；第二个主动技能映射为左滑。
 	sys.debug_grant("lamp_soul_beacon")
 	_check(sys.equip("lamp_soul_beacon"), "魂灯结界装备到第三槽")
 	var before: int = _active_bullets(g)
-	sys.handle_swipe_right()
-	_check(ids_box[-1] == "lamp_soul_beacon", "右滑路由到魂灯结界")
+	sys.handle_swipe_left()
+	_check(ids_box[-1] == "lamp_soul_beacon", "左滑路由到第二主动技能魂灯结界")
 	_check(_active_bullets(g) == before + BoomGame.RING_COUNT, "魂灯结界生成 12 枚环形灵印")
 	g.remove_child(sys)
 	sys.free()

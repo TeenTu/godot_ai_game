@@ -6,18 +6,18 @@ extends RefCounted
 static func tick(game: BoomGame, delta: float) -> void:
 	match game._swing_state:
 		game.SwingState.WINDUP:
-			var windup: float = float(game._swing_step["windup"])
+			var windup := _phase_duration(game, "windup")
 			game._swing_t -= delta
 			game.player.sync_melee_phase(
 				String(game._swing_step["action"]),
 				0,
 				int(game._swing_step["windup_frames"]),
-				1.0 - game._swing_t / (windup / game._basic_attack_speed_mult())
+				1.0 - game._swing_t / windup
 			)
 			game.player.face_toward(game._swing_facing)
 			if game._swing_t <= 0.0:
 				game._swing_state = game.SwingState.ACTIVE
-				game._swing_t = float(game._swing_step["active"])
+				game._swing_t = _phase_duration(game, "active")
 				game.player.sync_melee_phase(
 					String(game._swing_step["action"]),
 					int(game._swing_step["windup_frames"]),
@@ -26,7 +26,7 @@ static func tick(game: BoomGame, delta: float) -> void:
 				)
 				execute(game)
 		game.SwingState.ACTIVE:
-			var active: float = float(game._swing_step["active"])
+			var active := _phase_duration(game, "active")
 			game._swing_t -= delta
 			game.player.sync_melee_phase(
 				String(game._swing_step["action"]),
@@ -37,7 +37,7 @@ static func tick(game: BoomGame, delta: float) -> void:
 			game.player.lock_move_left = game._swing_t
 			if game._swing_t <= 0.0:
 				game._swing_state = game.SwingState.RECOVER
-				game._swing_t = float(game._swing_step["recover"])
+				game._swing_t = _phase_duration(game, "recover")
 				game.player.sync_melee_phase(
 					String(game._swing_step["action"]),
 					int(game._swing_step["windup_frames"]) + int(game._swing_step["active_frames"]),
@@ -45,7 +45,7 @@ static func tick(game: BoomGame, delta: float) -> void:
 					0.0
 				)
 		game.SwingState.RECOVER:
-			var recover: float = float(game._swing_step["recover"])
+			var recover := _phase_duration(game, "recover")
 			game._swing_t -= delta
 			game.player.sync_melee_phase(
 				String(game._swing_step["action"]),
@@ -72,9 +72,7 @@ static func tick(game: BoomGame, delta: float) -> void:
 				if to_enemy.length() <= game.weapon_cfg.swing_range:
 					game._swing_step = next_step(game)
 					game._swing_state = game.SwingState.WINDUP
-					game._swing_t = (
-						float(game._swing_step["windup"]) / game._basic_attack_speed_mult()
-					)
+					game._swing_t = _phase_duration(game, "windup")
 					if game.skill_brush_verdict:
 						game._swing_step["arc_deg"] = (
 							180.0 if String(game._swing_step["action"]) != "swing_whirl" else 360.0
@@ -91,6 +89,11 @@ static func tick(game: BoomGame, delta: float) -> void:
 						0.0
 					)
 	game.player.physics_update(delta, game.PLAYER_BOUND_X, game.PLAYER_BOUND_Z)
+
+
+## 攻速作用于完整三段节奏，而不是只压缩前摇；动画进度也使用同一真实时长。
+static func _phase_duration(game: BoomGame, key: String) -> float:
+	return float(game._swing_step[key]) / game._basic_attack_speed_mult()
 
 
 static func execute(game: BoomGame) -> void:
