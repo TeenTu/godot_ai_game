@@ -232,9 +232,8 @@ func _build_sidebar() -> void:
 	_pager.selection_slot.add_child(_lbl_selected)
 	_threat_hud = ThreatHud.install(_pager.alert_slot, _chart, true, false)
 	_build_sonar_page(_pager.add_page("sonar", UiText.t("page_sonar")))
-	_build_tracks_page(_pager.add_page("tracks", UiText.t("page_tracks")))
+	_build_tactics_page(_pager.add_page("tactics", UiText.t("page_tactics")))
 	_build_weapons_page(_pager.add_page("weapons", UiText.t("page_weapons")))
-	_build_own_page(_pager.add_page("own", UiText.t("page_own")))
 	_pager.select("sonar")
 
 
@@ -266,8 +265,8 @@ func _build_sonar_page(pg: VBoxContainer) -> void:
 	pg.add_child(op_sec)
 
 
-## 页面二航迹：接触/威胁列表 + Mark 组 + Fit/Trial（S109 §8.2）。
-func _build_tracks_page(pg: VBoxContainer) -> void:
+## 页面二战术：接触卡/威胁列表 + Mark 组 + Fit/Trial + 本艇机动与图层（S109 §8.2 / S1-11 D-18）。
+func _build_tactics_page(pg: VBoxContainer) -> void:
 	_btn_mark = Button.new()
 	_btn_mark.text = UiText.t("btn_mark")
 	_btn_mark.pressed.connect(_on_mark)
@@ -318,6 +317,7 @@ func _build_tracks_page(pg: VBoxContainer) -> void:
 	_spin_range.value_changed.connect(func(v): trial.set_range(v))
 	_spin_course.value_changed.connect(func(v): trial.set_course(v))
 	_spin_speed.value_changed.connect(func(v): trial.set_speed(v))
+	_build_own_page(pg)  # S1-11 D-18：本艇页并入战术页，不再有第四个顶级页
 
 
 ## 页面三武器：发射管/编程、在水武器、诱饵、战果评估（S109 §8.2）。
@@ -391,6 +391,7 @@ func _build_contact_list(pg: Control) -> void:
 	pg.add_child(ct_title)
 	_contact_rows_box = VBoxContainer.new()
 	pg.add_child(_contact_rows_box)
+	ContactCard.install(pg, self)  # S1-11 D-17：接触卡仅四个直接动作 + 详情折叠
 
 
 func _build_layer_toggles(pg: Control) -> void:
@@ -546,7 +547,8 @@ func _rebuild_display_data() -> void:
 			continue
 		var col: Color = _color_for_track(t.track_id)
 		var is_sel: bool = t.track_id == selected_track_id
-		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
+		var cap: int = -1 if (is_sel or _chart.show_all_lobs) else 1
+		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times, cap))
 		if is_sel:
 			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
 	_chart.lobs = all_lobs
@@ -626,7 +628,7 @@ func _update_displays_light() -> void:
 	_chart.threat_snapshots = world.threat_tracks.ui_snapshots()
 	_threat_hud.refresh(_chart.threat_snapshots, world.sim_time)
 	_threat_list.refresh(_chart.threat_snapshots, world.sim_time)
-	_pager.set_badge("tracks", _active_threat_count())  # §8.3 红点（隐页也更新）
+	_pager.set_badge("tactics", _active_threat_count())  # §8.3 红点（隐页也更新）
 	_chart.own_pos = Vector2(own.position_east_m, own.position_north_m)
 	_chart.own_course_deg = own.course_deg  # S1-01.4：本艇符号随实际艏向旋转
 	_chart.own_track = _own_track_cache()

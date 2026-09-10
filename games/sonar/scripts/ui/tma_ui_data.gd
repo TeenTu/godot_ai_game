@@ -518,9 +518,15 @@ static func is_ambiguity_candidate(m: Measurement) -> bool:
 ## 组装 _chart.lobs。显示层据此：同一 physical evidence（A/B 共享 evidence_id）
 ## 的两条候选 LOB 都以同权弱化样式呈现（细虚线/半透明 + LR AMBIGUOUS 标注），
 ## 绝不把两个分支当两条普通实线，也绝不给其中一支更高的视觉权重。
-static func lob_entries(t: Track, col: Color, is_sel: bool, outlier_times: Dictionary) -> Array:
+static func lob_entries(
+	t: Track, col: Color, is_sel: bool, outlier_times: Dictionary, max_count: int = -1
+) -> Array:
 	var out: Array = []
-	for m in t.measurement_history:
+	# S1-11 D-16/AT-61：未选中时只画最新一条 LOA（max_count=1），选中后展开历史。
+	var src: Array = t.measurement_history
+	if max_count >= 0 and src.size() > max_count:
+		src = src.slice(src.size() - max_count)
+	for m in src:
 		var inlier: bool = not outlier_times.has(m.timestamp)
 		# REQ-B3-04：不再把 selection alpha 烘进颜色；显式 is_track_selected
 		# 字段交给 ChartView 做 alpha = track × age × state 合成。

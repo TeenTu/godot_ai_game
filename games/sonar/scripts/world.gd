@@ -962,10 +962,14 @@ func _process_active_return_batch() -> void:
 	for i in range(batch.size()):
 		var rid: String = _batch_return_id(i)
 		if assigns.has(rid):
-			# 已归属：融合进对应 TT 航迹（带 batch_key 防止同 Ping 二次占用）。
+			# 已归属：融合进对应 TT 航迹（带 batch_key 防止同 Ping 二次占用，
+			# preferred_track_id 让融合层尊重批次的一对一决定）。写入 player_evidence
+			# 的必须是净化回波 DTO（含融合到的威胁 id），绝不是内部分配字符串。
 			var dto: Dictionary = batch[i].duplicate()
 			dto["batch_key"] = str(_ping_session.get("ping_id", -1))
-			player_evidence.append(threat_tracks.fuse_active_return(dto, sim_time))
+			dto["preferred_track_id"] = str(assigns[rid])
+			dto["threat_track_id"] = threat_tracks.fuse_active_return(dto, sim_time)
+			player_evidence.append(dto)
 		else:
 			# 未归属/关联不确定：证据保留，供 UI 建立临时主动接触（不偷用身份）。
 			player_evidence.append(batch[i])

@@ -77,8 +77,26 @@ func refresh(snaps: Array, sim_now: float) -> void:
 		for c in _rows.get_children():
 			_rows.remove_child(c)
 			c.queue_free()
-		for s in snaps:
-			_rows.add_child(_row(s, sim_now))
+		# S1-11 D-16/AT-61：多个鱼雷告警只详展最高威胁，其余合并为数量+方位摘要。
+		if snaps.size() <= 1:
+			for s in snaps:
+				_rows.add_child(_row(s, sim_now))
+		elif not top.is_empty():
+			_rows.add_child(_row(top, sim_now))
+			_rows.add_child(_summary_row(snaps, top))
+
+
+## 其余威胁的合并摘要行（数量 + 方位）。
+func _summary_row(snaps: Array, top: Dictionary) -> Control:
+	var brgs: Array = []
+	for s in snaps:
+		if str(s.get("track_id", "")) == str(top.get("track_id", "")):
+			continue
+		brgs.append("%.0f°" % float(s.get("bearing_est_deg", 0.0)))
+	var lb := Label.new()
+	lb.text = str(UiText.t("threat_extra_fmt")) % [brgs.size(), "、".join(brgs)]
+	lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return lb
 
 
 func _row(s: Dictionary, sim_now: float) -> Control:

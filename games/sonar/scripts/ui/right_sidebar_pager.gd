@@ -9,9 +9,7 @@ extends VBoxContainer
 ## 页面内容固有宽)——横向禁用滚动保证永不出现水平滚动条（与旧单列侧栏一致）。
 ## 文案暂英文（Batch 7 统一中文 + 字体 cmap 校验）。
 
-const PAGE_SPECS: Array = [
-	["sonar", "Sonar"], ["tracks", "Tracks"], ["weapons", "Weapons"], ["own", "Own Ship"]
-]
+const PAGE_SPECS: Array = [["sonar", "Sonar"], ["tactics", "Tactics"], ["weapons", "Weapons"]]
 const WIDE_COLS_X: float = 440.0  # 宽于此四按钮一行；窄（含 1280×720）2×2，§8.4
 
 var top_bar: VBoxContainer = null

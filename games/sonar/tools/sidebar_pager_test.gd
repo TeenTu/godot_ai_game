@@ -35,16 +35,16 @@ func _mk_ui(w: int, h: int) -> Control:
 	return ui
 
 
-## AT-28：右栏只有四个主分页按钮；任意时刻只有一个页面内容可见。
+## AT-28：右栏只有三个主分页按钮；任意时刻只有一个页面内容可见。
 func _at28_structure(fails: Array, ui: Control) -> void:
 	var pager = ui._pager
 	_assert_bool(fails, "AT-28a pager exists", pager != null, true)
 	if pager == null:
 		return
 	var ids: Array = pager.page_ids()
-	_assert_bool(fails, "AT-28b four pages", ids.size() == 4, true)
-	_assert_bool(fails, "AT-28c page ids", ids == ["sonar", "tracks", "weapons", "own"], true)
-	_assert_bool(fails, "AT-28d four buttons", pager._group.get_buttons().size() == 4, true)
+	_assert_bool(fails, "AT-28b three pages", ids.size() == 3, true)
+	_assert_bool(fails, "AT-28c page ids", ids == ["sonar", "tactics", "weapons"], true)
+	_assert_bool(fails, "AT-28d three buttons", pager._group.get_buttons().size() == 3, true)
 	_assert_bool(fails, "AT-28e one visible page", pager.visible_page_count() == 1, true)
 	_assert_bool(fails, "AT-28f default page", pager.current_page() == "sonar", true)
 	pager._btns["weapons"].pressed.emit()  # 模拟点击分页按钮
@@ -87,21 +87,19 @@ func _at29_preserve(fails: Array, ui: Control) -> void:
 	var op_id: int = ui._op_panel.get_instance_id()
 	var btn_id: int = (ui._contact_rows[tid] as Button).get_instance_id()
 	# 强制滚动：临时加高内容，验证 tracks 页可滚动。
-	var body = pager.page_body("tracks")
+	var body = pager.page_body("tactics")
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 1600)
 	body.add_child(spacer)
 	await process_frame
-	pager.select("tracks")
+	pager.select("tactics")
 	await process_frame
-	var sb = pager.page_scroll("tracks").get_v_scroll_bar()
+	var sb = pager.page_scroll("tactics").get_v_scroll_bar()
 	_assert_bool(fails, "AT-29b page scrollable", sb.max_value > 50.0, true)
 	sb.value = 120.0
 	pager.select("weapons")
 	await process_frame
-	pager.select("own")
-	await process_frame
-	pager.select("tracks")
+	pager.select("tactics")
 	await process_frame
 	_assert_bool(fails, "AT-29c scroll restored", absf(float(sb.value) - 120.0) < 1.0, true)
 	spacer.queue_free()
@@ -142,9 +140,9 @@ func _at30_alert_while_hidden(fails: Array, ui: Control) -> void:
 	)
 	ui._process(0.5)  # → _update_displays_light（业务更新不依赖页面 visible）
 	_assert_bool(fails, "AT-30a banner updated", ui._threat_hud.banner_text().contains("TT"), true)
-	_assert_bool(fails, "AT-30b badge count", pager.badge("tracks") >= 1, true)
+	_assert_bool(fails, "AT-30b badge count", pager.badge("tactics") >= 1, true)
 	_assert_bool(
-		fails, "AT-30c badge dot on button", str(pager._btns["tracks"].text).contains("●"), true
+		fails, "AT-30c badge dot on button", str(pager._btns["tactics"].text).contains("●"), true
 	)
 	_assert_bool(fails, "AT-30d no forced switch", pager.current_page() == "weapons", true)
 	_assert_bool(fails, "AT-30e hidden list updated too", ui._threat_list.row_count() >= 1, true)
