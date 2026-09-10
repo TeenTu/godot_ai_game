@@ -13,6 +13,8 @@ const FRAME_PX: int = 256
 var vel: Vector3 = Vector3.ZERO
 var life: float = 0.0
 var active: bool = false
+var origin: Vector3 = Vector3.ZERO
+var max_distance: float = INF
 ## 弹道变体归属：straight=普通灵印 / fan=爆裂灵印（§4.2 每命中飘字按此判定）。
 var variant: String = "straight"
 var _mesh: MeshInstance3D
@@ -65,8 +67,10 @@ func _build_seal_sprite() -> void:
 
 
 ## 从对象池取出开火：重置位置/速度/寿命并显示。
-func fire(from: Vector3, dir: Vector3) -> void:
+func fire(from: Vector3, dir: Vector3, p_max_distance: float = INF) -> void:
 	position = from
+	origin = from
+	max_distance = p_max_distance
 	vel = dir * SPEED
 	life = LIFETIME
 	active = true
@@ -81,4 +85,5 @@ func fire(from: Vector3, dir: Vector3) -> void:
 ## 命中/出界/寿命耗尽后回收（由池主调用）。
 func recycle() -> void:
 	active = false
+	max_distance = INF
 	visible = false

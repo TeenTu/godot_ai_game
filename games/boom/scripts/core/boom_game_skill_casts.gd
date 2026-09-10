@@ -79,3 +79,46 @@ static func whirl(g: BoomGame) -> int:
 			g._finalize_kill(jelly)
 		hits += 1
 	return hits
+
+
+## 判笔技能流一阶：向面朝方向推出 100°、5m 的扇形墨浪，最多命中 8 个目标。
+static func ink_wave(g: BoomGame) -> Array:
+	var hits: Array = []
+	var targets: Array[BoomJelly] = []
+	var facing: Vector3 = g.player.facing.normalized()
+	var half_arc: float = deg_to_rad(50.0)
+	for entry in g.enemies:
+		if targets.size() >= 8:
+			break
+		var jelly := entry as BoomJelly
+		if jelly == null or jelly.is_dead():
+			continue
+		var offset: Vector3 = jelly.position - g.player.position
+		offset.y = 0.0
+		var distance: float = offset.length()
+		if distance <= 0.001 or distance > 5.0:
+			continue
+		if acos(clampf(facing.dot(offset / distance), -1.0, 1.0)) <= half_arc:
+			targets.append(jelly)
+	for jelly in targets:
+		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * 1.8)), hits)
+	return hits
+
+
+## 判笔技能流终阶：朱砂落印形成 4.5m 领域，最多镇压 16 怪，伤害为最终攻击 2.5 倍。
+static func seal_domain(g: BoomGame) -> Array:
+	var hits: Array = []
+	var targets: Array[BoomJelly] = []
+	for entry in g.enemies:
+		if targets.size() >= 16:
+			break
+		var jelly := entry as BoomJelly
+		if jelly == null or jelly.is_dead():
+			continue
+		if g.player.position.distance_to(jelly.position) <= 4.5:
+			targets.append(jelly)
+	for jelly in targets:
+		g._apply_skill_hit(jelly, int(floor(float(g._final_attack()) * 2.5)), hits)
+	if not hits.is_empty():
+		g.trigger_freeze(0.10)
+	return hits

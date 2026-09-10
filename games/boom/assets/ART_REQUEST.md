@@ -211,3 +211,30 @@ Mode: Codex built-in ImageGen。M5 玩家动画的 prompt 骨架见 `design_m5_w
 ### M5 动画幅度返工（2026-09-04）
 仅返工 player_bubble_move、player_sword_move、player_sword_swing、player_bubble_recoil，其余 M5 资产保持不动。move 使用 ±10px 正弦重心起伏并加入左右短腿交替抬步；swing 使用 8 个唯一剑位/角度与逐帧身体倾斜；recoil 使用后仰→半程→归位三态。最终逐帧指标见本次交付回报。
 > **状态（2026-09-09）**：本文件中的早期 M5 糖果/泡泡素材清单与提示词均为历史归档，不得据此生成或更新运行时素材。当前素材必须遵循 `docs/art_bible_boom.md` 与 `shared/assets/styles/boom-night-2d/contract.yaml`；仅保留用于追溯的旧记录。
+
+## M10 双武器技能树图标（2026-09-10，当前有效）
+
+生成模式：Codex built-in ImageGen，`stylized-concept`，以现有夜巡技能图标为风格参考；
+原始 1024px 透明图保存在 `assets/references/skill_tree_icons/`，运行时版本由
+`tools/process_skill_tree_icons.py` 统一裁切为 256×256 并执行 PNG 压缩。
+
+共同原始提示词：
+
+> Use case: stylized-concept. Create a square transparent-background 2D game skill icon for the Chinese fantasy roguelite 百怪夜巡. Match the reference's polished New Chinese fantasy painterly icon language and strong circular readable silhouette: cold ink-night palette, rice-paper texture, old bronze, restrained amber, cinnabar and spectral teal highlights. One centered symbol, no text, no full character, no watermark, no candy/plastic look, no photorealism, no native-3D render. Keep generous transparent padding and crisp readability at 64 pixels.
+
+每枚图标在共同提示词后追加的原始主题如下：
+
+| 运行时图标 | 追加主题 |
+|---|---|
+| `skill_lamp_quick_wick.png` | A quick newly lit wick with two amber speed trails, communicating faster basic attacks. |
+| `skill_lamp_bright_core.png` | A square night lantern with an intense amber core, communicating increased base attack. |
+| `skill_lamp_threefold_seal.png` | A central lantern seal splitting into three synchronized amber talisman shots. |
+| `skill_lamp_firefly_volley.png` | A square lantern releasing five fan-shaped firefly seals. |
+| `skill_lamp_echo.png` | Two concentric amber sound-wave halos around a small square lantern, communicating reduced skill cooldown. |
+| `skill_lamp_soul_beacon.png` | A large square lantern beacon projecting a complete circular ring of twelve teal-and-amber seals. |
+| `skill_brush_firm_grip.png` | Two crossed wrapped hands gripping a thick dark wooden judge-brush handle, communicating base attack. |
+| `skill_brush_flowing_script.png` | A judge brush making two fast alternating ink slash strokes, communicating attack speed. |
+| `skill_brush_verdict.png` | A thick dark wooden judge brush completes one huge broad verdict arc in black ink and cinnabar, with three rhythmic stroke echoes suggesting left slash, right slash and great spin. |
+| `skill_brush_ink_wave.png` | One giant judge brush sends a focused forward teal-black ink wave shaped like a decisive crescent. |
+| `skill_brush_focus.png` | A single controlled breathing ink circle coils tightly around a glowing brush tip, communicating reduced skill cooldown. |
+| `skill_brush_seal_domain.png` | A judge brush planted vertically into a cinnabar seal circle, with radial black-ink runes and a spectral teal boundary. |

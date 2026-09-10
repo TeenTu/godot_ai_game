@@ -10,16 +10,54 @@ func _initialize() -> void:
 func _review() -> void:
 	var capture_dir := ""
 	var capture_horde := false
+	var capture_ui := false
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--capture-dir="):
 			capture_dir = arg.trim_prefix("--capture-dir=")
 		elif arg == "--horde":
 			capture_horde = true
+		elif arg == "--ui":
+			capture_ui = true
 	var scene: Node = load("res://scenes/main.tscn").instantiate()
 	root.add_child(scene)
 	var player: BoomPlayer = scene.sim.player
+	print(
+		(
+			"VISUAL_UI_GEOM select=%s background=%s"
+			% [scene._select.size, scene._select.get_child(0).size]
+		)
+	)
+	print(
+		(
+			"VISUAL_FIGHT_GEOM pos=%s size=%s scale=%s text=%s"
+			% [
+				scene._select._fight_btn.position,
+				scene._select._fight_btn.size,
+				scene._select._fight_btn.scale,
+				"FIGHT",
+			]
+		)
+	)
 	scene.sim.set_physics_process(false)
 	scene.set_physics_process(false)
+	if capture_ui and not capture_dir.is_empty():
+		assert(DisplayServer.get_name() != "headless", "Capture needs an actual renderer")
+		DirAccess.make_dir_recursive_absolute(capture_dir)
+		await create_timer(0.5).timeout
+		await RenderingServer.frame_post_draw
+		var ui_path := capture_dir.path_join("m10_weapon_tree_ui.png")
+		assert(root.get_texture().get_image().save_png(ui_path) == OK)
+		print("VISUAL_CAPTURE " + ui_path)
+		scene._select.set_selected("greatsword")
+		await create_timer(0.2).timeout
+		await RenderingServer.frame_post_draw
+		var brush_ui_path := capture_dir.path_join("m10_brush_tree_ui.png")
+		assert(root.get_texture().get_image().save_png(brush_ui_path) == OK)
+		print("VISUAL_CAPTURE " + brush_ui_path)
+		scene.queue_free()
+		await process_frame
+		quit()
+		return
 	scene._select.hide()
 	player.set_move(Vector2.RIGHT)
 	player.physics_update(0.0, 26.0, 38.0)

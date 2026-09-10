@@ -144,23 +144,19 @@ func _test_smoke() -> void:
 	_check(_main.get("skill_fx") != null, "skill_fx 技能特效已注入")
 	var btns: Dictionary = _main.get("skill_btns")
 	_check(btns.size() == 3, "技能 HUD 3 个圆形按钮已构建 (n=%d)" % btns.size())
-	# D6：按钮 key = 手势槽（"0"/"1"/"2"），test 默认档仅槽0装备 → 槽1/2 空槽灰显。
+	# 双分支新档默认装备两根节点：槽0 被动、槽1 主动、槽2 空置。
 	_check(btns.has("0") and btns.has("1") and btns.has("2"), "HUD 按钮按槽位 key 0/1/2")
 	var skill_sys_hud: BoomSkillSystem = _main.get("skill_sys")
-	if skill_sys_hud != null and skill_sys_hud.equipped == ["fan"]:
-		var slot1: Control = btns["1"]
+	if (
+		skill_sys_hud != null
+		and skill_sys_hud.equipped == ["lamp_quick_wick", "lamp_firefly_volley"]
+	):
 		var slot2: Control = btns["2"]
-		_check(
-			(
-				slot1 != null
-				and slot1.get("is_empty_slot") == true
-				and slot2 != null
-				and slot2.get("is_empty_slot") == true
-			),
-			"默认档槽1/2 为空槽灰显"
-		)
+		_check(slot2 != null and slot2.get("is_empty_slot") == true, "默认档第三槽为空槽灰显")
 	var slot0: Control = btns["0"]
-	_check(slot0 != null and slot0.get("skill_id") == "fan", "默认档槽0 按钮展示 fan")
+	var slot1: Control = btns["1"]
+	_check(slot0 != null and slot0.get("skill_id") == "lamp_quick_wick", "默认档槽0 展示镇夜灯普攻根节点")
+	_check(slot1 != null and slot1.get("skill_id") == "lamp_firefly_volley", "默认档槽1 展示镇夜灯技能根节点")
 	_check(_main.get("waypoints") != null, "waypoint 边缘标记层已构建")
 	_check(_main.get("_combo_label") != null, "击杀播报大字 Label 已构建")
 	if not has_sim:
@@ -188,6 +184,15 @@ func _test_smoke() -> void:
 		"res://assets/images/weapons/night_patrol/ink_brush_move.png",
 		"res://assets/images/weapons/night_patrol/ink_brush_swing.png",
 		"res://assets/images/effects/ink_brush_swing_fx.png",
+		"res://assets/images/characters/night_patrol/hero_melee_left_body.png",
+		"res://assets/images/characters/night_patrol/hero_melee_right_body.png",
+		"res://assets/images/characters/night_patrol/hero_melee_whirl_body.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_left.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_right.png",
+		"res://assets/images/weapons/night_patrol/ink_brush_swing_whirl.png",
+		"res://assets/images/effects/ink_brush_swing_left_fx.png",
+		"res://assets/images/effects/ink_brush_swing_right_fx.png",
+		"res://assets/images/effects/ink_brush_swing_whirl_fx.png",
 		"res://assets/images/characters/paper_doll_move_down.png",
 		"res://assets/images/characters/paper_doll_move_up.png",
 		"res://assets/images/characters/paper_doll_move_left.png",
@@ -475,45 +480,27 @@ func _test_skill_system_cd() -> void:
 			fired_box[0] += 1
 			ids_box.append(id)
 	)
-	# D6（design_m7_progression §174-175）：新档默认仅树首 fan 装备；
-	# ←/→ 手势命中空槽应静默（成长设计而非回归），且不崩溃。
-	_check(sys.equipped == ["fan"], "新档默认 equipped=[fan]")
-	sys.handle_swipe_left()
-	sys.handle_swipe_right()
-	_check(fired_box[0] == 0, "新档空槽 ←/→ 手势静默 (fired=%d)" % fired_box[0])
-	# 就绪态第一次 tap 应触发槽 0 = fan。
+	_check(sys.equipped == ["lamp_quick_wick", "lamp_firefly_volley"], "新档默认装备镇夜灯两条分支根节点")
+	# 槽0 是被动，tap 静默；槽1 主动由左滑施放。
 	sys.handle_tap()
-	_check(fired_box[0] == 1, "新档 tap 触发槽0 fan")
-	_check(ids_box[-1] == "fan", "tap 路由到 fan")
+	_check(fired_box[0] == 0, "被动根节点不进入施放管线")
+	sys.handle_swipe_left()
+	_check(fired_box[0] == 1, "左滑触发槽1 流萤散射")
+	_check(ids_box[-1] == "lamp_firefly_volley", "左滑路由到镇夜灯主动技能")
 	var st: Dictionary = sys.get_state()
-	_check(st["fan"] > 0.0, "fan 施放后进入 CD (cooldown_left=%.2f)" % st["fan"])
-	# 冷却中连发不触发（fan CD 3s 未到）。
-	sys.handle_tap()
-	_check(fired_box[0] == 1, "CD 中 tap 不重复触发 fan")
-	# 越过 fan CD 后即可再次触发。
-	sys.tick(BoomSkillSystem.FAN_COOLDOWN + 0.1)
-	var st2: Dictionary = sys.get_state()
-	_check(st2["fan"] <= 0.0, "tick 越过 CD 后 fan 冷却归零 (%.2f)" % st2["fan"])
-	# M7R：补齐 chain/nuke 解锁并装备满 3 槽，验证手势→槽位→技能映射。
-	sys.debug_grant("chain")
-	sys.debug_grant("nuke")
-	_check(sys.equip("chain") and sys.equip("nuke"), "解锁 chain/nuke 后装备满 3 槽")
-	_check(sys.equipped == ["fan", "chain", "nuke"], "3 槽顺序 = 手势槽 tap/←/→")
-	sys.handle_tap()
-	_check(ids_box[-1] == "fan", "满槽 tap 槽0=fan")
+	_check(st["lamp_firefly_volley"] > 0.0, "流萤散射施放后进入 CD (%.2f)" % st["lamp_firefly_volley"])
 	sys.handle_swipe_left()
-	_check(ids_box[-1] == "chain", "←swipe 槽1=chain")
+	_check(fired_box[0] == 1, "冷却中不可重复施放")
+	sys.tick(BoomSkillSystem.LAMP_VOLLEY_COOLDOWN + 0.1)
+	var st2: Dictionary = sys.get_state()
+	_check(st2["lamp_firefly_volley"] <= 0.0, "tick 越过 CD 后冷却归零")
+	# 解锁技能终阶并装入第三槽，验证右滑映射与环形形态。
+	sys.debug_grant("lamp_soul_beacon")
+	_check(sys.equip("lamp_soul_beacon"), "魂灯结界装备到第三槽")
+	var before: int = _active_bullets(g)
 	sys.handle_swipe_right()
-	_check(ids_box[-1] == "nuke", "→swipe 槽2=nuke")
-	_check(fired_box[0] == 4, "满槽三技能各触发一次 (fired=%d)" % fired_box[0])
-	# 换装后手势重映射到新槽位技能（D6 §228：装备即手势）。
-	sys.debug_grant("ring")
-	_check(sys.unequip("fan"), "卸 fan")
-	_check(sys.equip("ring"), "装 ring → equipped=[chain,nuke,ring]")
-	_check(sys.equipped == ["chain", "nuke", "ring"], "槽位顺序 = 装备顺序")
-	sys.tick(BoomSkillSystem.CHAIN_COOLDOWN + 0.1)  # 越过 chain 8s CD，避免换装断言撞冷却
-	sys.handle_tap()
-	_check(ids_box[-1] == "chain", "换装后 tap 路由到槽0=chain")
+	_check(ids_box[-1] == "lamp_soul_beacon", "右滑路由到魂灯结界")
+	_check(_active_bullets(g) == before + BoomGame.RING_COUNT, "魂灯结界生成 12 枚环形灵印")
 	g.remove_child(sys)
 	sys.free()
 	g.free()
@@ -716,8 +703,13 @@ func _test_m5_weapons() -> void:
 			and absf(sword.swing_windup - 0.32) < 0.001
 			and absf(sword.swing_active - 0.08) < 0.001
 			and absf(sword.swing_recover - 0.36) < 0.001
+			and sword.melee_combo.size() == 3
+			and sword.melee_combo[0]["action"] == "swing_left"
+			and sword.melee_combo[1]["action"] == "swing_right"
+			and sword.melee_combo[2]["action"] == "swing_whirl"
+			and absf(float(sword.melee_combo[2]["arc_deg"]) - 360.0) < 0.001
 		),
-		"判笔重剑参数 30伤/12敌/2.9m/150° + 0.32/0.08/0.36 节奏",
+		"判笔三段双手连招：左挥/右挥/360°回旋，均锁定 2.9m 斩距",
 	)
 	_check(
 		sword != null and sword.max_hp_bonus == 20 and absf(sword.move_mult - 0.85) < 0.001,

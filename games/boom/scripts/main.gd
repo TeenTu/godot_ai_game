@@ -23,12 +23,6 @@ const SKILL_SLOT_COUNT: int = 3
 const SKILL_BTN_X: float = 596.0
 const SKILL_BTN_YS = [760.0, 886.0, 1012.0]  # 3 槽按钮 Y（对齐原 fan/chain/nuke 布局）
 const SKILL_GESTURES = ["TAP", "< SWIPE", "SWIPE >"]
-## 有美术位图的技能（其余技能走缩写大字标识）。
-const SKILL_ICONS: Dictionary = {
-	"fan": "res://assets/images/icons/skill_fan.png",
-	"chain": "res://assets/images/icons/skill_chain.png",
-	"nuke": "res://assets/images/icons/skill_nuke.png",
-}
 ## 无位图技能的圆心缩写（configure_empty 用 "—"）。
 const SKILL_ABBREVS: Dictionary = {
 	"fan": "F",
@@ -40,6 +34,18 @@ const SKILL_ABBREVS: Dictionary = {
 	"heal": "+",
 	"whirl": "W",
 	"titan": "T",
+	"lamp_quick_wick": "QW",
+	"lamp_bright_core": "BC",
+	"lamp_threefold_seal": "3S",
+	"lamp_firefly_volley": "FV",
+	"lamp_echo": "LE",
+	"lamp_soul_beacon": "SB",
+	"brush_firm_grip": "FG",
+	"brush_flowing_script": "FS",
+	"brush_verdict": "SV",
+	"brush_ink_wave": "IW",
+	"brush_focus": "OF",
+	"brush_seal_domain": "SD",
 }
 
 const COL_CREAM: Color = Color("fff6e8")
@@ -155,8 +161,9 @@ func _build_weapon_select() -> void:
 	if _hud == null:
 		return
 	_select = BoomWeaponSelect.new()
+	_select.position = Vector2.ZERO
+	_select.size = Vector2(HUD_W, HUD_H)
 	_hud.add_child(_select)
-	_select.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_select.skill_sys = skill_sys  # M7R：技能配置区按当前武器树解锁/装备。
 	_select.confirmed.connect(_on_weapon_confirmed)
 	_select.visible = false
@@ -317,9 +324,8 @@ func _test_hook_get_state() -> Dictionary:
 	if skill_sys == null:
 		return state
 	var sk: Dictionary = skill_sys.get_state()
-	state["sk_fan"] = sk["fan"]
-	state["sk_chain"] = sk["chain"]
-	state["sk_nuke"] = sk["nuke"]
+	for skill_id in skill_sys.pool_ids():
+		state["sk_" + skill_id] = sk[skill_id]
 	state["sk_ready"] = sk["ready"]
 	# D6：每槽技能 id（空槽 ""），供 vision-e2e 断言 HUD 与手势槽一致。
 	var slot_ids: Array[String] = []
@@ -363,13 +369,13 @@ func _on_skill_fired(skill_id: String, result: Variant) -> void:
 	var ppos: Vector3 = sim.player.position
 	var hits: Array = result if result is Array else []
 	match skill_id:
-		"fan":
+		"fan", "lamp_firefly_volley":
 			audio.play("shoot", -9.0)
 			cam.add_trauma(0.15)  # §4.2 爆裂弹幕：极轻震屏
 			skill_fx.muzzle_flash(
 				ppos + Vector3(0.0, 0.5, 0.0), sim.player.facing, BoomSkillSystem.FAN_COLOR
 			)
-		"chain":
+		"chain", "brush_ink_wave":
 			audio.play("graze", -6.0)
 			if not hits.is_empty():
 				# §4.2 闪电链：首跳 0.06s 顿帧 + ×0.6 震屏 + 0.10 alpha 白闪(~30ms)。
@@ -388,7 +394,7 @@ func _on_skill_fired(skill_id: String, result: Variant) -> void:
 				# §4.2 技能飘字"链!" 紫色大字 1 个（命中才出，与电弧反馈同条件），
 				# 替代 M2 起的 "CHAIN!" toast——语义重复，二选一防同屏刷字。
 				_spawn_skill_float(ppos, "chain")
-		"nuke":
+		"nuke", "lamp_soul_beacon", "brush_seal_domain":
 			audio.play("boom", -4.0)
 			cam.add_trauma(0.6)  # §4.2 核爆：×1.2 重震屏（击杀 0.5 基准）
 			_trigger_kill_flash()
@@ -556,7 +562,8 @@ func _build_world() -> Node3D:
 func _build_hud() -> void:
 	var hud := Control.new()
 	hud.name = "HUD"
-	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
+	hud.position = Vector2.ZERO
+	hud.size = Vector2(HUD_W, HUD_H)  # 父节点是 Node，不能仅靠 anchors 推导设计尺寸。
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hud)
 	_hud = hud
@@ -714,7 +721,7 @@ func _build_skill_hud(hud: Control) -> void:
 			var color: Color = skill.icon_color if skill != null else Color.WHITE
 			button.setup(
 				sid,
-				str(SKILL_ICONS.get(sid, "")),
+				BoomSkillSystem.icon_path(sid),
 				cd,
 				color,
 				SKILL_GESTURES[slot],

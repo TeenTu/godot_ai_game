@@ -72,6 +72,12 @@ func _init() -> void:
 	_build_visuals(palette)
 
 
+func xp_reward() -> int:
+	if elite:
+		return BoomExperience.ELITE_XP
+	return BoomExperience.MIST_SPIRIT_XP if _is_mist_spirit else BoomExperience.PAPER_DOLL_XP
+
+
 func _build_visuals(palette: Color) -> void:
 	# 正常运行只建 2D 敌人和预警圈，省掉每只怪 5 个永远隐藏的回退网格。
 	_add_character_art()

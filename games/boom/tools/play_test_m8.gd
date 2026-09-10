@@ -59,6 +59,12 @@ func test_stats() -> void:
 	host._check(is_equal_approx(s.aspd_mult(), 1.1), "攻速 +10% → ×1.10")
 	s.apply(BoomStats.KIND_HASTE)
 	host._check(is_equal_approx(s.haste_mult(), 1.08), "急速 +8% → ×1.08")
+	host._check(is_equal_approx(s.cooldown_reduction(), 0.08), "技能冷却缩减每次固定 -8%")
+	s.haste_stacks = 99
+	host._check(
+		is_equal_approx(s.cooldown_reduction(), BoomStats.COOLDOWN_REDUCTION_CAP), "技能冷却缩减封顶 40%"
+	)
+	s.haste_stacks = 1
 	s.apply(BoomStats.KIND_SPEED)
 	host._check(is_equal_approx(s.move_mult(), 1.08), "移速 +8% → ×1.08")
 	# 闪避上限 20%（§8）：34 档 ×3pp = 102% → 封顶。
@@ -372,7 +378,7 @@ func test_motion() -> void:
 			saw_active = true
 		elif st == g.SwingState.RECOVER:
 			saw_recover = true
-		if anim != null and anim.animation == "swing":
+		if anim != null and anim.animation == "swing_left":
 			var f: int = anim.frame
 			if st == g.SwingState.WINDUP and f > 1:
 				vis_ok = false
@@ -440,7 +446,7 @@ func test_motion() -> void:
 		"切枪后形态/视觉配置回归 bubble/night_ruler"
 	)
 	if anim3 != null:
-		host._check(anim3.animation != "swing", "swing 动画无滞留")
+		host._check(not String(anim3.animation).begins_with("swing_"), "近战动画无滞留")
 	host._check(g3.player.get("_weapon_anim") != null, "武器视觉层已按新配置重建")
 	g3.free()
 

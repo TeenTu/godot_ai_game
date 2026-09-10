@@ -114,7 +114,7 @@ static func build_snapshot(
 		"attack_speed": 0.0 if fire_interval <= 0.0 else snappedf(1.0 / fire_interval, 0.01),
 		"crit_rate_pct": int(round(stats.crit_rate() * 100.0)),
 		"crit_dmg_pct": int(round(stats.crit_dmg_mult() * 100.0)),
-		"haste_pct": int(round((stats.haste_mult() - 1.0) * 100.0)),
+		"haste_pct": int(round(stats.cooldown_reduction() * 100.0)),
 		"defense": stats.defense,
 		"mitigation_pct": snappedf(stats.mitigation() * 100.0, 0.1),
 		"dodge_pct": int(round(stats.dodge_rate() * 100.0)),

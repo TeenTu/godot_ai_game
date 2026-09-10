@@ -47,7 +47,9 @@ const _ANIM_FPS: Dictionary = {
 	"move_up_left": 12.0,
 	"move_up_right": 12.0,
 	"recoil": 14.0,  # 3 帧远程施法身姿
-	"swing": 16.0,  # 5 帧近战挥击身姿
+	"swing_left": 16.0,
+	"swing_right": 16.0,
+	"swing_whirl": 18.0,
 	"hurt": 12.0,  # 3 帧受击
 	"skill_cast": 12.0,
 	"knockdown": 10.0,
@@ -94,7 +96,9 @@ const FORM_STRIPS: Dictionary = {
 		"move_down_left": ["hero_move_down_left", 6],
 		"move_up_left": ["hero_move_up_left", 6],
 		"move_up_right": ["hero_move_up_right", 6],
-		"swing": ["hero_melee_swing_body", 5],
+		"swing_left": ["hero_melee_left_body", 4],
+		"swing_right": ["hero_melee_right_body", 4],
+		"swing_whirl": ["hero_melee_whirl_body", 6],
 		"skill_cast": ["hero_skill_cast_body", 4],
 		"knockdown": ["hero_knockdown_unarmed", 4],
 	},
@@ -359,26 +363,35 @@ func _build_weapon_art() -> void:
 	_build_weapon_effect(cfg)
 
 
-## 判笔挥击的墨迹是独立视觉层：与五帧身体同拍，但不参与握柄偏移和命中判定。
+## 判笔三段连招的墨迹是独立视觉层：与相应身体条同拍，但不参与握柄偏移和命中判定。
 func _build_weapon_effect(cfg: Dictionary) -> void:
-	var spec: Array = cfg.get("effect_strip", [])
-	if spec.size() != 2:
-		return
-	var path: String = spec[0]
-	if not ResourceLoader.exists(path):
-		return
-	var texture := load(path) as Texture2D
-	if texture == null:
+	var strips: Dictionary = cfg.get("effect_strips", {})
+	if strips.is_empty():
 		return
 	var frames := SpriteFrames.new()
-	frames.add_animation("swing")
-	frames.set_animation_loop("swing", false)
-	frames.set_animation_speed("swing", _ANIM_FPS["swing"])
-	for index in int(spec[1]):
-		var atlas := AtlasTexture.new()
-		atlas.atlas = texture
-		atlas.region = Rect2(float(index) * FRAME_PX, 0.0, FRAME_PX, FRAME_PX)
-		frames.add_frame("swing", atlas)
+	var built := false
+	for action_variant in strips:
+		var action: String = action_variant
+		var spec: Array = strips[action]
+		if spec.size() != 2:
+			continue
+		var path: String = spec[0]
+		if not ResourceLoader.exists(path):
+			continue
+		var texture := load(path) as Texture2D
+		if texture == null:
+			continue
+		frames.add_animation(action)
+		frames.set_animation_loop(action, false)
+		frames.set_animation_speed(action, float(_ANIM_FPS.get(action, 16.0)))
+		for index in int(spec[1]):
+			var atlas := AtlasTexture.new()
+			atlas.atlas = texture
+			atlas.region = Rect2(float(index) * FRAME_PX, 0.0, FRAME_PX, FRAME_PX)
+			frames.add_frame(action, atlas)
+		built = true
+	if not built:
+		return
 	_weapon_fx_anim = AnimatedSprite3D.new()
 	_weapon_fx_anim.name = "WeaponSwingFx2D"
 	_weapon_fx_anim.sprite_frames = frames
@@ -488,14 +501,15 @@ func _sync_weapon_animation() -> void:
 func _sync_weapon_effect() -> void:
 	if _weapon_fx_anim == null or _anim == null:
 		return
-	_weapon_fx_anim.visible = _anim.animation == "swing"
+	var action: String = _anim.animation
+	_weapon_fx_anim.visible = _weapon_fx_anim.sprite_frames.has_animation(action)
 	if not _weapon_fx_anim.visible:
 		return
-	_weapon_fx_anim.animation = "swing"
+	_weapon_fx_anim.animation = action
 	_weapon_fx_anim.pause()
 	_weapon_fx_anim.flip_h = false
 	_weapon_fx_anim.modulate = Color.WHITE
-	var frame_count: int = _weapon_fx_anim.sprite_frames.get_frame_count("swing")
+	var frame_count: int = _weapon_fx_anim.sprite_frames.get_frame_count(action)
 	_weapon_fx_anim.set_frame_and_progress(mini(_anim.frame, frame_count - 1), _anim.frame_progress)
 
 
@@ -591,9 +605,9 @@ func play_anim_once(action: String) -> void:
 	_transient_anim = true
 
 
-## 近战五帧由战斗阶段驱动：两帧蓄力、一帧出手、两帧收招。
-func sync_swing_phase(first: int, count: int, progress: float) -> void:
-	if _anim == null or _anim.animation != "swing":
+## 近战动作由战斗阶段驱动；每段可有不同帧数，但身体、判笔、墨迹共享同一帧进度。
+func sync_melee_phase(action: String, first: int, count: int, progress: float) -> void:
+	if _anim == null or _anim.animation != action:
 		return
 	_anim.pause()
 	var phase: float = clampf(progress, 0.0, 0.9999) * count
@@ -601,8 +615,8 @@ func sync_swing_phase(first: int, count: int, progress: float) -> void:
 	_sync_weapon_animation()
 
 
-func finish_swing_visual() -> void:
-	if _anim != null and _anim.animation == "swing":
+func finish_melee_visual(action: String) -> void:
+	if _anim != null and _anim.animation == action:
 		_on_anim_finished()
 
 

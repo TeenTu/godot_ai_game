@@ -17,6 +17,7 @@ enum AttackKind { RANGED, MELEE }
 @export var proj_speed: float = 15.0  # BoomBullet.SPEED
 @export var proj_life: float = 1.6  # BoomBullet.LIFETIME
 @export var proj_dmg: int = 1  # 命中结算用它（现 BULLET_DMG）
+@export var attack_range: float = 11.0  # 普攻锁敌/弹丸最远距离；灯不得攻击屏外敌人
 @export var proj_color: Color = Color("8ce6ff")  # 命中粒子/弹体调色
 ## M8 基础攻击力（design_m8_attributes.md §5.1）：由武器决定的初始攻击参数；
 ## 所有输出经 BoomGame 统一结算入口 floor(base × (1+伤害加成)) 放大。
@@ -31,6 +32,9 @@ enum AttackKind { RANGED, MELEE }
 @export var swing_dmg: int = 3
 @export var swing_knock: float = 6.0  # 斩击击退初速（> jelly.KNOCK_SPEED=4.6）
 @export var swing_freeze: float = 0.065  # 斩中顿帧（0.5s 门控）
+## 三段近战连招。每项为 action/windup/active/recover/arc_deg/max_targets/damage_mult；
+## range 始终复用 swing_range，禁止通过连招偷加武器范围。
+@export var melee_combo: Array[Dictionary] = []
 # ---- 机体数值 ----
 @export var move_mult: float = 1.0  # 移动速度倍率（BoomPlayer.MOVE_SPEED=5.4 之上）
 @export var max_hp_bonus: int = 0  # HP 上限增量（M8：泡泡 0 → 50；大剑 +20 → 70，§4.1）
