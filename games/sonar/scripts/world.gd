@@ -51,6 +51,8 @@ var player_evidence: Array = []  # 净化证据（告警/爆炸/本艇武器事�
 # 同一威胁卡升级，抑制每秒一条告警的洪泛）。load_scenario 重置。
 var threat_tracks := ThreatTrackManager.new()
 var own_assets := OwnAssetRegistry.new()  # S109 §2.4 己方合法事实登记表
+## P1-C DC-01：诱饵运动复现记录（默认关闭；SONAR_DECOY_TRACE=1 或测试显式打开）。
+var decoy_trace := DecoyTrace.new()
 var threat_automation := ThreatAutomationController.new()  # §3.1 始终运行
 
 var enemy_ai: EnemyDoctrineController = null
@@ -297,6 +299,8 @@ func _advance_decoys(dt: float) -> void:
 			torpedo_ctx.sensor_adapter.contact_tokens.erase(str(d.id))
 			# REQ-CM-02：注销画像注册（历史瀑布/Track 自然计龄，不删玩家接触）。
 			torpedo_ctx.sensor_adapter.contact_acs.erase(str(d.id))
+	# DC-01：周期采样本艇/诱饵世界坐标 + 相机/绘制坐标（默认关闭时零成本）。
+	decoy_trace.sample(sim_time, decoys, world.get("own", null))
 
 
 ## 玩家发射诱饵（§8.5）：发射器库存/冷却/程序合法性校验；诱饵先进入活动 列表随 tick 推进，激活瞬间才进入武器采样集（激活前静默）。

@@ -12,6 +12,13 @@ var ready_rounds: int = 2  # 已装填可用
 var inventory: int = 4  # 总库存（含已装填）
 var launch_cooldown_s: float = 10.0
 var supported_types: Array = [DecoyProgram.TYPE_MOBILE, DecoyProgram.TYPE_JAMMER]
+## P1-C DC-02/DC-03：发射程序默认参数（DecoyLaunchBuilder 读这里；场景
+## own_ship.countermeasures 可覆盖）。MOBILE 巡航速度；JAMMER 有真实有限分离
+## 阶段（数十米量级，配置化——不宣称真实装置射程），之后低速漂浮。
+var mobile_speed_kn: float = 8.0
+var jammer_separation_speed_kn: float = 6.0
+var jammer_separation_duration_s: float = 20.0
+var jammer_drift_speed_kn: float = 0.2
 ## REQ-CM-04：最近一次拒绝原因（UI 展示用；launch 成功后清空）。
 var last_reject_reason: String = ""
 ## REQ-CM-04：按类型配置的诱饵画像（scenario own_ship.countermeasures.profiles；
@@ -28,6 +35,14 @@ func configure(cfg: Dictionary) -> void:
 	ready_rounds = int(cfg.get("ready_rounds", ready_rounds))
 	inventory = maxi(int(cfg.get("inventory", inventory)), ready_rounds)
 	launch_cooldown_s = float(cfg.get("launch_cooldown_s", launch_cooldown_s))
+	mobile_speed_kn = float(cfg.get("mobile_speed_kn", mobile_speed_kn))
+	jammer_separation_speed_kn = float(
+		cfg.get("jammer_separation_speed_kn", jammer_separation_speed_kn)
+	)
+	jammer_separation_duration_s = float(
+		cfg.get("jammer_separation_duration_s", jammer_separation_duration_s)
+	)
+	jammer_drift_speed_kn = float(cfg.get("jammer_drift_speed_kn", jammer_drift_speed_kn))
 	if cfg.has("supported_types"):
 		supported_types = cfg["supported_types"]
 	if cfg.has("profiles"):

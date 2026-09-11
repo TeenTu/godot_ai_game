@@ -88,10 +88,23 @@ static func rebuild(ui) -> void:
 	)
 
 
+## P1-C DC-01：记录海图相机与绘制坐标（world_to_screen 的参数）。
+static func camera_info(chart) -> Dictionary:
+	return {
+		"center_e": float(chart.cam_center.x),
+		"center_n": float(chart.cam_center.y),
+		"view_radius_m": float(chart.view_radius_m),
+		"size_x": float(chart.size.x),
+		"size_y": float(chart.size.y),
+	}
+
+
 ## 轻刷新：海图注入数据（威胁快照/本艇/试拟/系统解/深度条）+ 方位盘。
 static func update_light(ui) -> void:
 	var own: TruthEntity = ui.world.world["own"]
 	ui._chart.now_time = ui.world.sim_time
+	# P1-C DC-01：把相机/绘制坐标推入调试记录（默认关闭时是空操作；战术 UI 不读）。
+	ui.world.decoy_trace.set_camera(camera_info(ui._chart))
 	ui._chart.set_threat_evidence(ui.world.player_evidence, ui.world.sim_time)
 	ui._chart.threat_snapshots = ui.world.threat_tracks.ui_snapshots()
 	ui._threat_hud.refresh(ui._chart.threat_snapshots, ui.world.sim_time)

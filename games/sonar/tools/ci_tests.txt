@@ -182,3 +182,14 @@ sidebar_width_test
 #                            T26 终局后罗盘/深度条/面板/地图投放全部拒绝新命令。
 #                            含真实事件链（root.push_input(ev, true)：Viewport 捕获拖拽）。
 own_graphic_command_test
+
+#   decoy_motion_test        P1-C DC-01/DC-02/DC-03：诱饵运动独立性 + 单方向 + 有限出管分离。
+#                             T27 本艇向北、诱饵分别向东/西释放：诱饵世界坐标增量只由自身
+#                                 course/speed 决定（本艇随后转弯/提速/换层不影响）；
+#                                 地图平移/缩放/改窗口不改世界坐标；本艇/诱饵/鱼雷/航线
+#                                 共用同一 world_to_screen 映射。
+#                             T28 同向同速对照近似平行（不是绑定）；干扰器存在真实有限分离
+#                                 阶段（数十米位移后降到漂浮速度），声学激活延迟不阻止运动。
+#                             DC-01 复现记录：world.decoy_trace 落成出管时刻/发射方位/本艇与
+#                                 诱饵世界坐标/实际与命令航向航速/相机与绘制坐标。
+decoy_motion_test
