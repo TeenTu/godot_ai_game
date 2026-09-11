@@ -31,6 +31,8 @@ func _run() -> void:
 	_setup_chart_dto(ui, tid)
 	_at32_hits_and_items(fails, ui, tid)
 	_rc_drawing_input(fails, ui)
+	await _rc_camera_follow(fails, ui)
+	await _rc_route_row_focus(fails, ui)
 	_rc_reroute_and_exits(fails, ui)
 	_at33_ping_confirm_and_gates(fails, ui)
 	_finish(fails)
@@ -154,6 +156,129 @@ func _rc_left_isolation(fails: Array, ui: Control, ov: MapRouteOverlay, chart) -
 	_assert(fails, "AT-RC-06c still drawing after wheel", ov.active, true)
 
 
+## AT-RC-10：完成绘制后的保留航线必须跟随相机（拖动/缩放/居中/自动取景）。
+##
+## 覆盖层是独立 Control，不在 ChartView 的 _draw 里：只改相机而不给它重绘通知，
+## 航线就停在旧的屏幕位置（本层必须挂 ChartView.draw，且与 active 无关）。
+## 断言用「覆盖层实际重绘次数」——只比世界坐标或换算后像素是抓不到的：
+## 负向对照实测过，去掉绑定后坐标与像素依旧全对，但画面根本不刷新。
+##
+## 缩放用公开相机 API set_view 驱动，不用合成滚轮：headless 下滚轮事件会把
+## Viewport 的 GUI 焦点留在最后接它的控件上，之后合成的左键不再走命中测试
+## （实测覆盖层从此收不到点击）。滚轮输入路径已由 AT-RC-06 覆盖。
+func _rc_camera_follow(fails: Array, ui: Control) -> void:
+	var chart = ui._chart
+	var ov: MapRouteOverlay = ui._wmc.route_overlay
+	chart.context_menu_open = false
+	chart._dragging = false
+	chart.set_view(Vector2.ZERO, 8000.0)
+	# 画线 + Enter 完成（不弹菜单）：验收前提是完成后保留的航线（active == false）。
+	ui.begin_route_draw()
+	_push_left_click(ui, Vector2(1800.0, -1400.0))
+	_push_left_click(ui, Vector2(2600.0, -2200.0))
+	_push_key(ui, KEY_ENTER)
+	chart.context_menu_open = false
+	_assert(fails, "AT-RC-10a route committed", ov.active, false)
+	_assert(fails, "AT-RC-10b route kept", ov.points.size() >= 2, true)
+	# 关键：绑定与 active 无关（只在绘制态刷新 = 本 bug 的一半）。
+	_assert(
+		fails, "AT-RC-10c redraw bound after commit", chart.draw.is_connected(ov.queue_redraw), true
+	)
+	var pts: Array = ov.points.duplicate()
+	var ov_draws: Array = [0]
+	var chart_draws: Array = [0]
+	var ov_cb := func() -> void: ov_draws[0] += 1
+	var chart_cb := func() -> void: chart_draws[0] += 1
+	ov.draw.connect(ov_cb)
+	chart.draw.connect(chart_cb)
+	await process_frame
+	# ① 真实左键拖曳平移海图。
+	var o0: int = ov_draws[0]
+	var c0: int = chart_draws[0]
+	_push_mouse(ui, chart.cam_center + Vector2(-1500.0, 800.0), MOUSE_BUTTON_LEFT, true)
+	_push_motion(ui, chart.cam_center + Vector2(1500.0, -800.0))
+	_push_mouse(ui, chart.cam_center + Vector2(1500.0, -800.0), MOUSE_BUTTON_LEFT, false)
+	await process_frame
+	await process_frame
+	_assert(fails, "AT-RC-10d drag panned the chart", chart_draws[0] > c0, true)
+	_assert(fails, "AT-RC-10e route redrew on pan", ov_draws[0] > o0, true)
+	# ② 缩放（公开相机 API；滚轮路径见 AT-RC-06）。
+	o0 = ov_draws[0]
+	c0 = chart_draws[0]
+	chart.set_view(chart.cam_center, chart.view_radius_m * 0.7)
+	await process_frame
+	await process_frame
+	_assert(fails, "AT-RC-10f zoom redrew the chart", chart_draws[0] > c0, true)
+	_assert(fails, "AT-RC-10g route redrew on zoom", ov_draws[0] > o0, true)
+	# ③ 菜单动作「以此处为地图中心」/「自动取景」（复用生产入口，不另造路径）。
+	o0 = ov_draws[0]
+	ui._ctx_actions.run_action("empty_center", {"world_position": Vector2(4000.0, -3000.0)})
+	await process_frame
+	await process_frame
+	_assert(fails, "AT-RC-10h route redrew on center", ov_draws[0] > o0, true)
+	o0 = ov_draws[0]
+	var cam_before: Vector2 = chart.cam_center
+	ui._ctx_actions.run_action("empty_frame", {})
+	await process_frame
+	await process_frame
+	_assert(
+		fails,
+		"AT-RC-10i auto frame moved camera",
+		chart.cam_center.distance_to(cam_before) > 1.0,
+		true
+	)
+	_assert(fails, "AT-RC-10j route redrew on auto frame", ov_draws[0] > o0, true)
+	# ④ 相机变了，航路点世界坐标一个都不能变，且屏幕位置就是相机的换算结果。
+	var drift: float = 0.0
+	for i in range(pts.size()):
+		drift = maxf(drift, (pts[i] as Vector2).distance_to(ov.points[i] as Vector2))
+	_assert_eq(fails, "AT-RC-10k waypoint world coords unchanged", drift, 0.0)
+	var glued: bool = true
+	for w in ov.points:
+		if ov._to_screen(w as Vector2).distance_to(chart.world_to_screen(w as Vector2)) > 0.01:
+			glued = false
+	_assert(fails, "AT-RC-10l route glued to chart camera", glued, true)
+	ov.draw.disconnect(ov_cb)
+	chart.draw.disconnect(chart_cb)
+	# 收尾：清航线 + 复位视角，别把「相机停在别处」泄漏给后续用例
+	#（后续用世界坐标算点击像素，视角一变就会点到海图外面）。
+	ui.clear_route_draw()
+	chart.set_view(Vector2.ZERO, 8000.0)
+	chart.context_menu_open = false
+	await process_frame
+
+
+## AT-RC-11：航线行控件不得抢键盘焦点，否则「Enter 完成航线」会被它截胡。
+## 真机（Web 构建）实测：玩家点过「绘制航线」开关后按 Enter，覆盖层先提交成功，
+## 开关却在 keyup 上又翻一次 —— 把刚完成的航线关掉并重开一次绘制
+## （航线从画面上消失、状态回到「绘制中 0/4 个航路点」）。
+func _rc_route_row_focus(fails: Array, ui: Control) -> void:
+	var chart = ui._chart
+	var ov: MapRouteOverlay = ui._wmc.route_overlay
+	var chk = ui._weapon_panel._chk_route
+	_assert(
+		fails,
+		"AT-RC-11a route toggle takes no key focus",
+		chk.focus_mode == Control.FOCUS_NONE,
+		true
+	)
+	chart.set_view(Vector2.ZERO, 8000.0)
+	chart.context_menu_open = false
+	ui.begin_route_draw()
+	_push_left_click(ui, Vector2(1500.0, 1200.0))
+	chk.grab_focus()  # 模拟「玩家刚点过开关」
+	_push_key(ui, KEY_ENTER)
+	_push_key(ui, KEY_ENTER, false)  # 抬起这一下才是真机 bug 的触发点
+	await process_frame
+	_assert(fails, "AT-RC-11b enter commits after toggle clicked", ov.active, false)
+	_assert(fails, "AT-RC-11c committed route not restarted", ov.points.size() >= 2, true)
+	_assert_eq(fails, "AT-RC-11d toggle left off", chk.button_pressed, false)
+	ui.clear_route_draw()
+	chart.set_view(Vector2.ZERO, 8000.0)
+	chart.context_menu_open = false
+	await process_frame
+
+
 ## AT-RC-07..09：在线重画 + 拥挤地图 + §7 退出方式（Enter/Esc/双击）。
 func _rc_reroute_and_exits(fails: Array, ui: Control) -> void:
 	var chart = ui._chart
@@ -168,8 +293,37 @@ func _rc_reroute_and_exits(fails: Array, ui: Control) -> void:
 	var keep_targets: Array = ui.world.world.get("targets", [])
 	ui.world.world["targets"] = []
 	ui.begin_route_draw()
+	print(
+		"DBG click canvas=",
+		_canvas_pos(ui, Vector2(4000.0, 1000.0)),
+		" chart_rect=",
+		chart.get_global_rect(),
+		" ov_rect=",
+		ov.get_global_rect(),
+		" cam=",
+		chart.cam_center,
+		" r=",
+		chart.view_radius_m
+	)
 	_push_left_click(ui, Vector2(4000.0, 1000.0))
+	print(
+		"DBG after click pts=",
+		ov.points.size(),
+		" ov_filter=",
+		ov.mouse_filter,
+		" ov_active=",
+		ov.active,
+		" menu_open=",
+		chart.context_menu_open,
+		" chart_dragging=",
+		chart._dragging,
+		" bar_visible=",
+		ui._wmc.bar.visible,
+		" sel=",
+		chart.selected_torpedo_id
+	)
 	var fired: Dictionary = wmc.try_fire()
+	print("DBG fired=", fired, " pts=", ov.points.size(), " active=", ov.active)
 	var tp: Torpedo = fired.get("tp", null)
 	if tp != null:
 		for _i in range(30):
@@ -329,11 +483,12 @@ func _push_right_click(ui: Control, w: Vector2) -> int:
 ## 真实键事件：与生产同一条链（GUI 阶段 → input → unhandled_key → unhandled）。
 ## 注意：一旦有 Control 抢到 key_focus，GUI 阶段就会吃掉键事件，
 ## _unhandled_key_input 收不到 —— 所以覆盖层刻意不抓焦点。
-func _push_key(ui: Control, keycode: int) -> void:
+## pressed=false 用来投递抬起：有些抢焦点的按钮只在 keyup 上翻状态。
+func _push_key(ui: Control, keycode: int, pressed: bool = true) -> void:
 	var ev := InputEventKey.new()
 	ev.keycode = keycode
 	ev.physical_keycode = keycode
-	ev.pressed = true
+	ev.pressed = pressed
 	ui.get_viewport().push_input(ev, true)
 
 
