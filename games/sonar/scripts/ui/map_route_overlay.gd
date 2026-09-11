@@ -288,11 +288,25 @@ func _handle_drag(mm: InputEventMouseMotion) -> void:
 func _to_world(local_pos: Vector2) -> Vector2:
 	if chart == null:
 		return Vector2.ZERO
-	return chart.screen_to_world(global_position + local_pos)
+
+	# 覆盖层本地坐标 → 画布坐标 → 海图本地坐标 → 世界坐标。
+	# 不能用 global_position 直接加减：那是「海图在 UI 里的布局偏移」，
+	# 当成海图内部像素再换算一次会引入固定偏移（起点/航路点整体错位）。
+	var canvas_pos: Vector2 = get_global_transform_with_canvas() * local_pos
+	var chart_local: Vector2 = (
+		chart.get_global_transform_with_canvas().affine_inverse() * canvas_pos
+	)
+	return chart.screen_to_world(chart_local)
 
 
 func _to_screen(world_pos: Vector2) -> Vector2:
-	return chart.world_to_screen(world_pos) - global_position
+	if chart == null:
+		return Vector2.ZERO
+
+	# 世界坐标 → 海图本地坐标 → 画布坐标 → 覆盖层本地坐标。
+	var chart_local: Vector2 = chart.world_to_screen(world_pos)
+	var canvas_pos: Vector2 = chart.get_global_transform_with_canvas() * chart_local
+	return get_global_transform_with_canvas().affine_inverse() * canvas_pos
 
 
 func _draw() -> void:
@@ -311,7 +325,7 @@ func _draw() -> void:
 	for p in points:
 		pts.append(_to_screen(p))
 	if active and cursor_world != Vector2.INF and future_point_count() < MAX_FUTURE_POINTS:
-		pts.append(chart.world_to_screen(cursor_world) - global_position)
+		pts.append(_to_screen(cursor_world))
 	if pts.size() >= 2:
 		draw_polyline(pts, COL_ROUTE, 2.0, true)
 	# 起点与航路点标记（起点用暖色区分，编号从 1 起指未来航路点）。

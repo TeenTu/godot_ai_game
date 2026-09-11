@@ -230,6 +230,41 @@ func _b7_43_layout(ui: Control) -> void:
 		ov.size.x <= chart.size.x + 1.0 and ov.size.y <= chart.size.y + 1.0,
 		true
 	)
+	_b7_43_coord_mapping(chart, ov)
+
+
+# ---------------- B7-43i/j：地图坐标换算（布局级，AT-24/AT-44 回归） ----------------
+## 只比世界坐标抓不到这个 bug：航线数据一直是正确的，错的是覆盖层把
+## 「海图在 UI 里的布局偏移」当成海图内部像素参与换算。因此这里一律比
+## **最终画布像素**：地图点击 → 世界坐标、航线起点 → 本艇图标像素。
+func _b7_43_coord_mapping(chart: ChartView, ov: MapRouteOverlay) -> void:
+	var probe_world: Vector2 = chart.own_pos + Vector2(1375.0, -825.0)
+	var probe_canvas: Vector2 = (
+		chart.get_global_transform_with_canvas() * chart.world_to_screen(probe_world)
+	)
+	var probe_overlay_local: Vector2 = (
+		ov.get_global_transform_with_canvas().affine_inverse() * probe_canvas
+	)
+	_assert(
+		fails,
+		"B7-43i route click maps to chart world position",
+		ov._to_world(probe_overlay_local).distance_to(probe_world) <= 0.01,
+		true
+	)
+	ov.begin(chart.own_pos.x, chart.own_pos.y)
+	var route_start_canvas: Vector2 = (
+		ov.get_global_transform_with_canvas() * ov._to_screen(ov.points[0])
+	)
+	var own_canvas: Vector2 = (
+		chart.get_global_transform_with_canvas() * chart.world_to_screen(chart.own_pos)
+	)
+	_assert(
+		fails,
+		"B7-43j route start overlaps own ship",
+		route_start_canvas.distance_to(own_canvas) <= 0.01,
+		true
+	)
+	ov.cancel()
 
 
 # ---------------- B7-44：触摸命中区与拖动（AT-44） ----------------
