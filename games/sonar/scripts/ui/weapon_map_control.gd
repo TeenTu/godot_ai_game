@@ -49,6 +49,9 @@ func setup(p_ui, p_world: World, p_chart: ChartView, p_fire_exec: FireExecutor) 
 	route_overlay.route_changed.connect(_on_route_changed)
 	route_overlay.route_committed.connect(_on_route_committed)
 	route_overlay.trigger_changed.connect(_on_trigger_changed)
+	# §5.3：Enter / 双击 → 完成；Esc → 取消（收敛到同一套提交/取消路径）。
+	route_overlay.finish_requested.connect(finish_draw)
+	route_overlay.cancel_requested.connect(cancel_current_edit)
 	add_child(route_overlay)
 	bar = TorpedoControlBar.new()
 	bar.visible = false
@@ -93,6 +96,14 @@ func is_drawing() -> bool:
 	return route_overlay != null and route_overlay.active
 
 
+## §5.3：统一取消当前编辑——发射前绘制与在水鱼雷重画各走正确的取消路径。
+func cancel_current_edit() -> void:
+	if _reroute_tid != "":
+		cancel_reroute()
+	elif route_overlay != null and route_overlay.active:
+		cancel_draw()
+
+
 func is_route_ready() -> bool:
 	return route_overlay != null and route_overlay.can_commit()
 
@@ -133,14 +144,23 @@ func try_fire() -> Dictionary:
 
 ## 结束绘制（双击 / Enter / 右键「完成航线」）：
 ##   - 在线重画 → 原子提交新剩余航路；
-##   - 发射航线 → 冻结当前航路，等待「发射」。
+##   - 发射航线 → 冻结当前航路，等待「发射」；
+##   - 无有效航线 → 中文提示，绝不静默失败。
 func finish_draw() -> void:
 	if _reroute_tid != "":
+		if not is_route_ready():
+			cancel_reroute()
+			status.emit(UiText.t("reroute_reject") + UiText.t("reroute_invalid"))
+			return
 		commit_reroute()
 		return
-	if route_overlay != null and route_overlay.active and route_overlay.can_commit():
-		route_overlay.commit()
-		status.emit(UiText.t("evt_route_committed"))
+	if route_overlay == null or not route_overlay.active:
+		return
+	if not route_overlay.can_commit():
+		status.emit(UiText.t("route_need_points"))
+		return
+	route_overlay.commit()
+	status.emit(UiText.t("evt_route_committed"))
 
 
 func _on_route_committed(_pts: Array) -> void:

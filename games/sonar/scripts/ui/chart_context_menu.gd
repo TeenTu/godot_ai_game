@@ -7,6 +7,7 @@ extends PopupMenu
 ## 暂停拖曳但不自动暂停仿真；Esc/点空白关闭后保留视图与选择；危险动作
 ## （主动确认 Ping / 切断导线）先显示确认条目，确认后才发 action。
 ## 文案中文（Batch 7 统一收进字体 cmap 校验，AT-42 要求中文菜单项）。
+## S1-11 修复：绘制态右键一律优先解释为航线编辑（完成航线 / 取消本次绘制）。
 
 signal action_chosen(action: String, ctx: Dictionary)
 
@@ -96,15 +97,22 @@ func _populate(kind: String) -> void:
 		_actions.append(str(it[0]))
 
 
-## 按上下文动态生成条目（EMPTY 会按选中鱼雷/绘制态追加指令）。
+## 按上下文动态生成条目（绘制态 → 航线编辑菜单；EMPTY 会按选中鱼雷追加指令）。
 func _rows_for(kind: String) -> Array:
+	# S1-11 修复：绘制态优先于命中类型——地图目标多的时候玩家找不到「空白」，
+	# 右键必须永远能打开航线编辑菜单（否则「完成航线」不可达）。
+	if bool(_ctx.get("route_drawing", false)):
+		var route_rows: Array = []
+		# 无有效航线不提供「完成航线」，更不能点了静默无响应。
+		if bool(_ctx.get("route_can_commit", false)):
+			route_rows.append(["empty_route_done", "完成航线"])
+		route_rows.append(["empty_route_cancel", "取消本次绘制"])
+		return route_rows
 	var rows: Array = (ITEMS.get(kind, ITEMS["EMPTY"]) as Array).duplicate()
 	if kind != "EMPTY":
 		return rows
 	var tid: String = str(_ctx.get("selected_torpedo_id", ""))
 	var extra: Array = []
-	if bool(_ctx.get("route_drawing", false)):
-		extra.append(["empty_route_done", "完成航线"])
 	if tid != "":
 		for it in TORPEDO_EMPTY_ITEMS:
 			# 只有「令 %s 向此处航行」带占位符；其余条目为通用文案，不格式化。

@@ -116,12 +116,18 @@ func _b7_42_all_chinese(ui: Control) -> void:
 	for t in texts:
 		_scan_text(str(t), rx, all, bad)
 	var menu := ChartContextMenu.new()
-	for kind in ["OWN_TORPEDO", "CONTACT", "THREAT", "EMPTY"]:
-		menu.open_at(
-			Vector2.ZERO, {"hit_kind": kind, "selected_torpedo_id": "TK01", "route_drawing": true}
-		)
-		for t in menu.item_texts():
-			_scan_text(str(t), rx, all, bad)
+	# 绘制态/非绘制态都要扫：绘制态的航线编辑菜单是另一套条目。
+	for drawing in [false, true]:
+		for kind in ["OWN_TORPEDO", "CONTACT", "THREAT", "EMPTY"]:
+			var ctx := {
+				"hit_kind": kind,
+				"selected_torpedo_id": "TK01",
+				"route_drawing": drawing,
+				"route_can_commit": true,
+			}
+			menu.open_at(Vector2.ZERO, ctx)
+			for t in menu.item_texts():
+				_scan_text(str(t), rx, all, bad)
 	menu.free()
 	if not bad.is_empty():
 		fails.append("B7-42b bare english token: %s" % str(bad.slice(0, mini(6, bad.size()))))
