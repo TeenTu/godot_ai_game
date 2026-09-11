@@ -103,6 +103,8 @@ func _init() -> void:
 	var ret_title := Label.new()
 	ret_title.text = str(UiText.t("latest_returns")) + "（脉冲·时刻·方位·距离·±σ·SE·关联）"
 	ret_title.add_theme_font_size_override("font_size", 14)
+	# UI-01：表头说明长文案只换行，不撑宽侧栏（280px @ 320 档曾顶到窗口边缘）。
+	ret_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(ret_title)
 	var head := Label.new()
 	head.visible = false
@@ -136,7 +138,7 @@ func _init() -> void:
 	mode_lbl.custom_minimum_size = Vector2(96, 0)
 	mode_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 0.85))
 	mode_row.add_child(mode_lbl)
-	_opt_fit_mode = OptionButton.new()
+	_opt_fit_mode = UiContract.tame_option_button(OptionButton.new())
 	for fm in FIT_MODES:
 		_opt_fit_mode.add_item(UiText.mode(fm as String))
 	_opt_fit_mode.add_theme_font_size_override("font_size", 12)
@@ -202,6 +204,8 @@ func _add_param_row(grid: GridContainer, key: String) -> Label:
 	v.text = "-"
 	v.add_theme_font_size_override("font_size", 12)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# UI-01：动态值（测程/监听窗等）只换行，不参与侧栏宽度竞争（最小宽不再顶到 271px）。
+	v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	grid.add_child(v)
 	return v
 

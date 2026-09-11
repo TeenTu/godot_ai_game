@@ -5,11 +5,18 @@ extends VBoxContainer
 ## 固定顶栏 = 任务时间/暂停/倍速（time_row 由 main_ui 注入控件）+ 当前选中
 ## 摘要（selection_slot）+ 来袭鱼雷固定告警条（alert_slot）+ 分页按钮。
 ## 每页独立 ScrollContainer（横向禁用）；切页只切 visible：不销毁/重建业务
-## 对象，并保留各页滚动位置（§8.4；AT-28/29/31）。实际宽度 = max(契约钳制,
-## 页面内容固有宽)——横向禁用滚动保证永不出现水平滚动条（与旧单列侧栏一致）。
+## 对象，并保留各页滚动位置（§8.4；AT-28/29/31）。
+## UI-01（P1-B）：宽度**不再**由内容固有宽决定——分页器由 SidebarShell 这个
+## 固定宽外壳压到目标宽，页面正文 custom_minimum_size.x = 0（内容只改变高度，
+## 超宽子控件由外壳 audit() 定位并逐条修好）。横向滚动仍禁用 → 永不出现水平
+## 滚动条（与旧单列侧栏一致）。
 ## 文案中文化见 UiText（S1-11 Batch 7 / AT-42）。
 
-const WIDE_COLS_X: float = 440.0  # 宽于此三按钮一行；窄（含 1280×720）2×2，§8.4
+## UI-04：切页广播（统一命令仲裁用它清理未提交的图形预览，不残留拖动状态）。
+signal page_switched(page_id: String)
+
+## UI-01：≥340 逻辑像素三按钮一行；更窄（1280×720 档 320）2×2，§8.4。
+const WIDE_COLS_X: float = 340.0
 
 var top_bar: VBoxContainer = null
 var time_row: HBoxContainer = null
@@ -67,7 +74,7 @@ func add_page(page_id: String, title: String) -> VBoxContainer:
 	sc.visible = false
 	_pages_box.add_child(sc)
 	var body := VBoxContainer.new()
-	body.custom_minimum_size = Vector2(UiContract.SIDEBAR_MIN_W, 0)
+	body.custom_minimum_size = Vector2(0.0, 0.0)  # UI-01：宽度由外壳决定，不靠内容
 	body.size_flags_horizontal = Control.SIZE_FILL  # 不 EXPAND：不撑宽侧栏（P1-03.1）
 	body.add_theme_constant_override("separation", 5)
 	sc.add_child(body)
@@ -107,6 +114,7 @@ func select(page_id: String) -> void:
 	var want: float = float(_scroll_mem.get(page_id, 0.0))
 	sb.value = want
 	sb.set_deferred("value", want)
+	page_switched.emit(page_id)
 
 
 ## AT-28：任意时刻恰好一个页面内容可见。
@@ -132,6 +140,6 @@ func badge(page_id: String) -> int:
 	return int(_badges.get(page_id, 0))
 
 
-## §8.4：1280×720 等窄宽度 2×2（不产生横向滚动）；宽窗保持一行/自适应。
+## §8.4 / UI-01：≥340 三按钮一行；320 窄档 2×2 换行（不产生横向滚动）。
 func _relayout() -> void:
-	_btn_grid.columns = 4 if size.x >= WIDE_COLS_X else 2
+	_btn_grid.columns = 3 if size.x >= WIDE_COLS_X else 2

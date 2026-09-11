@@ -221,10 +221,14 @@ func _initialize() -> void:
 	)
 
 	# ---- 验收 8（UI 接线）：威胁图层开关 + 图例 + Selected-only 控件 ----
+	# P1-B：本艇页整块装配外移到 OwnPageBuilder（main_ui 已顶 1200 行上限），
+	# 接线断言改看装配文件；main_ui 仍需保留委派调用（不能把装配整块丢掉）。
 	var ui_src: String = (load("res://scripts/ui/main_ui.gd") as Script).source_code
-	_assert(fails, ui_src.find('"threat"') >= 0, "threat layer toggle wired in main_ui")
+	_assert(fails, ui_src.find("OwnPageBuilder.build") >= 0, "own page delegated from main_ui")
+	var own_src: String = (load("res://scripts/ui/own_page_builder.gd") as Script).source_code
+	_assert(fails, own_src.find('"threat"') >= 0, "threat layer toggle wired")
 	# S109 Batch 7：文案已集中到 UiText（按目录键断言接线存在）。
-	_assert(fails, ui_src.find("chk_sel_only") >= 0, "Selected Track Only toggle wired")
+	_assert(fails, own_src.find("chk_sel_only") >= 0, "Selected Track Only toggle wired")
 	var cv_src2: String = cv_src.source_code
 	# PG-06：图例随相机装饰层拆到 ChartCameraOverlay（海图仍调用它绘制）。
 	var cam_src: String = (load("res://scripts/ui/chart_camera_overlay.gd") as Script).source_code

@@ -195,8 +195,9 @@ func _b7_43_layout(ui: Control) -> void:
 		)
 		_assert(fails, "B7-43c h-bar hidden %s" % str(pid), sc.get_h_scroll_bar().visible, false)
 	var chart: ChartView = ui._chart
-	var row: Control = pager.get_parent()
-	var span: float = chart.size.x + pager.size.x
+	# UI-01：分页器的父节点改成固定宽外壳 SidebarShell，行 = 外壳的父节点。
+	var row: Control = ui._sidebar.get_parent()
+	var span: float = chart.size.x + ui._sidebar.size.x
 	_assert(
 		fails,
 		"B7-43d chart+sidebar fits window (span=%.0f row=%.0f)" % [span, row.size.x],

@@ -25,6 +25,7 @@ var selected_track_id: String = ""
 var op: OperatorSonar = null  # Sonar Operator Layer（Truth 只进这里）
 var _op_panel: OperatorPanel = null
 var _pager: RightSidebarPager = null  # S109 §8 右栏分页（固定顶栏+四页）
+var _sidebar: SidebarShell = null  # UI-01 固定宽外壳（宽度只随窗口分档）
 var _ctx_actions: ChartContextActions = null  # S109 §9.3 海图右键菜单动作
 var _threat_hud: ThreatHud = null  # §8.3 顶栏固定告警条（banner-only）
 var _threat_list: ThreatHud = null  # 航迹页威胁列表（list-only）
@@ -223,17 +224,20 @@ func _build_ui() -> void:
 	_depth_bar = DepthBandDisplay.new()
 	main_row.add_child(_depth_bar)
 
-	# S109 §8：右栏 = 固定顶栏 + 四页（P1-03.1 宽度契约鈐制在 _process 里施加于 _pager）。
+	# S109 §8 / UI-01：右栏 = 固定宽外壳 + 分页器。外壳（非 Container）断开尺寸
+	# 传播链——宽度只随窗口分档（内容只改高度，T22），不再靠每帧 size.x 钳制。
+	_sidebar = SidebarShell.new()
+	_sidebar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_sidebar.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_pager = RightSidebarPager.new()
-	_pager.custom_minimum_size = Vector2(UiContract.SIDEBAR_PREF_W, 0)
-	_pager.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_pager.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	main_row.add_child(_pager)
+	_sidebar.set_content(_pager)
+	main_row.add_child(_sidebar)
 
 	_build_sidebar()
 	_ctx_actions = ChartContextActions.new()  # S109 §9：右键菜单（复用命令门）
 	_ctx_actions.setup(self, _chart, _pager)
 	_build_bottom(root)
+	_sidebar.refresh()  # UI-01 首次按窗口分档（之后每帧幂等刷新）
 
 
 ## S109 §8 右栏：固定顶栏（时间/暂停/倍速 + 选中摘要 + 告警条）+ 四页。
@@ -241,6 +245,7 @@ func _build_sidebar() -> void:
 	var title := Label.new()
 	title.text = UiText.t("app_title")
 	title.add_theme_font_size_override("font_size", 18)
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # UI-01：大字体/窄档只换行
 	_pager.top_bar.add_child(title)
 	_lbl_time = Label.new()
 	_lbl_time.text = "T+0s"
@@ -252,7 +257,7 @@ func _build_sidebar() -> void:
 	var spd_lbl := Label.new()
 	spd_lbl.text = UiText.t("speed")
 	_pager.time_row.add_child(spd_lbl)
-	var opt_speed := OptionButton.new()
+	var opt_speed := UiContract.tame_option_button(OptionButton.new())
 	for s in [1, 2, 4, 8]:
 		opt_speed.add_item("%dx" % s)
 	opt_speed.select(1)
@@ -262,6 +267,7 @@ func _build_sidebar() -> void:
 	_lbl_selected = Label.new()
 	_lbl_selected.text = UiText.t("selected_none")
 	_lbl_selected.add_theme_font_size_override("font_size", 16)
+	_lbl_selected.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # UI-01：摘要只换行
 	_pager.selection_slot.add_child(_lbl_selected)
 	# MK-01：锁定目的组常驻显示（切页也看得见，不与"当前查看"混淆）。
 	_lbl_mark_lock = Label.new()
@@ -274,6 +280,8 @@ func _build_sidebar() -> void:
 	_build_tactics_page(_pager.add_page("tactics", UiText.t("page_tactics")))
 	_build_weapons_page(_pager.add_page("weapons", UiText.t("page_weapons")))
 	_pager.select("sonar")
+	# UI-01：整棵侧栏装配完成后统一施加"Label 只换行"文本策略（内容只改变高度）。
+	_sidebar.apply_text_policy()
 
 
 ## 页面一声呐：Operator 控制面板（阵列/瀑布图设置/拖曳阵/主动声呐）。
@@ -359,7 +367,7 @@ func _build_tactics_page(pg: VBoxContainer) -> void:
 	_spin_range.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_range(v)))
 	_spin_course.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_course(v)))
 	_spin_speed.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_speed(v)))
-	_build_own_page(pg)  # S1-11 D-18：本艇页并入战术页，不再有第四个顶级页
+	_build_own_page(pg)  # S1-11 D-18：本艇页并入战术页（装配见 OwnPageBuilder）
 
 
 ## 页面三武器：发射管/编程、在水武器、诱饵、战果评估（S109 §8.2）。
@@ -383,58 +391,7 @@ func _build_weapons_page(pg: VBoxContainer) -> void:
 	pg.add_child(_alert_panel)
 
 
-## 页面四本艇：状态/自动化/机动、镜头与图层、开发选项（S109 §8.2）。
-func _build_own_page(pg: VBoxContainer) -> void:
-	_lbl_status = Label.new()
-	_lbl_status.text = ""
-	_lbl_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_lbl_status.add_theme_font_size_override("font_size", 14)
-	var sec_status := UiSection.make(UiText.t("sec_status"))
-	UiSection.body(sec_status).add_child(_lbl_status)
-	pg.add_child(sec_status)
-	var auto_panel := AutomationPanelUI.new()
-	# PG-01：自动化面板与主动声呐卡片共享唯一模式源（_auto_ctrl），
-	# 卡片切模式 = 全局切模式，不再各自持一份状态（T21）。
-	auto_panel.ctrl = _auto_ctrl
-	auto_panel.bind(tracker, _auto_refit_track, world)
-	_auto_panel = auto_panel
-	var auto_sec := UiSection.make(UiText.t("sec_automation"))
-	UiSection.body(auto_sec).add_child(auto_panel)
-	pg.add_child(auto_sec)
-	_own_panel = OwnManeuverPanel.new()
-	pg.add_child(_own_panel)
-	var cam_title := Label.new()
-	cam_title.text = UiText.t("cam_view")
-	cam_title.add_theme_font_size_override("font_size", 15)
-	pg.add_child(cam_title)
-	var row_cam := HBoxContainer.new()
-	row_cam.add_theme_constant_override("separation", 4)
-	pg.add_child(row_cam)
-	var btn_reset := Button.new()
-	btn_reset.text = UiText.t("btn_reset_view")
-	btn_reset.pressed.connect(func(): _chart.reset_view())
-	row_cam.add_child(btn_reset)
-	var btn_frame := Button.new()
-	btn_frame.text = UiText.t("btn_auto_frame")
-	btn_frame.pressed.connect(func(): _chart.auto_frame())
-	row_cam.add_child(btn_frame)
-	var chk_all_lob := CheckButton.new()
-	chk_all_lob.text = UiText.t("chk_all_lob")
-	chk_all_lob.toggled.connect(func(on: bool): _chart.show_all_lobs = on)
-	pg.add_child(chk_all_lob)
-	# REQ-B3-03：Selected Track only / All Tracks 切换（默认突出当前 Track）。
-	var chk_sel_only := CheckButton.new()
-	chk_sel_only.text = UiText.t("chk_sel_only")
-	chk_sel_only.toggled.connect(func(on: bool): _chart.show_selected_only = on)
-	pg.add_child(chk_sel_only)
-	_build_layer_toggles(pg)
-	_btn_show_truth = Button.new()
-	_btn_show_truth.text = UiText.t("btn_show_truth")
-	_btn_show_truth.toggle_mode = true
-	_btn_show_truth.toggled.connect(_on_show_truth)
-	pg.add_child(_btn_show_truth)
-
-
+## 接触列表（点击选择）+ 接触卡（四动作 + 详情折叠，S1-11 D-17）。
 func _build_contact_list(pg: Control) -> void:
 	var ct_title := Label.new()
 	ct_title.text = UiText.t("contacts_title")
@@ -445,40 +402,10 @@ func _build_contact_list(pg: Control) -> void:
 	ContactCard.install(pg, self)  # S1-11 D-17：接触卡仅四个直接动作 + 详情折叠
 
 
-func _build_layer_toggles(pg: Control) -> void:
-	var lt := Label.new()
-	lt.text = UiText.t("layers")
-	lt.add_theme_font_size_override("font_size", 15)
-	pg.add_child(lt)
-	for key in ["lob", "sigma", "fit", "alt", "trial", "system", "truth", "threat"]:
-		var cb := CheckButton.new()
-		cb.text = UiText.t("legend_alt") if key == "alt" else UiText.t("legend_" + key)
-		cb.button_pressed = bool(_chart.layers.get(key, true))
-		cb.toggled.connect(_on_layer_toggle.bind(key))
-		pg.add_child(cb)
-		_chk_layers[key] = cb
-	var ob := OptionButton.new()
-	ob.add_item(UiText.t("bt_local"))
-	ob.add_item(UiText.t("bt_360"))
-	ob.item_selected.connect(
-		func(i: int):
-			_bt_plot.overview_mode = i == 1
-			_bt_plot.queue_redraw()
-	)
-	pg.add_child(ob)
-
-	var diag_lbl := Label.new()
-	diag_lbl.text = UiText.t("diagnostics")
-	diag_lbl.add_theme_font_size_override("font_size", 15)
-	pg.add_child(diag_lbl)
-	var diag_ob := OptionButton.new()
-	diag_ob.add_item(UiText.t("diag_closed"))
-	diag_ob.add_item(UiText.t("diag_bt"))
-	diag_ob.add_item(UiText.t("diag_residual"))
-	diag_ob.add_item(UiText.t("diag_split"))
-	diag_ob.select(DIAG_BT)
-	diag_ob.item_selected.connect(_set_diag_mode)
-	pg.add_child(diag_ob)
+## 页面四本艇：状态/自动化/机动、镜头与图层、开发选项（S109 §8.2）。
+## P1-B：整块装配外移到 OwnPageBuilder（main_ui 已顶 1200 行上限）。
+func _build_own_page(pg: VBoxContainer) -> void:
+	OwnPageBuilder.build(self, pg, DIAG_BT)
 
 
 func _build_bottom(root: VBoxContainer) -> void:
@@ -567,8 +494,8 @@ func _process(delta: float) -> void:
 		_depth_bar.sync()
 	_update_displays_light()
 	_update_panel()
-	if _pager != null:  # P1-03.1 侧栏宽度契约鈐制（S109：施加于分页器）
-		_pager.size.x = UiContract.sidebar_clamp_x(_pager.size.x)
+	if _sidebar != null:  # UI-01：宽度只随窗口档位（幂等），不再每帧钳制内容宽
+		_sidebar.refresh()
 
 
 func _feed_new_measurements() -> void:

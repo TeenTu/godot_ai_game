@@ -55,7 +55,7 @@ func _init() -> void:
 	arr_lbl.text = UiText.t("array")
 	arr_lbl.add_theme_font_size_override("font_size", 14)
 	row.add_child(arr_lbl)
-	var arr_opt := OptionButton.new()
+	var arr_opt := UiContract.tame_option_button(OptionButton.new())
 	var arr_ids: Array = []
 	for aid in OperatorSonar.ARRAY_IDS:
 		arr_ids.append(str(aid))
@@ -86,8 +86,9 @@ func _init() -> void:
 	_tow_ctl = VBoxContainer.new()
 	_tow_ctl.add_theme_constant_override("separation", 2)
 	add_child(_tow_ctl)
-	var tow_btns := HBoxContainer.new()
-	tow_btns.add_theme_constant_override("separation", 4)
+	var tow_btns := HFlowContainer.new()  # UI-01：窄侧栏自动换行
+	tow_btns.add_theme_constant_override("h_separation", 4)
+	tow_btns.add_theme_constant_override("v_separation", 4)
 	_tow_ctl.add_child(tow_btns)
 	_btn_tow_deploy = Button.new()
 	_btn_tow_deploy.text = UiText.t("btn_stream")
@@ -113,8 +114,9 @@ func _init() -> void:
 				towed_length_commanded.emit(_len_slider.value)
 	)
 	_tow_ctl.add_child(_len_slider)
-	var preset_row := HBoxContainer.new()
-	preset_row.add_theme_constant_override("separation", 4)
+	var preset_row := HFlowContainer.new()  # UI-01：窄侧栏自动换行
+	preset_row.add_theme_constant_override("h_separation", 4)
+	preset_row.add_theme_constant_override("v_separation", 4)
 	_tow_ctl.add_child(preset_row)
 	for frac in [0.25, 0.5, 0.75, 1.0]:
 		var pb := Button.new()
@@ -160,8 +162,10 @@ func _init() -> void:
 	_lbl_bb_mode = Label.new()
 	_lbl_bb_mode.text = UiText.t("bb_relative")
 	_lbl_bb_mode.add_theme_font_size_override("font_size", 12)
+	# UI-01：与右侧 OptionButton 内容重复的长文案，允许换行（不撑宽侧栏）。
+	_lbl_bb_mode.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	bb_mode_row.add_child(_lbl_bb_mode)
-	var bb_mode_opt := OptionButton.new()
+	var bb_mode_opt := UiContract.tame_option_button(OptionButton.new())
 	bb_mode_opt.add_item(UiText.t("bb_mode_relative"))
 	bb_mode_opt.add_item(UiText.t("bb_mode_true"))
 	bb_mode_opt.select(0)
@@ -175,10 +179,13 @@ func _init() -> void:
 
 	# REQ-B6-03：显示控制（Palette / AGC / Dynamic Range / Reset Display）。
 	# 纯显示参数：不影响任何 peak/Mark/evidence/Track/Fit，不消耗仿真 RNG。
-	var disp_row := HBoxContainer.new()
-	disp_row.add_theme_constant_override("separation", 6)
+	# UI-01：四个控件横排会把侧栏撑到 377px（4 控件 + 间距），改 2×2 网格换行。
+	var disp_row := GridContainer.new()
+	disp_row.columns = 2
+	disp_row.add_theme_constant_override("h_separation", 6)
+	disp_row.add_theme_constant_override("v_separation", 4)
 	add_child(disp_row)
-	var pal_opt := OptionButton.new()
+	var pal_opt := UiContract.tame_option_button(OptionButton.new())
 	for p in ["HOT", "GRAYSCALE", "BLUE", "AMBER"]:
 		pal_opt.add_item(UiText.palette(p))
 	pal_opt.item_selected.connect(
@@ -188,7 +195,7 @@ func _init() -> void:
 			wf_demon.set_palette(["HOT", "GRAYSCALE", "BLUE", "AMBER"][i])
 	)
 	disp_row.add_child(pal_opt)
-	var agc_opt := OptionButton.new()
+	var agc_opt := UiContract.tame_option_button(OptionButton.new())
 	for m in ["AGC SLOW", "AGC FAST", "AGC OFF"]:
 		agc_opt.add_item(UiText.agc(m))
 	agc_opt.select(0)
@@ -243,8 +250,9 @@ func _init() -> void:
 	_lbl_nb_band = Label.new()
 	_lbl_nb_band.text = UiText.t("nb_band") + " 0-500 Hz"
 	_lbl_nb_band.add_theme_font_size_override("font_size", 12)
+	_lbl_nb_band.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # UI-01：频段名变长只换行
 	nb_band_row.add_child(_lbl_nb_band)
-	var nb_band_opt := OptionButton.new()
+	var nb_band_opt := UiContract.tame_option_button(OptionButton.new())
 	nb_band_opt.add_item("0-500 Hz")
 	nb_band_opt.add_item("500-3000 Hz")
 	nb_band_opt.add_item("8000-16000 Hz")

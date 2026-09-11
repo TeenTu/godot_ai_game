@@ -32,6 +32,7 @@ func _build() -> void:
 	_spin_depth = _add_spin(UiText.t("spin_own_depth"), 0, 400, 1, 0)
 	_lbl_cmd = Label.new()
 	_lbl_cmd.add_theme_font_size_override("font_size", 13)
+	_lbl_cmd.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # UI-01：ACT/CMD 长串只换行
 	add_child(_lbl_cmd)
 	_spin_course.value_changed.connect(_on_course)
 	_spin_speed.value_changed.connect(_on_speed)
@@ -48,8 +49,9 @@ func _build() -> void:
 	b_dn.text = UiText.t("btn_lower")
 	b_dn.pressed.connect(_on_band.bind("LOWER"))
 	row_band.add_child(b_dn)
-	var row_turn := HBoxContainer.new()
-	row_turn.add_theme_constant_override("separation", 4)
+	var row_turn := HFlowContainer.new()  # UI-01：窄侧栏自动换行
+	row_turn.add_theme_constant_override("h_separation", 4)
+	row_turn.add_theme_constant_override("v_separation", 4)
 	add_child(row_turn)
 	for cfg in [
 		[UiText.t("btn_turn_left"), _on_turn_left],

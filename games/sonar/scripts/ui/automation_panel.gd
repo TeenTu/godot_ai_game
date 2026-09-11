@@ -41,7 +41,7 @@ func _ready() -> void:
 	var lbl := Label.new()
 	lbl.text = UiText.t("lbl_auto")
 	row.add_child(lbl)
-	_mode_opt = OptionButton.new()
+	_mode_opt = UiContract.tame_option_button(OptionButton.new())
 	for m in AutomationController.MODE_NAMES:
 		_mode_opt.add_item(UiText.mode(str(m)))
 	_mode_opt.select(ctrl.mode)  # S1-11 D-11：默认 ASSISTED

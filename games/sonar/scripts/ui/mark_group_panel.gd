@@ -59,7 +59,7 @@ func _init() -> void:
 	var lbl1 := _mk_label(12)
 	lbl1.text = UiText.t("add_mark_to")
 	row1.add_child(lbl1)
-	_opt_group = OptionButton.new()
+	_opt_group = UiContract.tame_option_button(OptionButton.new())
 	_opt_group.add_item(UiText.t("auto_pick"))
 	_opt_group.item_selected.connect(_on_group_selected)
 	row1.add_child(_opt_group)
@@ -69,14 +69,16 @@ func _init() -> void:
 	var lbl2 := _mk_label(12)
 	lbl2.text = UiText.t("assoc_label")
 	row2.add_child(lbl2)
-	_opt_assoc = OptionButton.new()
+	_opt_assoc = UiContract.tame_option_button(OptionButton.new())
 	for m in ASSOC_ORDER:
 		_opt_assoc.add_item(UiText.assoc(m))
 	_opt_assoc.item_selected.connect(_on_assoc_selected)
 	row2.add_child(_opt_assoc)
 	add_child(row2)
 
-	var row3 := HBoxContainer.new()
+	var row3 := HFlowContainer.new()  # UI-01：四按钮横排 294px 会顶到窄侧栏 → 自动换行
+	row3.add_theme_constant_override("h_separation", 4)
+	row3.add_theme_constant_override("v_separation", 4)
 	_btn_apply = Button.new()
 	_btn_apply.text = UiText.t("btn_apply_suggest")
 	_btn_apply.add_theme_font_size_override("font_size", 12)

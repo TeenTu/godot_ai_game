@@ -163,3 +163,11 @@ active_return_global_test
 #                              不做"每 Ping 固定缩圈"）
 #                              （PG-06）
 chart_declutter_test
+
+#   sidebar_width_test       P1-B UI-01：侧栏宽度由窗口布局决定。断言宽度源是
+#                            "非 Container 固定宽外壳"（尺寸传播链断开）而非钳制；
+#                            窗口分档 1280→320 / 1440→340 / 1920→340 / 2200→380；
+#                            超长中文（选中摘要/机动 ACT-CMD/威胁告警）注入、切页、
+#                            OptionButton 超长项下宽度差 ≤1 逻辑像素、逐页内容不裁剪、
+#                            接触卡四动作与分页按钮未被裁掉（T22）。
+sidebar_width_test
