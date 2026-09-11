@@ -57,6 +57,10 @@ var enemy_ai: EnemyDoctrineController = null
 var enemy_weapons: WeaponSystem = null
 var enemy_torpedo_ctx: TorpedoContext = null
 var enemy_countermeasures: CountermeasureSystem = null
+## PG-05：普通接触候选提供者（UI 侧注入）。签名
+## Callable(t_ref: float, station: OwnStationSnapshot) -> Array；未注入时只有
+## TT 候选参与归属（无头链路/旧脚手架行为不变）。
+var contact_candidate_provider: Callable = Callable()
 var _weapon_contacts: Array = []
 
 var _sensor_timers: Dictionary = {}  # sensor_id -> 下次触发时间
@@ -64,11 +68,13 @@ var _paused: bool = false
 var _time_scale: float = 1.0
 # 单在途 PingSession（S1-04B-REQ-16/17）；{} = 无在途（READY）。结构：
 var _ping_session: Dictionary = {}
-# 已结算回波摘要缓冲（take_arrived_echoes 排空）。独立于会话存活：远目标回波 τ 可能远超冷却期，会话提前清空也不得丢已结算结果。
+## 已结算回波摘要缓冲（take_arrived_echoes 排空）。独立于会话存活：远目标回波 τ 可能远超冷却期，会话提前清空也不得丢已结算结果。
 var _ping_results: Array = []
 var _next_ping_id: int = 1
 # S1-11 §3.5：最近一次监听窗关闭的 ping_id（-1=无）。驱动 UI 侧回波批次结算。
 var _last_closed_ping_id: int = -1
+## PG-05：本次 Ping 的全局归属结果（take_attribution 一次性取走）。
+var _attribution: Array = []
 
 # ---- S1-07 §9（Commit 9）：敌方出生/感知/Doctrine；同一声学服务+净化证据 ----
 var _player_torpedo_shadows: Array = []
@@ -943,74 +949,65 @@ func take_arrived_echoes() -> Array:
 ## 矩阵做一对一分配（ActiveReturnBatch，顺序无关 + 歧义保留），再把已归属回波
 ## 融合进对应威胁航迹；未归属回波仍作为净化证据保留在 player_evidence，绝不
 ## 按到达顺序强塞（AT-51..54）。批次只结算一次（幂等）。
-func _process_active_return_batch() -> void:
+func _attribute_active_returns() -> void:
 	if bool(_ping_session.get("batch_processed", false)):
 		return
 	_ping_session["batch_processed"] = true
 	var batch: Array = _ping_session.get("batch", [])
 	if batch.is_empty():
 		return
-	var targets: Array = []
+	var pid: int = int(_ping_session.get("ping_id", -1))
+	var station: OwnStationSnapshot = _ping_session.get("station", null)
+	var t_ref: float = station.time_s if station != null else sim_time
+	var entries: Array = ActiveReturnAttributionBridge.resolve(
+		batch, _attribution_targets(t_ref, station), pid, sim_time
+	)
+	for a in entries:
+		_attribution.append(a)
+		var i: int = int(a.get("idx", -1))
+		if i >= 0 and i < batch.size():
+			_apply_attribution(batch[i], a)
+
+
+## PG-05：TT 威胁候选 + 普通接触候选（同一参考站位/参考时刻）放进同一个矩阵。
+## 候选 DTO 的构造在 ActiveReturnAttributionBridge（TT 快照 → 威胁候选）。
+func _attribution_targets(t_ref: float, station: OwnStationSnapshot) -> Array:
+	var snaps: Array = []
 	for tr in threat_tracks.tracks():
-		var snap: Dictionary = threat_tracks.estimate_snapshot(tr)
-		var rng: float = -1.0
-		var rng_sig: float = 100.0
-		if snap.get("range_est_m") != null:
-			rng = float(snap["range_est_m"])
-			if snap.get("range_sigma_m") != null:
-				rng_sig = float(snap["range_sigma_m"])
-		(
-			targets
-			. append(
-				{
-					"id": str(snap.get("track_id", "")),
-					"bearing_deg": float(snap.get("bearing_est_deg", 0.0)),
-					"bearing_sigma_deg": float(snap.get("bearing_sigma_deg", 2.0)),
-					"range_m": rng,
-					"range_sigma_m": rng_sig,
-					"time": float(snap.get("last_update_time", 0.0)),
-					"freqs": [],
-				}
-			)
-		)
-	var returns: Array = []
-	for i in range(batch.size()):
-		var e: Dictionary = batch[i]
-		(
-			returns
-			. append(
-				{
-					"id": _batch_return_id(i),
-					"bearing_deg": float(e.get("bearing_deg", 0.0)),
-					"bearing_sigma_deg": float(e.get("bearing_sigma_deg", 2.0)),
-					"range_m": float(e.get("measured_range_m", -1.0)),
-					"range_sigma_m": float(e.get("range_sigma_m", 100.0)),
-					"time": float(e.get("available_time", sim_time)),
-					"freqs": [],
-				}
-			)
-		)
-	var res: Dictionary = ActiveReturnBatch.assign(returns, targets)
-	var assigns: Dictionary = res.get("assignments", {})
-	for i in range(batch.size()):
-		var rid: String = _batch_return_id(i)
-		if assigns.has(rid):
-			# 已归属：融合进对应 TT 航迹（带 batch_key 防止同 Ping 二次占用，
-			# preferred_track_id 让融合层尊重批次的一对一决定）。写入 player_evidence
-			# 的必须是净化回波 DTO（含融合到的威胁 id），绝不是内部分配字符串。
-			var dto: Dictionary = batch[i].duplicate()
-			dto["batch_key"] = str(_ping_session.get("ping_id", -1))
-			dto["preferred_track_id"] = str(assigns[rid])
-			dto["threat_track_id"] = threat_tracks.fuse_active_return(dto, sim_time)
-			player_evidence.append(dto)
-		else:
-			# 未归属/关联不确定：证据保留，供 UI 建立临时主动接触（不偷用身份）。
-			player_evidence.append(batch[i])
+		snaps.append(threat_tracks.estimate_snapshot(tr))
+	var targets: Array = ActiveReturnAttributionBridge.threat_targets(snaps)
+	if contact_candidate_provider.is_valid():
+		for c in contact_candidate_provider.call(t_ref, station):
+			targets.append(c)
+	return targets
 
 
-## 批次内回波稳定 id（顺序无关，仅用于分配索引）。
-func _batch_return_id(idx: int) -> String:
-	return "P%d-R%03d" % [int(_ping_session.get("ping_id", -1)), idx]
+## 应用一条回波的唯一归属（结论由 ActiveReturnAttributionBridge 给出）：
+## THREAT → 融合进 TT 一次（batch_key 防同 Ping 二次占用，preferred_track_id 让
+## 融合层尊重批次的一对一决定）；CONTACT → 由 UI 侧按 owner_id 挂到普通航迹
+## （World 不重复写证据）；无归属 → 净化证据保留，供 UI 建临时主动接触。
+func _apply_attribution(e: Dictionary, a: Dictionary) -> void:
+	var kind: String = str(a.get("owner_kind", ""))
+	if kind == ActiveReturnAttribution.KIND_THREAT:
+		var dto: Dictionary = e.duplicate()
+		dto["batch_key"] = str(a.get("ping_id", -1))
+		dto["preferred_track_id"] = str(a.get("owner_id", ""))
+		dto["threat_track_id"] = threat_tracks.fuse_active_return(dto, sim_time)
+		player_evidence.append(dto)
+	elif kind != ActiveReturnAttribution.KIND_CONTACT:
+		player_evidence.append(e)
+
+
+## PG-05：本次 Ping 的全局归属结果。给定 ping_id 时**只取走该 Ping 的条目**，
+## 其余 Ping 的结论留在队列里（一次取走不应丢掉别的监听窗已结算的归属）。
+func take_attribution(ping_id: int = -1) -> Array:
+	if ping_id < 0:
+		var all: Array = _attribution
+		_attribution = []
+		return all
+	var parts: Dictionary = ActiveReturnAttributionBridge.split_for(_attribution, ping_id)
+	_attribution = parts["keep"]
+	return parts["taken"]
 
 
 ## S1-11 §3.5：最近关闭监听窗的 ping_id（-1=无）。UI 侧据此结算普通接触批次。
@@ -1029,7 +1026,7 @@ func _advance_ping_session() -> void:
 			# 监听窗结束：丢弃仍未到达/超出窗口的回波（REQ-04，不可接收），
 			# 再按已返回 detected 数判 RETURN/NO_RETURN。窗口不因远目标延长。
 			PingSessionRules.drop_unsettled(_ping_session)
-			_process_active_return_batch()
+			_attribute_active_returns()
 			_last_closed_ping_id = int(_ping_session.get("ping_id", -1))
 			_ping_session["state"] = (
 				"RETURN" if int(_ping_session["returned_count"]) > 0 else "NO_RETURN"

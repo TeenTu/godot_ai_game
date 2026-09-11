@@ -33,9 +33,15 @@ const MODE_MANUAL: String = "MANUAL"
 ## PG-01：自动 TMA 的最小证据数（"条件充分"）。位置估计（POSITION_ONLY）一律
 ## 不受此门限约束——T14 明确禁止用"4 条证据"拦截位置输出。
 const MIN_EVIDENCE_FOR_AUTO_TMA: int = 4
+## PG-05：回波证据台账容量上限（面板只看最近 MAX_RETURNS 行，但台账是证据库）。
+const MAX_RECORDS: int = 512
 ## PG-03：临时（待关联）位置点上限 / 归属后标签保留秒数。
 const MAX_TEMP_CONTACTS: int = 12
 const RESOLVED_TEMP_HOLD_S: float = 8.0
+## PG-05：候选参考站位偏移折算方位不确定度时，无测距候选的假定距离（m）。
+const STATION_SIGMA_ASSUMED_RANGE_M: float = 2000.0
+## PG-05：距离随龄期扩张的速度上界（kn）——不知目标速度时的保守项。
+const RANGE_AGE_SPEED_KN: float = 15.0
 ## 本艇航速超过该值时，无回波解释里列出"自噪升高"这一已知因素。
 const OWN_NOISE_SPEED_KN: float = 8.0
 ## 海况达到该值时，无回波解释里列出"环境噪声高"这一已知因素。
@@ -118,6 +124,7 @@ var _pending_apply: Dictionary = {}
 func refresh_panel(op_panel: OperatorPanel) -> void:
 	if world == null:
 		return
+	_ensure_candidate_provider()
 	_process_arrived_echoes()
 	# PG-01/T18：ASSIST/AUTO 都自动更新全部已关联接触的系统位置估计。
 	_refresh_track_estimates()
@@ -160,6 +167,7 @@ func _apply_fit_mode(value: String) -> void:
 func request_ping() -> void:
 	if world == null or tracker == null:
 		return
+	_ensure_candidate_provider()
 	if world.ping_state_name() == "UNAVAILABLE":
 		_call_status(UiText.t("st_ping_unavailable"))
 		return
@@ -236,24 +244,6 @@ func _register_temp_contact(e: Dictionary) -> void:
 	)
 	while pending_contacts.size() > MAX_TEMP_CONTACTS:
 		pending_contacts.pop_front()
-
-
-## PG-03：监听窗关闭后统一归属——把临时标签替换为最终航迹 id（同一条证据对象，
-## 不新增重复证据）。归属到既有航迹的临时点保留 RESOLVED_TEMP_HOLD_S 秒后收起。
-func _resolve_temp_contacts(fed: Array) -> void:
-	var owner: Dictionary = {}
-	for f in fed:
-		var t: Track = f.get("track")
-		if t != null:
-			owner[f.get("measurement")] = str(t.track_id)
-	var now: float = world.sim_time
-	for c in pending_contacts:
-		var m: Measurement = c.get("measurement")
-		if not bool(c["awaiting"]) or m == null or not owner.has(m):
-			continue
-		c["awaiting"] = false
-		c["resolved_track_id"] = str(owner[m])
-		c["resolved_at_s"] = now
 
 
 func _prune_temp_contacts() -> void:
@@ -368,33 +358,72 @@ func position_estimate_for(track_id: String) -> Dictionary:
 	return position_estimates.get(track_id, {})
 
 
-## 批次结算：构造 Return×Track 代价矩阵 → 一对一分配 → 应用。
-## 已归属回波直接追加到对应普通接触（显式 range 证据）；未归属/歧义回波
-## 建立新的临时主动接触或保留未归属，绝不按到达顺序强塞。
+## PG-05：接管本次 Ping 的全局归属——不再自己另造一套 Return×Track 分配。
+## World 在监听窗关闭时已把「全部有效回波 × (TT 威胁候选 + 普通接触候选)」
+## 放进同一个代价矩阵决出唯一归属；本方法只按 owner_kind 落地：
+##   CONTACT → 追加为该普通航迹的显式测距证据；
+##   THREAT  → 不建普通航迹（信息已融合进 TT，绝不双计/双画）；
+##   无归属  → 建/更新临时主动接触（不偷用身份），保留未归属。
 func _flush_return_batch(ping_id: int) -> void:
 	var echoes: Array = _pending_batch[ping_id]
 	_pending_batch.erase(ping_id)
 	if echoes.is_empty():
 		return
-	var returns: Array = []
+	var owners: Dictionary = _take_owner_map(ping_id)
+	var hits: Array = []
+	var fed: Array = []
+	var rows: Array = []
 	for i in range(echoes.size()):
-		var mi: Measurement = echoes[i]["measurement"]
-		(
-			returns
-			. append(
-				{
-					"id": "ret%02d" % i,
-					"bearing_deg": mi.measured_bearing_deg,
-					"bearing_sigma_deg": mi.bearing_sigma_deg,
-					"range_m": mi.measured_range_m,
-					"range_sigma_m": mi.range_sigma_m,
-					"time": mi.timestamp,
-					"freqs": mi.detected_frequencies,
-				}
-			)
-		)
-	var targets: Array = []
-	var by_id: Dictionary = {}
+		var e: Dictionary = echoes[i]
+		var m: Measurement = e["measurement"]
+		var owner: Dictionary = owners.get(int(m.measurement_id), {})
+		var kind: String = str(owner.get("kind", ""))
+		var oid: String = str(owner.get("id", ""))
+		var t2: Track = null
+		if kind == ActiveReturnAttribution.KIND_CONTACT:
+			t2 = tracker.track_by_id(oid)
+			if t2 != null:
+				tracker.append_group_direct(t2, [m])
+		var owner_label: String = oid
+		if t2 == null and kind != ActiveReturnAttribution.KIND_THREAT:
+			t2 = tracker.mark(m, "P")
+			# 全新接触由主动回波直接锚定：range 即初始证据（未归属/歧义同样建
+			# 临时接触，供玩家后续确认，不偷用身份裁决）。
+			t2.association_confidence = 0.9
+			t2.last_association_mode = "range"
+			owner_label = t2.track_id
+		hits.append(e)
+		var rid: String = _append_record(m, t2, kind, owner_label)
+		if t2 != null:
+			fed.append({"measurement": m, "track": t2, "summary": e, "local_return_id": rid})
+		rows.append({"measurement": m, "track": t2, "owner_label": owner_label})
+		_append_return_row(m, t2, owner_label)
+	_seal_returns(hits)
+	_route_fed_by_mode(fed)
+	for r in rows:
+		_resolve_temp_by_measurement(r["measurement"], r["owner_label"])
+	_refresh_estimates(fed)
+	if on_echo_hits.is_valid() and not fed.is_empty():
+		on_echo_hits.call(fed)
+
+
+## PG-05：把普通接触候选注册给 World——全局一次归属要求两类候选同时可见。
+## 幂等：同一控制器只注册一次（World 侧为空时才写）。
+func _ensure_candidate_provider() -> void:
+	if world != null and not world.contact_candidate_provider.is_valid():
+		world.contact_candidate_provider = _contact_candidates
+
+
+## PG-05：普通接触候选（与 TT 候选同一参考时刻/参考站位口径）。
+##   - 方位：按本 Track 的方位率外推到本次 Ping 的参考时刻 t_ref（不拿旧方位
+##     直接与新回波比较）；
+##   - 距离：最近一次有效测距，σ 按龄期与速度上界扩张（不知目标速度）；
+##   - 参考站位：候选自身站位与本次 Ping 站位的偏移按 atan(Δs / r) 折成方位
+##     不确定度增量（联合不确定性），绝不忽略平台运动把同一目标判成两个。
+func _contact_candidates(t_ref: float, station: OwnStationSnapshot) -> Array:
+	var out: Array = []
+	if tracker == null:
+		return out
 	for tr in tracker.all_tracks():
 		var t: Track = tr
 		if t.state != Track.TrackState.ACTIVE:
@@ -402,94 +431,127 @@ func _flush_return_batch(ping_id: int) -> void:
 		var lm: Measurement = t.latest_measurement()
 		if lm == null:
 			continue
+		var pred_b: float = t.predicted_bearing_at(t_ref)
+		if pred_b < 0.0:
+			continue
 		var rng: float = -1.0
 		var rng_sig: float = 100.0
 		var lrm: Measurement = t.last_valid_range_measurement()
 		if lrm != null:
+			var age: float = maxf(t_ref - float(lrm.reference_station()["time_s"]), 0.0)
 			rng = lrm.measured_range_m
-			rng_sig = maxf(lrm.range_sigma_m, 1.0)
+			rng_sig = sqrt(
+				(
+					lrm.range_sigma_m * lrm.range_sigma_m
+					+ pow(age * NavUtils.kn_to_ms(RANGE_AGE_SPEED_KN), 2.0)
+				)
+			)
 		(
-			targets
+			out
 			. append(
 				{
 					"id": t.track_id,
-					"bearing_deg": t.predicted_bearing_at(world.sim_time),
-					"bearing_sigma_deg": lm.bearing_sigma_deg,
+					"kind": ActiveReturnAttribution.KIND_CONTACT,
+					"bearing_deg": pred_b,
+					"bearing_sigma_deg": _station_sigma(lm, rng, station),
 					"range_m": rng,
 					"range_sigma_m": rng_sig,
-					"time": lm.timestamp,
+					"time": t_ref,
 					"freqs": lm.detected_frequencies,
 				}
 			)
 		)
-		by_id[t.track_id] = t
-	var res: Dictionary = ActiveReturnBatch.assign(returns, targets)
-	var assigns: Dictionary = res.get("assignments", {})
-	var hits: Array = []
-	var fed: Array = []
-	for i in range(echoes.size()):
-		var e: Dictionary = echoes[i]
-		var m: Measurement = e["measurement"]
-		var t2: Track = null
-		var tid: String = str(assigns.get("ret%02d" % i, ""))
-		if tid != "":
-			t2 = by_id.get(tid)
-			if t2 != null:
-				tracker.append_group_direct(t2, [m])
-		if t2 == null:
-			t2 = tracker.mark(m, "P")
-			# 全新接触由主动回波直接锚定：range 即初始证据（未归属/歧义同样
-			# 建临时接触，供玩家后续确认，不偷用身份裁决）。
-			t2.association_confidence = 0.9
-			t2.last_association_mode = "range"
-		hits.append(e)
-		_next_return_seq += 1
-		var rid: String = "R%03d" % _next_return_seq
-		notify_dirty()
-		(
-			_records
-			. append(
-				{
-					"local_return_id": rid,
-					"ping_id": m.ping_id,
-					"measurement": m,
-					"track": t2,
-					"track_id": t2.track_id,
-					"association_score": t2.association_confidence,
-					"se_db": m.signal_excess_db,
-					"received_time": world.sim_time,
-				}
-			)
+	return out
+
+
+## PG-05：候选参考站位与本次 Ping 参考站位的偏移 → 方位不确定度增量（deg）。
+static func _station_sigma(lm: Measurement, rng_m: float, station: OwnStationSnapshot) -> float:
+	var s_b: float = maxf(lm.bearing_sigma_deg, 0.5)
+	if station == null:
+		return s_b
+	var de: float = float(lm.observer_east_m) - station.position_east_m
+	var dn: float = float(lm.observer_north_m) - station.position_north_m
+	var ds: float = sqrt(de * de + dn * dn)
+	if ds <= 1.0:
+		return s_b
+	var base_r: float = rng_m if rng_m > 0.0 else STATION_SIGMA_ASSUMED_RANGE_M
+	return sqrt(s_b * s_b + pow(rad_to_deg(atan2(ds, base_r)), 2.0))
+
+
+## 取走本 Ping 的归属结果，按 measurement_id（= 回波的 evidence_id）建索引。
+## 回波对象只在这里与归属结论对应；World 保留其他 Ping 的结论不动。
+func _take_owner_map(ping_id: int) -> Dictionary:
+	var out: Dictionary = {}
+	if world == null:
+		return out
+	for a in world.take_attribution(ping_id):
+		out[int(a.get("evidence_id", -1))] = {
+			"kind": str(a.get("owner_kind", "")), "id": str(a.get("owner_id", ""))
+		}
+	return out
+
+
+## 回波台账登记（PG-05：全部正式记录可查询；面板只显示最近 MAX_RETURNS 行）。
+## THREAT 归属的回波同样留档（owner_kind=THREAT、track_id=TTxxx），但不再另建
+## 普通航迹，因此不会被撤销链路误删威胁融合结果；无归属回波记为 UNASSIGNED
+## （绝不默认成 CONTACT——那会假装这条观测已被某个普通接触吸收）。
+func _append_record(m: Measurement, t: Track, kind: String, owner_label: String) -> String:
+	_next_return_seq += 1
+	var rid: String = "R%03d" % _next_return_seq
+	var kind_lbl: String = kind if kind != "" else ActiveReturnAttribution.KIND_UNASSIGNED
+	notify_dirty()
+	(
+		_records
+		. append(
+			{
+				"local_return_id": rid,
+				"ping_id": m.ping_id,
+				"measurement": m,
+				"track": t,
+				"track_id": t.track_id if t != null else owner_label,
+				"owner_kind": kind_lbl,
+				"association_score": t.association_confidence if t != null else 0.0,
+				"se_db": m.signal_excess_db,
+				"received_time": world.sim_time if world != null else 0.0,
+			}
 		)
-		_next_return_id_trim()
-		fed.append({"measurement": m, "track": t2, "summary": e, "local_return_id": rid})
-		_append_return_row(m, t2)
+	)
+	while _records.size() > MAX_RECORDS:
+		_records.pop_front()
+	return rid
+
+
+## 本次监听窗结论与摘要（回波已有 → RETURN + 最高优先回波摘要）。
+func _seal_returns(hits: Array) -> void:
+	last_outcome = "RETURN"
 	if hits.is_empty():
 		last_summary = "无回波"
 		_call_status(UiText.t("st_ping_no_return"))
-	else:
-		var best: Dictionary = hits[0]
-		var multi: String = ""
-		if hits.size() > 1:
-			multi = "（%d 重回波）" % hits.size()
-		last_summary = (
-			"回波 方位 %.0f° 距离 %.2f 千米 余量%+.0f dB %s"
-			% [
-				float(best["bearing_deg"]),
-				float(best["range_m"]) / 1000.0,
-				float(best["se_db"]),
-				multi,
-			]
-		)
-		_call_status(str(UiText.t("st_ping_tx")) + " → " + last_summary)
-	# PG-03：监听窗关闭 → 统一归属，把"待关联"临时标签替换为最终航迹 id
-	#（同一条 Measurement 对象，绝不新增重复证据）；再刷新系统估计。
-	last_outcome = "RETURN"
-	_resolve_temp_contacts(fed)
-	_route_fed_by_mode(fed)
-	_refresh_estimates(fed)
-	if on_echo_hits.is_valid() and not fed.is_empty():
-		on_echo_hits.call(fed)
+		return
+	var best: Dictionary = hits[0]
+	var multi: String = ""
+	if hits.size() > 1:
+		multi = "（%d 重回波）" % hits.size()
+	last_summary = (
+		"回波 方位 %.0f° 距离 %.2f 千米 余量%+.0f dB %s"
+		% [
+			float(best["bearing_deg"]),
+			float(best["range_m"]) / 1000.0,
+			float(best["se_db"]),
+			multi,
+		]
+	)
+	_call_status(str(UiText.t("st_ping_tx")) + " → " + last_summary)
+
+
+## PG-03：按 Measurement 把临时点标签替换为最终归属（普通航迹 id 或 TT id）。
+func _resolve_temp_by_measurement(m: Measurement, label: String) -> void:
+	var now: float = world.sim_time if world != null else 0.0
+	for c in pending_contacts:
+		if bool(c["awaiting"]) and c.get("measurement") == m:
+			c["awaiting"] = false
+			c["resolved_track_id"] = label
+			c["resolved_at_s"] = now
 
 
 ## REQ-02 优先级：当前选中 Track 的回波最前，再按 association_confidence 降序、
@@ -569,6 +631,7 @@ func undo_return(rid: String) -> bool:
 		_pending_apply = {}
 	var m: Measurement = rec.get("measurement")
 	var t: Track = rec.get("track")
+	# PG-05：归属威胁航迹的回波由威胁层持有，普通层不得撤销/改绑它。
 	if m == null or t == null:
 		return false
 	if not t.remove_measurement(m):
@@ -579,7 +642,9 @@ func undo_return(rid: String) -> bool:
 	return true
 
 
-## 回波记录只读摘要（测试/面板用；无 target_id 等禁止字段，§2.3）。
+## 回波证据台账只读视图（测试/审计用；无身份字段，§2.3）。
+## PG-05：这是**证据库**视图（上限 MAX_RECORDS），不是面板的 8 行显示窗口；
+## 需要显示窗口用 panel_records()。
 func records_snapshot() -> Array:
 	var out: Array = []
 	for rec in _records:
@@ -591,11 +656,21 @@ func records_snapshot() -> Array:
 					"local_return_id": str(rec["local_return_id"]),
 					"ping_id": int(rec["ping_id"]),
 					"track_id": str(rec["track_id"]),
+					"owner_kind": str(rec.get("owner_kind", "")),
 					"range_m": float(m.measured_range_m) if m != null else -1.0,
 				}
 			)
 		)
 	return out
+
+
+## PG-05：面板显示窗口（最近 MAX_RETURNS 行）——只是显示上限，不是证据库容量。
+func panel_records() -> Array:
+	var all: Array = records_snapshot()
+	var n: int = all.size()
+	if n <= MAX_RETURNS:
+		return all
+	return all.slice(n - MAX_RETURNS)
 
 
 ## ASSISTED 待裁决记录的命中 Track id（"" = 无）。
@@ -604,8 +679,11 @@ func pending_track_id() -> String:
 	return t.track_id if t != null else ""
 
 
-## 本次 Ping（最后一条记录的 ping_id）中优先级最高的回波：REQ-02 排序口径
-## （preferred 命中 > association_score > se_db）。
+## 本次 Ping（最后一条记录的 ping_id）中优先级最高的**可拟合**回波：REQ-02 排序
+## 口径（preferred 命中 > association_score > se_db）。
+## PG-05：THREAT 归属的回波留档但不建普通航迹（track == null）——它不是 TMA 的
+## 证据对象，绝不能成为待 Apply 目标（否则卡片显示"待 Apply"而 Apply 静默无效，
+## 等于把已融合进 TT 的一次观测又当成普通接触证据，双计）。
 func _pending_candidate() -> Dictionary:
 	if _records.is_empty():
 		return {}
@@ -613,6 +691,8 @@ func _pending_candidate() -> Dictionary:
 	var best: Dictionary = {}
 	for rec in _records:
 		if int(rec["ping_id"]) != pid:
+			continue
+		if rec.get("track") == null:
 			continue
 		if best.is_empty() or _rec_priority(rec) > _rec_priority(best):
 			best = rec
@@ -624,11 +704,6 @@ func _rec_priority(rec: Dictionary) -> float:
 	if preferred_track_id != "" and str(rec["track_id"]) == preferred_track_id:
 		p += 1000000.0
 	return p + float(rec["association_score"]) * 1000.0 + float(rec["se_db"])
-
-
-func _next_return_id_trim() -> void:
-	while _records.size() > MAX_RETURNS:
-		_records.pop_front()
 
 
 func has_undo() -> bool:
@@ -706,7 +781,7 @@ func linked_track_id() -> String:
 	return t.track_id
 
 
-func _append_return_row(m: Measurement, t: Track) -> void:
+func _append_return_row(m: Measurement, t: Track, owner_label: String = "") -> void:
 	(
 		return_rows
 		. append(
@@ -717,7 +792,8 @@ func _append_return_row(m: Measurement, t: Track) -> void:
 				"range_m": m.measured_range_m,
 				"range_sigma_m": m.range_sigma_m,
 				"se_db": m.signal_excess_db,
-				"track_id": t.track_id if t != null else "-",
+				"track_id":
+				t.track_id if t != null else (owner_label if owner_label != "" else "-"),
 			}
 		)
 	)

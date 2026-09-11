@@ -147,3 +147,11 @@ towed_performance_test
 #                           卡片与全局模式同源、自动估计不覆盖玩家手动草案）
 #                           （PG-01/PG-03/PG-04 / T14 T15 T20 T21）
 active_echo_auto_test
+
+#   active_return_global_test  P1-A：一次 Ping 的全局一次归属（潜艇+两枚鱼雷+诱饵
+#                              同一矩阵裁决、歧义保留；输入顺序无关、不共吃同一观测；
+#                              ASSIST/AUTO 更新全部已关联接触；TT 与普通接触共享
+#                              观测身份、只融合一次、不画重复物体；8 行 UI 窗口
+#                              ≠ 证据库容量）
+#                              （PG-05 / T16 T17 T18 T19）
+active_return_global_test

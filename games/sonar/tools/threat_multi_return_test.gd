@@ -4,8 +4,9 @@ extends SceneTree
 ##
 ##   MR-17  一次 Ping 多回波（敌潜艇 + 逼近敌雷）：每条回波独立
 ##          ActiveReturnRecord（local_return_id 唯一、measurement 保留）；
-##          ASSISTED 待 Apply = 本次 Ping 最高优先（preferred）回波——
-##          不再被"最后写入"覆盖（P0-07）。
+##          PG-05 后归到威胁航迹（TT）的回波只留档、不另建普通航迹；
+##          ASSISTED 待 Apply = 本次 Ping 最高优先的**可拟合**回波——
+##          既不是"最后写入"，也不会落在无普通航迹的 TT 回波上（P0-07）。
 ##   MR-18  同帧两条近方位证据 → 一对一分配：不得贪心并入同一 TT。
 ##   MR-19  静态扫描：main_ui 回波回调/重拟合回调不得写 selected_track_id
 ##          （P0-08：主动回波不抢玩家当前选择）。
@@ -70,22 +71,49 @@ func _mr_17(fails: Array) -> void:
 			all_ok = false
 		rid_set[str(r["local_return_id"])] = true
 	_assert(fails, all_ok, "MR-17 distinct local_return_id + range kept per echo")
-	var first_tid: String = str(recs[0]["track_id"])
+	# PG-05：归到威胁航迹的回波留档但不另建普通航迹（信息只融合一次，不双计）。
+	var tt_recs: Array = []
+	var ct_recs: Array = []
+	for r in recs:
+		if str(r.get("owner_kind", "")) == ActiveReturnAttribution.KIND_THREAT:
+			tt_recs.append(r)
+		elif str(r.get("owner_kind", "")) == ActiveReturnAttribution.KIND_CONTACT:
+			ct_recs.append(r)
+	_assert(fails, not tt_recs.is_empty(), "MR-17 threat-owned echo recorded (owner_kind=THREAT)")
+	if not tt_recs.is_empty():
+		var tt_tid: String = str(tt_recs[0]["track_id"])
+		_assert(
+			fails,
+			tt_tid.begins_with("TT"),
+			"MR-17 threat-owned echo keeps its TT label (%s)" % tt_tid
+		)
+		_assert(
+			fails,
+			c.tracker.track_by_id(tt_tid) == null,
+			"MR-17 threat-owned echo builds no ordinary track (%s)" % tt_tid
+		)
 	var last_tid: String = str(recs[recs.size() - 1]["track_id"])
-	# preferred 指向最先到达的回波 Track（修复前 pending 会变成最后写入的）。
-	c.preferred_track_id = first_tid
-	# 重路由一次（把末条回波重新送入裁决链——模拟后续批次到达时的
-	# 优先级重算，pending 应稳定为 preferred 命中而非最后写入）。
+	# preferred/pending 只认可拟合回波：本次 Ping 中优先级最高的普通接触，
+	# 而不是"最后写入"的那条（PG-05 后第一条回波已归 TT，无普通航迹可拟合）。
+	var first_tid: String = ""
+	if ct_recs.size() >= 2:
+		first_tid = str(ct_recs[0]["track_id"])
+		c.preferred_track_id = first_tid
 	var pend_before: String = c.pending_track_id()
-	if first_tid != last_tid:
+	if first_tid != "" and first_tid != last_tid:
 		_assert(
 			fails,
 			pend_before == first_tid,
 			(
-				"MR-17 pending Apply = preferred echo (%s) not last-written (%s)"
+				"MR-17 pending Apply = preferred fittable echo (%s) not last-written (%s)"
 				% [first_tid, last_tid]
 			),
 		)
+	_assert(
+		fails,
+		pend_before != "" and c.tracker.track_by_id(pend_before) != null,
+		"MR-17 pending Apply targets a fittable ordinary track (%s)" % pend_before
+	)
 	# Apply → 拟合请求目标 = pending 记录的 Track。
 	if c.has_pending_apply():
 		if c.apply_pending():
