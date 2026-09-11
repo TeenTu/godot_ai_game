@@ -171,3 +171,14 @@ chart_declutter_test
 #                            OptionButton 超长项下宽度差 ≤1 逻辑像素、逐页内容不裁剪、
 #                            接触卡四动作与分页按钮未被裁掉（T22）。
 sidebar_width_test
+
+#   own_graphic_command_test  P1-B UI-02/03/04：图形操纵（罗盘/深度条）+ 统一命令仲裁。
+#                            T23 罗盘四象限/跨 0°/中心死区/拖出控件释放仍提交一次/
+#                               Esc 与右键取消不写命令/不夺接触选择；
+#                            T24 深度条刻度映射（表层/海底/温跃层/上下 hold）、
+#                               场景海底与艇体限制钳制、实际深度受垂速限制、
+#                               预览与命令/实际三态分离、切页与暂停清理预览；
+#                            T25 内部 LineEdit 持焦不被每帧 sync 覆盖、图形↔数字双向同步；
+#                            T26 终局后罗盘/深度条/面板/地图投放全部拒绝新命令。
+#                            含真实事件链（root.push_input(ev, true)：Viewport 捕获拖拽）。
+own_graphic_command_test

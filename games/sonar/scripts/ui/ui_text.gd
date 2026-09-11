@@ -587,6 +587,19 @@ const LABELS := {
 	"own_cmd_speed_fmt": " → 命令 %.1f 节（约 %.0f 秒）",
 	"own_depth_fmt": " | 深度 %.0f 米",
 	"own_depth_cmd_fmt": " → %.0f 米（约 %.0f 秒）",
+	# ---- P1-B UI-02/UI-03：图形操纵（罗盘外圈 / 深度条）文案 ----
+	# 图形与数字双向同步：命令完成后保留"最后设定"显示，避免回落到内部 -1 哨兵。
+	"own_course_actual_fmt": "实际 %.0f°",
+	"own_course_cmd_fmt": "命令 %.0f°",
+	"own_course_cmd_eta_fmt": "命令 %.0f° ±%.0f 秒",
+	"own_course_preview_fmt": "预览 %.0f°",
+	"own_graphic_hint": "外圈拖动转向 · 松开提交 · 右键/Esc 取消",
+	"own_last_cmd_fmt": " | 最后设定 航向 %.0f° 深度 %.0f 米",
+	"depth_tag_actual": "实际",
+	"depth_tag_cmd": "命令",
+	"depth_tag_preview": "预览",
+	"depth_preview_fmt": "预览 %.0f 米（松开提交）",
+	"depth_preview_idle_fmt": "拖动深度条设定深度（当前 %.0f 米）",
 	"towed_none": "拖曳阵：未布放",
 	"towed_line_fmt": "拖曳阵：%s | 实长 %.0f 米 / 命令 %.0f 米 | 阵位 %.0f° | 可用 %d%%",
 	# AC-03：阵列名称旁持续标注线阵的两项固有特性（高灵敏 + 左右歧义）。

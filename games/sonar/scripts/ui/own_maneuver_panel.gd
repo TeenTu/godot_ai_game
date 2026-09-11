@@ -16,6 +16,10 @@ var _spin_course: SpinBox = null
 var _spin_speed: SpinBox = null
 var _spin_depth: SpinBox = null
 var _lbl_cmd: Label = null
+## UI-04：最后设定值（命令完成后保留显示，避免把内部 -1 哨兵当航向/深度展示）。
+var _last_course: float = -1.0
+var _last_depth: float = -1.0
+var _last_speed: float = -1.0
 
 
 func _init() -> void:
@@ -89,17 +93,17 @@ func bind_world(w: World) -> void:
 	sync()
 
 
-## 每帧同步：命令旋钮跟随实际值（无焦点时）；ACT→CMD 状态文本。
+## 每帧同步：数字框显示**有效命令值**（有命令显示命令，否则显示实际），实际值在
+## _lbl_cmd 里另外展示（UI-04）。内部 LineEdit 持有焦点时绝不被同步覆盖（T25）。
 func sync() -> void:
 	if _world == null:
 		return
 	var own: TruthEntity = _world.world["own"]
-	if _spin_course != null and not _spin_course.has_focus():
-		_spin_course.set_value_no_signal(own.course_deg)
-	if _spin_speed != null and not _spin_speed.has_focus():
-		_spin_speed.set_value_no_signal(own.speed_kn)
-	if _spin_depth != null and not _spin_depth.has_focus():
-		_spin_depth.set_value_no_signal(own.depth_m)
+	_set_spin(
+		_spin_course, own.commanded_course_deg if own.has_course_command() else own.course_deg
+	)
+	_set_spin(_spin_speed, own.commanded_speed_kn if own.has_speed_command() else own.speed_kn)
+	_set_spin(_spin_depth, own.commanded_depth_m if own.has_depth_command() else own.depth_m)
 	if _lbl_cmd == null:
 		return
 	var txt: String = UiText.t("own_act_fmt") % [own.course_deg, own.speed_kn]
@@ -119,42 +123,87 @@ func sync() -> void:
 			UiText.t("own_depth_cmd_fmt")
 			% [own.commanded_depth_m, dz / maxf(own.max_vertical_speed_m_s, 0.5)]
 		)
+	# UI-04：转向命令完成后保留最后设定显示（不回落成哨兵值，也不假装还在转）。
+	if not own.has_course_command() and _last_course >= 0.0:
+		txt += UiText.t("own_last_cmd_fmt") % [_last_course, maxf(_last_depth, 0.0)]
 	var dm: RefCounted = _depth_model()
 	if dm != null:
 		txt += " %s" % UiText.depth_preset((dm as DepthLayerModel).band_name(own.depth_m))
 	_lbl_cmd.text = txt
 
 
-func _on_course(deg: float) -> void:
-	if not _commands_ok():
+## UI-04/T25：SpinBox 的焦点在**内部 LineEdit** 上，Control.has_focus() 对它无效
+## ——直接用 has_focus() 判断会漏，每帧同步就会把玩家正在输入的内容冲掉。
+func _set_spin(sp: SpinBox, v: float) -> void:
+	if sp == null:
 		return
-	_own().command_course(NavUtils.wrap360(deg))
+	var le: LineEdit = sp.get_line_edit()
+	if le != null and le.has_focus():
+		return
+	sp.set_value_no_signal(v)
+
+
+## UI-04 统一命令入口：图形（罗盘/深度条）、数字框、±按钮、层带预设全走这里。
+## 返回是否真的写入命令（供"预览取消不写命令""终局拒绝新命令"断言）。
+func command_course(deg: float) -> bool:
+	if not _commands_ok():
+		return false
+	var v: float = NavUtils.wrap360(deg)
+	_last_course = v
+	_set_spin(_spin_course, v)
+	_own().command_course(v)
+	sync()
+	return true
+
+
+func command_depth(depth_m: float) -> bool:
+	if not _commands_ok():
+		return false
+	var v: float = maxf(depth_m, 0.0)
+	_last_depth = v
+	_set_spin(_spin_depth, v)
+	_own().command_depth(v)
+	sync()
+	return true
+
+
+func command_speed(kn: float) -> bool:
+	if not _commands_ok():
+		return false
+	var v: float = maxf(kn, 0.0)
+	_last_speed = v
+	_set_spin(_spin_speed, v)
+	_own().command_speed(v)
+	sync()
+	return true
+
+
+## 最后设定值（UI-04 展示用；-1 = 从未设定）。
+func last_command() -> Dictionary:
+	return {"course": _last_course, "depth": _last_depth, "speed": _last_speed}
+
+
+func _on_course(deg: float) -> void:
+	command_course(deg)
 
 
 func _on_speed(kn: float) -> void:
-	if not _commands_ok():
-		return
-	_own().command_speed(maxf(kn, 0.0))
+	command_speed(kn)
 
 
 func _on_depth(v: float) -> void:
-	if not _commands_ok():
-		return
-	_own().command_depth(maxf(v, 0.0))
+	command_depth(v)
 
 
-## S1-07A：层按钮 → hold 深度 → 只写 commanded_depth_m。
+## S1-07A：层按钮 → hold 深度 → 只写 commanded_depth_m（同一入口）。
 func _on_band(band: String) -> void:
-	if not _commands_ok():
-		return
 	if _spin_depth == null:
 		return
 	var dm: RefCounted = _depth_model()
 	var hold: float = 70.0 if band == "UPPER" else 180.0
 	if dm != null:
 		hold = float((dm as DepthLayerModel).hold_depth_for_band(band))
-	_spin_depth.set_value_no_signal(hold)
-	_own().command_depth(hold)
+	command_depth(hold)
 
 
 func _on_turn_left() -> void:
@@ -174,23 +223,15 @@ func _on_slow_down() -> void:
 
 
 func _change_course(delta_deg: float) -> void:
-	if not _commands_ok():
-		return
 	if _spin_course == null:
 		return
-	var new_deg: float = NavUtils.wrap360(_spin_course.value + delta_deg)
-	_spin_course.set_value_no_signal(new_deg)
-	_own().command_course(new_deg)
+	command_course(NavUtils.wrap360(_spin_course.value + delta_deg))
 
 
 func _change_speed(delta_kn: float) -> void:
-	if not _commands_ok():
-		return
 	if _spin_speed == null:
 		return
-	var new_kn: float = clampf(_spin_speed.value + delta_kn, 0.0, 30.0)
-	_spin_speed.set_value_no_signal(new_kn)
-	_own().command_speed(new_kn)
+	command_speed(clampf(_spin_speed.value + delta_kn, 0.0, 30.0))
 
 
 func _own() -> TruthEntity:

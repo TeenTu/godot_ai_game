@@ -59,6 +59,7 @@ var _spin_range: SpinBox = null
 var _spin_course: SpinBox = null
 var _spin_speed: SpinBox = null
 var _own_panel: OwnManeuverPanel = null  # 本艇机动/深度控制簇（拆出控行数）
+var _cmd_gate: OwnCommandGate = null  # UI-04 统一命令仲裁（图形/数字同一入口）
 var _in_water_panel: InWaterWeaponPanel = null  # §11.2 在水武器控制台
 var _cm_panel: CountermeasurePanel = null  # §8.5 诱饵面板
 var _alert_panel: AlertPanel = null  # §11.5 告警/战果证据
@@ -163,6 +164,9 @@ func _ready() -> void:
 		_alert_panel.bind(world, Callable(self, "_alert_track_bearings"))
 	if _depth_bar != null:
 		_depth_bar.bind(world, tracker)
+	# UI-02/UI-03/UI-04：罗盘与深度条的图形操纵统一走 OwnManeuverPanel 命令入口。
+	_cmd_gate = OwnCommandGate.new()
+	_cmd_gate.install(world, _own_panel, _bearing, _depth_bar, _pager)
 
 	# REQ-B5-04：Game Over 覆盖层（终局锁定 + 同 seed 重玩 / 回主菜单）。
 	_game_over = GameOverOverlay.new()
@@ -492,6 +496,8 @@ func _process(delta: float) -> void:
 		_alert_panel.sync()
 	if _depth_bar != null:
 		_depth_bar.sync()
+	if _cmd_gate != null:
+		_cmd_gate.sync()
 	_update_displays_light()
 	_update_panel()
 	if _sidebar != null:  # UI-01：宽度只随窗口档位（幂等），不再每帧钳制内容宽
@@ -678,6 +684,9 @@ func _on_threat_selected(evidence_id: int) -> void:
 
 func _on_pause() -> void:
 	_paused = not _paused
+	# UI-04：暂停按与切页/终局相同的规则清理未提交预览（不写命令）。
+	if _cmd_gate != null:
+		_cmd_gate.cancel_previews("pause")
 	world.set_paused(_paused)
 	_btn_pause.text = UiText.t("resume") if _paused else UiText.t("pause")
 
