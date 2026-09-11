@@ -9,6 +9,8 @@ extends RefCounted
 ## 选择；任何动作不绕过终局/联锁。S1-11 §4.3：空白地图菜单新增「绘制/清除
 ## 鱼雷航线」真实入口，原未实现的「开始测距尺」占位已删除（AT-24 无可选但
 ## 无效的按钮）；「查看证据历史」仍为占位条目（S109 未定义交互细则，仅提示）。
+## S1-11 修复：绘制态右键优先解释为**航线编辑**（完成航线 / 取消本次绘制），
+## 无论鼠标下方是空白、Contact、威胁还是己方鱼雷（AT-RC-08）。
 
 var _ui = null
 var _chart: ChartView = null
@@ -38,6 +40,9 @@ func _on_context(ctx: Dictionary) -> void:
 	ctx["selected_torpedo_id"] = _chart.selected_torpedo_id
 	var wmc = _ui.map_control() if _ui.has_method("map_control") else null
 	ctx["route_drawing"] = bool(wmc != null and wmc.is_drawing())
+	# 绘制态菜单只保留「完成航线（仅当有效）/ 取消本次绘制」，
+	# 因此必须把航线有效性一并注入，不能让「完成航线」点了没反应。
+	ctx["route_can_commit"] = bool(wmc != null and wmc.is_route_ready())
 	var gp: Vector2 = _chart.get_screen_transform() * (ctx["screen_position"] as Vector2)
 	_menu.open_at(gp, ctx)
 
@@ -87,9 +92,13 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 			if _ui.has_method("clear_route_draw"):
 				_ui.clear_route_draw()
 		"empty_route_done":
-			var m = _map()
-			if m != null:
-				m.finish_draw()
+			var md = _map()
+			if md != null:
+				md.finish_draw()
+		"empty_route_cancel":
+			var mc = _map()
+			if mc != null:
+				mc.cancel_current_edit()
 		"empty_torpedo_goto":
 			_map().map_goto_point(ctx["world_position"])
 		"empty_torpedo_waypoint":

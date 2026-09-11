@@ -4,7 +4,12 @@ extends Control
 ##
 ## 覆盖在 ChartView 之上（不侵入 ChartView 的 _draw，控行数）：
 ##   - 空闲：mouse_filter=IGNORE，完全不挡地图交互；
-##   - 绘制：捕获左键 → 世界坐标 → 追加航路点；拖动开机标记。
+##   - 绘制：mouse_filter=PASS（不是 STOP）——自己处理的左键/拖动显式
+##     accept_event()，右键与滚轮**故意不 accept**，继续冒泡到
+##     ChartView（右键菜单 / 缩放）。STOP 会把未处理的右键一并吞掉，
+##     导致「完成航线 / 取消本次绘制」永远不可达。
+## 注意：绘制态**不抓焦点**。Control 一旦持有 key_focus，Godot 的 GUI 阶段
+## 会消费键事件，`_unhandled_key_input` 再也收不到 Enter/Esc（已实测）。
 ## 起点吸附本艇**实测**位置（发射前）或鱼雷**当前已知**位置（在线重画），
 ## 其后最多 MAX_FUTURE_POINTS 个未来航路点。
 ##
@@ -18,6 +23,10 @@ signal route_changed
 signal route_committed(points: Array)
 ## 开机点累计距离变化（<0 = 无标记）。
 signal trigger_changed(offset_m: float)
+## Enter / 左键双击请求结束绘制（由 WeaponMapControl 决定提交还是给中文拒绝原因）。
+signal finish_requested
+## Esc 请求取消当前编辑（发射前绘制或在水鱼雷重画）。
+signal cancel_requested
 
 ## 未来航路点上限（不含起点），与 TorpedoRouteState.MAX_FUTURE_POINTS 一致。
 const MAX_FUTURE_POINTS: int = 4
@@ -54,6 +63,8 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	focus_mode = Control.FOCUS_NONE
+	# 绘制态的 Enter/Esc 是承诺过的退出方式（§5.3），必须真的能收到键事件。
+	set_process_unhandled_key_input(true)
 
 
 ## 进入绘制态：起点吸附给定实测位置（发射前 = 本艇；在线重画 = 鱼雷）。
@@ -65,7 +76,7 @@ func begin(own_e: float, own_n: float, from_torpedo: bool = false) -> void:
 	_dragging_trigger = false
 	_drag_waypoint = -1
 	active = true
-	mouse_filter = Control.MOUSE_FILTER_STOP
+	mouse_filter = Control.MOUSE_FILTER_PASS
 	queue_redraw()
 	route_changed.emit()
 
@@ -240,13 +251,44 @@ func _gui_input(event: InputEvent) -> void:
 		_handle_drag(event as InputEventMouseMotion)
 
 
+## Enter 完成 / Esc 取消（菜单打开时优先由菜单消费，避免同时提交/取消）。
+## 走 unhandled 阶段：覆盖层不抢焦点，键事件才会到得了这里。
+func _unhandled_key_input(event: InputEvent) -> void:
+	if not active or (chart != null and chart.context_menu_open):
+		return
+	var k := event as InputEventKey
+	if k != null and _handle_key(k):
+		get_viewport().set_input_as_handled()
+
+
+## Enter/小键盘 Enter = 完成绘制；Esc = 取消当前编辑。返回是否已消费该键。
+func _handle_key(k: InputEventKey) -> bool:
+	if not k.pressed or k.echo:
+		return false
+	if k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER:
+		finish_requested.emit()
+		return true
+	if k.keycode == KEY_ESCAPE:
+		cancel_requested.emit()
+		return true
+	return false
+
+
 ## 左键按下：优先拖动开机标记，其次拖动已有航路点，否则追加新航路点。
+## 右键/滚轮**不 accept**（让 ChartView 收到）；左键按下与释放都必须吃掉。
 func _handle_click(mb: InputEventMouseButton) -> void:
 	if mb.button_index != MOUSE_BUTTON_LEFT:
 		return
 	if not mb.pressed:
 		_dragging_trigger = false
 		_drag_waypoint = -1
+		accept_event()
+		return
+	if mb.double_click:
+		# 双击结束绘制：首击已落下终点，第二击不再追加重合航路点。
+		# 无条件发信号，让 WeaponMapControl 决定提交还是给出中文拒绝原因（不静默）。
+		accept_event()
+		finish_requested.emit()
 		return
 	var hit: float = hit_px(UiContract.touch_mode())
 	if has_trigger() and _to_screen(trigger_world_point()).distance_to(mb.position) <= hit:

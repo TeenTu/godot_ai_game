@@ -5,7 +5,8 @@ extends SceneTree
 ##   B5-02 (§6.3/AT-22) 开机点按沿航线**累计距离**触发，且只触发一次；
 ##   B5-03 (§4.4/AT-17) 导线 BROKEN/CUT 后地图命令（航行/航路点/开机/清航线/
 ##          重画）全部拒绝并给出中文具体原因，绝不静默失败；
-##   B5-04 (§4.3) 右键菜单动态条目：选中鱼雷 → 4 条指令；绘制态 → 完成航线；
+##   B5-04 (§4.3) 右键菜单动态条目：选中鱼雷 → 4 条指令；绘制态 → 航线编辑
+##         菜单（完成航线 / 取消本次绘制）优先于命中类型；
 ##   B5-05 (§6.4/AT-24/25) 武器页无 WAYPOINT/AUTONOMY 下拉；只留主动/切线两个安全动作；
 ##   B5-06 (§9.3/AT-26) 摘要行点击 → 地图选中该 torpedo_id（数组删减后 ID 不重排）。
 
@@ -200,12 +201,37 @@ func _b5_04_menu_dynamic(fails: Array) -> void:
 	_assert(
 		fails, "B5-04d no torpedo commands without selection", not _has_prefix(texts, "令 "), true
 	)
-	menu.open_at(
-		Vector2.ZERO, {"hit_kind": "EMPTY", "selected_torpedo_id": "TK02", "route_drawing": true}
+	(
+		menu
+		. open_at(
+			Vector2.ZERO,
+			{
+				"hit_kind": "EMPTY",
+				"selected_torpedo_id": "TK02",
+				"route_drawing": true,
+				"route_can_commit": true,
+			}
+		)
 	)
 	texts = Array(menu.item_texts())
-	_assert(fails, "B5-04e per-torpedo commands", texts.has("令 TK02 向此处航行"), true)
+	_assert(fails, "B5-04e drawing menu is route-only", texts.size(), 2)
 	_assert(fails, "B5-04f done-drawing entry", texts.has("完成航线"), true)
+	_assert(fails, "B5-04g cancel-drawing entry", texts.has("取消本次绘制"), true)
+	_assert(fails, "B5-04h no torpedo commands while drawing", _has_prefix(texts, "令 "), false)
+	# 命中鱼雷也不改变：绘制态菜单优先于命中类型（否则「完成航线」不可达）。
+	menu.open_at(
+		Vector2.ZERO,
+		{"hit_kind": "OWN_TORPEDO", "selected_torpedo_id": "TK02", "route_drawing": true}
+	)
+	texts = Array(menu.item_texts())
+	_assert(fails, "B5-04i drawing beats hit kind", texts.has("重画剩余航线"), false)
+	# 无有效航线：不提供「完成航线」，但必须仍能取消（绝不出现点了没反应的死条目）。
+	menu.open_at(
+		Vector2.ZERO, {"hit_kind": "EMPTY", "route_drawing": true, "route_can_commit": false}
+	)
+	texts = Array(menu.item_texts())
+	_assert(fails, "B5-04j no done without valid route", texts.has("完成航线"), false)
+	_assert(fails, "B5-04k cancel still available", texts.has("取消本次绘制"), true)
 	menu.free()
 
 

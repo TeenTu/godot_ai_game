@@ -862,11 +862,15 @@ func _on_route_clear() -> void:
 	_dirty = true
 
 
-## 航线层任何变化（加点/撤销/取消/开机点）→ 刷新面板状态行 + 地图重绘。
+## 航线层任何变化（加点/撤销/取消/提交/开机点）→ 刷新面板状态行 + 地图重绘。
 func _on_route_changed() -> void:
 	_dirty = true
 	if _weapon_panel == null or _route_overlay == null:
 		return
+	# S1-11 修复：绘制开关必须跟着航线层真实状态走（右键「完成航线」后
+	# active 已 false，开关若仍选中，玩家再点一次会走取消路径清掉已提交航线）。
+	# set_route_drawing 内部用 set_pressed_no_signal()，不会回头触发 toggled。
+	_weapon_panel.set_route_drawing(_route_overlay.active)
 	var n: int = _route_overlay.future_point_count()
 	if _route_overlay.active:
 		_weapon_panel.set_route_status(
