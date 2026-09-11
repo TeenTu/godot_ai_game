@@ -392,7 +392,7 @@ func test_save() -> void:
 	# 6) main 层结算落盘：_on_game_over 触发 BoomSave.save()（文件存在即落盘路径可用）。
 	host._main.call("_on_game_over", 88)
 	host._main.call("_end_slowmo")
-	host._check(FileAccess.file_exists(BoomSave.SAVE_PATH), "结算后存档文件存在（落盘路径可用）")
+	host._check(FileAccess.file_exists(BoomSave._path), "结算后存档文件存在（落盘路径可用）")
 	g.free()
 	g2.free()
 	BoomSave.test_reset()
@@ -401,6 +401,8 @@ func test_save() -> void:
 func test_tree_ui() -> void:
 	print("[m7-tree-ui]")
 	BoomSave.test_reset()
+	# 换装界面只在开战前操作；前序测试已开战，先通过正式重开流程解除锁定。
+	host._main.sim.restart()
 	var sel := host._main.get("_select") as BoomWeaponSelect
 	host._check(sel != null, "选武器面板已构建")
 	if sel == null:
@@ -416,19 +418,15 @@ func test_tree_ui() -> void:
 	for i in rows.size():
 		bubble_texts.append((rows[i] as Button).text)
 	host._check(
-		str(bubble_texts).contains("QUICK WICK") and str(bubble_texts).contains("SOUL BEACON"),
-		"镇夜灯技能区含独立双分支节点"
+		str(bubble_texts).contains("速燃灯芯") and str(bubble_texts).contains("引魂灯"), "镇夜灯技能区含独立双分支节点"
 	)
 	host._check(
-		(
-			not str(bubble_texts).contains("INK WAVE")
-			and not str(bubble_texts).contains("SCARLET VERDICT")
-		),
+		not str(bubble_texts).contains("泼墨横波") and not str(bubble_texts).contains("朱砂判"),
 		"镇夜灯技能区不出现判笔节点"
 	)
-	host._check(str(bubble_texts[0]).contains("EQUIPPED"), "普攻根节点显示已装备")
-	host._check(str(bubble_texts[2]).contains("UNLOCK 120"), "普攻二阶显示价格 120")
-	host._check(str(bubble_texts[4]).contains("REQUIRES"), "普攻三阶显示前置条件")
+	host._check(str(bubble_texts[0]).contains("已装备"), "普攻根节点显示已装备")
+	host._check(str(bubble_texts[2]).contains("解锁 120"), "普攻二阶显示价格 120")
+	host._check(str(bubble_texts[4]).contains("需前置"), "普攻三阶显示前置条件")
 	for row_variant in rows.values():
 		var row := row_variant as Button
 		var icon := row.get_node_or_null("Icon") as TextureRect
@@ -439,10 +437,9 @@ func test_tree_ui() -> void:
 	for i in rows.size():
 		sword_texts.append((rows[i] as Button).text)
 	host._check(
-		str(sword_texts).contains("INK WAVE") and str(sword_texts).contains("SEAL DOMAIN"),
-		"判笔技能区含独立技能分支"
+		str(sword_texts).contains("泼墨横波") and str(sword_texts).contains("封域"), "判笔技能区含独立技能分支"
 	)
-	host._check(not str(sword_texts).contains("SOUL BEACON"), "判笔技能区不出现镇夜灯节点")
+	host._check(not str(sword_texts).contains("引魂灯"), "判笔技能区不出现镇夜灯节点")
 	# 4) 行点击：已解锁节点可勾选/取消。
 	sel.set_selected("bubble")
 	sel.skill_sys.debug_grant("lamp_bright_core")

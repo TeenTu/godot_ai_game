@@ -97,31 +97,27 @@ func _test_lantern_passives() -> void:
 			is_equal_approx(game.skill_basic_speed_mult, 1.15)
 			and is_equal_approx(game._fire_interval(), 0.22 / 1.15)
 		),
-		"QUICK WICK 真实把普攻间隔缩短 15%"
+		"速燃灯芯真实把普攻间隔缩短 15%"
 	)
 	system.debug_grant("lamp_bright_core")
-	host._check(
-		system.equip("lamp_bright_core") and game._base_attack() == 12, "BRIGHT CORE 使基础攻击 10→12"
-	)
+	host._check(system.equip("lamp_bright_core") and game._base_attack() == 12, "明芯使基础攻击 10→12")
 	system.unequip("lamp_bright_core")
 	system.debug_grant("lamp_threefold_seal")
-	host._check(
-		system.equip("lamp_threefold_seal") and game.skill_threefold_seal, "THREEFOLD SEAL 开启三叠镇印"
-	)
+	host._check(system.equip("lamp_threefold_seal") and game.skill_threefold_seal, "三重灵印开启三叠镇印")
 	var muzzle := game.player.position + Vector3(0.0, 0.5, 0.0)
 	for _shot in 3:
 		game._fire_ranged_basic(muzzle, Vector3.FORWARD)
 	host._check(host._active_bullets(game) == 5, "三次普攻实际生成 1+1+3 枚灵印")
 	system.unequip("lamp_threefold_seal")
 	system.debug_grant("lamp_echo")
-	host._check(system.equip("lamp_echo"), "LANTERN ECHO 可正常装备")
+	host._check(system.equip("lamp_echo"), "灯影回响可正常装备")
 	system.cast_skill("lamp_firefly_volley")
 	host._check(
 		is_equal_approx(
 			float(system.get_state()["lamp_firefly_volley"]),
 			BoomSkillSystem.LAMP_VOLLEY_COOLDOWN * BoomSkillSystem.SKILL_COOLDOWN_MULT
 		),
-		"LANTERN ECHO 真实把主动技能冷却乘 0.85"
+		"灯影回响真实把主动技能冷却乘 0.85"
 	)
 	game.free()
 	BoomSave.test_reset()
@@ -131,24 +127,21 @@ func _test_brush_passives() -> void:
 	var ctx := _new_skill_game("greatsword")
 	var game := ctx[0] as BoomGame
 	var system := ctx[1] as BoomSkillSystem
-	host._check(game._base_attack() == 36, "FIRM GRIP 使判笔基础攻击 30→36")
+	host._check(game._base_attack() == 36, "稳执笔使判笔基础攻击 30→36")
 	system.debug_grant("brush_flowing_script")
-	host._check(system.equip("brush_flowing_script"), "FLOWING SCRIPT 可正常装备")
+	host._check(system.equip("brush_flowing_script"), "行云笔意可正常装备")
 	var target := game.spawn_enemy_at(Vector3(0.0, 0.0, -2.0))
 	game.player.face_toward(Vector3.FORWARD)
 	BoomMeleeSystem.tick(game, 0.0)
 	var speed := game._basic_attack_speed_mult()
-	host._check(
-		absf(game._swing_t - float(game._swing_step["windup"]) / speed) < EPS,
-		"FLOWING SCRIPT 压缩连招前摇"
-	)
+	host._check(absf(game._swing_t - float(game._swing_step["windup"]) / speed) < EPS, "行云笔意压缩连招前摇")
 	BoomMeleeSystem.tick(game, game._swing_t + EPS)
 	host._check(
 		(
 			game._swing_state == game.SwingState.ACTIVE
 			and absf(game._swing_t - float(game._swing_step["active"]) / speed) < EPS
 		),
-		"FLOWING SCRIPT 同时压缩有效帧"
+		"行云笔意同时压缩有效帧"
 	)
 	BoomMeleeSystem.tick(game, game._swing_t + EPS)
 	host._check(
@@ -156,16 +149,14 @@ func _test_brush_passives() -> void:
 			game._swing_state == game.SwingState.RECOVER
 			and absf(game._swing_t - float(game._swing_step["recover"]) / speed) < EPS
 		),
-		"FLOWING SCRIPT 同时压缩收势，完整连招 +15%"
+		"行云笔意同时压缩收势，完整连招 +15%"
 	)
 	if is_instance_valid(target) and target.get_parent() != null:
 		game.enemies.erase(target)
 		target.free()
 	system.unequip("brush_flowing_script")
 	system.debug_grant("brush_verdict")
-	host._check(
-		system.equip("brush_verdict") and game.skill_brush_verdict, "SCARLET VERDICT 开启判决形态"
-	)
+	host._check(system.equip("brush_verdict") and game.skill_brush_verdict, "朱砂判开启判决形态")
 	game._swing_state = game.SwingState.NONE
 	game._swing_combo_index = 0
 	game.spawn_enemy_at(Vector3(0.0, 0.0, -2.0))
@@ -175,7 +166,7 @@ func _test_brush_passives() -> void:
 			is_equal_approx(float(game._swing_step["arc_deg"]), 180.0)
 			and is_equal_approx(float(game._swing_step["damage_mult"]), 1.25)
 		),
-		"SCARLET VERDICT 真实扩大左右挥至 180°并增伤 25%"
+		"朱砂判真实扩大左右挥至 180°并增伤 25%"
 	)
 	game._swing_state = game.SwingState.NONE
 	game._swing_combo_index = 2
@@ -186,18 +177,18 @@ func _test_brush_passives() -> void:
 			is_equal_approx(float(game._swing_step["arc_deg"]), 360.0)
 			and is_equal_approx(float(game._swing_step["damage_mult"]), 1.5)
 		),
-		"SCARLET VERDICT 真实把大回旋扩至 360°并叠加 25% 伤害"
+		"朱砂判真实把大回旋扩至 360°并叠加 25% 伤害"
 	)
 	system.unequip("brush_verdict")
 	system.debug_grant("brush_focus")
-	host._check(system.equip("brush_focus"), "ONE-BREATH SCRIPT 可正常装备")
+	host._check(system.equip("brush_focus"), "一气呵成可正常装备")
 	system.cast_skill("brush_ink_wave")
 	host._check(
 		is_equal_approx(
 			float(system.get_state()["brush_ink_wave"]),
 			BoomSkillSystem.BRUSH_WAVE_COOLDOWN * BoomSkillSystem.SKILL_COOLDOWN_MULT
 		),
-		"ONE-BREATH SCRIPT 真实把主动技能冷却乘 0.85"
+		"一气呵成真实把主动技能冷却乘 0.85"
 	)
 	game.free()
 	BoomSave.test_reset()

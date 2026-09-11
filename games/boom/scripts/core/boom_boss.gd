@@ -8,7 +8,7 @@ signal boss_phase_changed(phase_index: int)
 
 enum BossState { IDLE, WINDUP, DASH, RECOVER }
 
-const DISPLAY_NAME: String = "LANTERN WARDEN"
+const DISPLAY_NAME: String = "提灯无常"
 const ATTACK_GHOSTFIRE: String = "ghostfire_fan"
 const ATTACK_DASH: String = "soul_dash"
 const ATTACK_LANTERN_ARRAY: String = "lantern_array"

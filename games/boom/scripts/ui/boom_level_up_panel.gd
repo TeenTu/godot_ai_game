@@ -19,16 +19,16 @@ const COL_VALUE: Color = Color("f2b84b")
 const COL_CRIT: Color = Color("b84235")
 const COL_SKILL: Color = Color("5fc5ad")
 
-## 升级卡文案表（§11.3 建议文案的英文对应；rare=稀有卡权重同池不特殊处理）。
+## 升级卡文案表（§11.3 建议文案；rare=稀有卡权重同池不特殊处理）。
 const CARD_DEFS: Dictionary = {
-	"dmg": {"title": "SEAL BREAKER", "desc": "Damage +10%", "color": COL_VALUE},
-	"atk_speed": {"title": "LANTERN CHASE", "desc": "Attack Speed +10%", "color": COL_VALUE},
-	"crit_rate": {"title": "CINNABAR FLASH", "desc": "Crit Rate +3%", "color": COL_CRIT},
-	"crit_dmg": {"title": "EVIL BREAKER", "desc": "Crit Damage +15%", "color": COL_CRIT},
-	"haste": {"title": "SPIRIT CYCLE", "desc": "Skill Cooldown -8%", "color": COL_SKILL},
-	"speed": {"title": "LIGHT STEP", "desc": "Move Speed +8%", "color": COL_VALUE},
-	"dodge": {"title": "MIST VEIL", "desc": "Dodge +3%", "color": COL_SKILL},
-	"heal": {"title": "RELIGHT", "desc": "Restore Full HP", "color": COL_VALUE},
+	"dmg": {"title": "破印", "desc": "伤害 +10%", "color": COL_VALUE},
+	"atk_speed": {"title": "追灯", "desc": "攻速 +10%", "color": COL_VALUE},
+	"crit_rate": {"title": "朱砂闪", "desc": "暴击率 +3%", "color": COL_CRIT},
+	"crit_dmg": {"title": "镇邪", "desc": "暴击伤害 +15%", "color": COL_CRIT},
+	"haste": {"title": "灵息循环", "desc": "技能冷却 -8%", "color": COL_SKILL},
+	"speed": {"title": "轻步", "desc": "移速 +8%", "color": COL_VALUE},
+	"dodge": {"title": "雾隐", "desc": "闪避 +3%", "color": COL_SKILL},
+	"heal": {"title": "复明", "desc": "恢复全部生命", "color": COL_VALUE},
 }
 const CARD_COUNT: int = 3
 
@@ -63,7 +63,7 @@ func _init() -> void:
 	add_child(panel)
 
 	_title = Label.new()
-	_title.text = "LEVEL UP!"
+	_title.text = "升级！"
 	_title.add_theme_font_size_override("font_size", 44)
 	_title.add_theme_color_override("font_color", COL_VALUE)
 	_title.position = Vector2(0, 28)
@@ -72,7 +72,7 @@ func _init() -> void:
 	panel.add_child(_title)
 
 	var hint := Label.new()
-	hint.text = "CHOOSE 1"
+	hint.text = "选择 1 项"
 	hint.add_theme_font_size_override("font_size", 22)
 	hint.add_theme_color_override("font_color", COL_TEXT)
 	hint.position = Vector2(0, 86)

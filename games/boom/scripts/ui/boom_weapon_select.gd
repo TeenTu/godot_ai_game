@@ -11,11 +11,11 @@ signal confirmed(weapon_id: String)
 
 const COL_CREAM: Color = Color("fff6e8")
 const COL_GOLD: Color = Color("ffc93c")
-const COL_CARD: Color = Color(0.99, 0.52, 0.20, 0.98)
-const COL_CARD_DEEP: Color = Color(0.55, 0.14, 0.03, 0.34)
+const COL_CARD: Color = Color("314a78")
+const COL_CARD_DEEP: Color = Color(0.06, 0.10, 0.20, 0.34)
 const COL_OVERLAY: Color = Color(0.07, 0.10, 0.14, 0.99)
-const COL_ROW_LOCKED: Color = Color(0.24, 0.16, 0.12, 0.85)
-const COL_ROW_OPEN: Color = Color(0.86, 0.36, 0.10, 0.92)
+const COL_ROW_LOCKED: Color = Color("202b40")
+const COL_ROW_OPEN: Color = Color("36577b")
 
 ## 卡片几何（720 宽设计空间居中 620 卡；M7R 压缩高度给技能配置区让位）。
 const CARD_W: float = 620.0
@@ -35,16 +35,40 @@ const SKILL_ROW_W: float = 300.0
 const SKILL_COL_X: Dictionary = {"basic": 50.0, "skill": 370.0}
 
 var skill_sys: BoomSkillSystem = null  # main.gd 注入；空时技能区只读隐藏
-
+var equipment_page: BoomEquipmentPanel
 var _weapons: Array = []
 var _selected_id: String = ""
-var _cards: Dictionary = {}  # weapon_id -> Button
-var _name_labels: Dictionary = {}  # weapon_id -> Label
+var _cards: Dictionary = {}
+var _name_labels: Dictionary = {}
+var _stat_labels: Dictionary = {}
 var _fight_btn: Button
-var _skill_rows: Dictionary = {}  # skill_id -> Button（当前武器树 6 行）
+var _skill_rows: Dictionary = {}
 var _skill_header: Label
 var _branch_labels: Dictionary = {}
 var _tree_links: Array[ColorRect] = []
+
+
+func bind_equipment(value: BoomEquipmentSystem, preview: Callable = Callable()) -> void:
+	equipment_page = BoomEquipmentPanel.new()
+	equipment_page.size = Vector2(720, 1100)
+	var backdrop := ColorRect.new()
+	backdrop.color = Color("18233b")
+	backdrop.size = equipment_page.size
+	equipment_page.add_child(backdrop)
+	add_child(equipment_page)
+	equipment_page.setup(value, preview)
+	equipment_page.hide()
+	var toggle := Button.new()
+	toggle.position = Vector2(100, 1120)
+	toggle.size = Vector2(520, 72)
+	toggle.text = "护甲 / 护腕 / 项链 / 护手 / 鞋子 / 裤子"
+	toggle.pressed.connect(
+		func() -> void:
+			equipment_page.visible = not equipment_page.visible
+			equipment_page.refresh()
+			toggle.text = "返回法器与技能 · 开战" if equipment_page.visible else "查看人物装备"
+	)
+	add_child(toggle)
 
 
 func _init() -> void:
@@ -65,12 +89,12 @@ func _build_panel() -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	var title := _make_label("CHOOSE WEAPON", 46, COL_CREAM)
+	var title := _make_label("人物装备 · 法器", 46, COL_CREAM)
 	title.position = Vector2(0.0, 32.0)
 	title.size = Vector2(720.0, 60.0)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 
-	var subtitle := _make_label("New weapon, new playstyle", 20, Color(1.0, 0.94, 0.85, 0.72))
+	var subtitle := _make_label("换一把武器 换一种打法", 20, Color(1.0, 0.94, 0.85, 0.72))
 	subtitle.position = Vector2(0.0, 96.0)
 	subtitle.size = Vector2(720.0, 30.0)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -84,9 +108,7 @@ func _build_panel() -> void:
 
 	_fight_btn = _build_fight_button()
 	_build_skill_panel()
-	var note := _make_label(
-		"Choose up to 3 nodes · unlock each branch in order", 17, Color(1.0, 1.0, 1.0, 0.55)
-	)
+	var note := _make_label("最多装备 3 个节点 · 每分支按前置逐阶解锁", 17, Color(1.0, 1.0, 1.0, 0.55))
 	note.position = Vector2(0.0, 1056.0)
 	note.size = Vector2(720.0, 30.0)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -127,7 +149,7 @@ func _build_card(def: BoomWeaponDef, pos: Vector2) -> Button:
 	btn.pressed.connect(_on_card_pressed.bind(def.id))
 	add_child(btn)
 
-	# 深橙底叠层，模拟"暖橙→深橙"纵向渐变（半透明，不挡点击）。
+	# 靛蓝底叠层（半透明，不挡点击）。
 	var shade := ColorRect.new()
 	shade.color = COL_CARD_DEEP
 	shade.position = Vector2(0.0, CARD_H - 104.0)
@@ -169,18 +191,19 @@ func _build_card(def: BoomWeaponDef, pos: Vector2) -> Button:
 	var chips := Label.new()
 	chips.text = _stat_text(def)
 	chips.add_theme_font_size_override("font_size", 17)
-	chips.add_theme_color_override("font_color", Color(0.30, 0.12, 0.04, 0.9))
+	chips.add_theme_color_override("font_color", COL_CREAM)
 	chips.position = Vector2(196.0, 118.0)
 	chips.size = Vector2(410.0, 70.0)
 	chips.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	chips.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	btn.add_child(chips)
+	_stat_labels[def.id] = chips
 	return btn
 
 
 func _build_new_badge(card: Button) -> void:
 	var badge := Label.new()
-	badge.text = "NEW"
+	badge.text = "新"
 	badge.add_theme_font_size_override("font_size", 22)
 	badge.add_theme_color_override("font_color", Color(0.5, 0.18, 0.0, 1.0))
 	badge.position = Vector2(CARD_W - 96.0, 14.0)
@@ -193,16 +216,24 @@ func _build_new_badge(card: Button) -> void:
 
 
 func _stat_text(def: BoomWeaponDef) -> String:
-	var parts: Array = []
-	if def.kind == BoomWeaponDef.AttackKind.RANGED:
-		parts.append("RATE %d/s" % int(round(1.0 / maxf(def.fire_cd, 0.001))))
-		parts.append("DMG %d" % def.proj_dmg)
-	else:
-		parts.append("DMG %d" % def.swing_dmg)
-		parts.append("ARC %d" % int(def.swing_arc_deg))
-	parts.append("SPD %d%%" % int(round(def.move_mult * 100.0)))
-	parts.append("HP +%d" % def.max_hp_bonus)
-	return " ".join(parts)
+	var summary := (
+		"法器基础：攻击 %d · 生命 +%d · 移速 %d%%"
+		% [def.base_attack, def.max_hp_bonus, int(round(def.move_mult * 100.0))]
+	)
+	if _selected_id == "" or _selected_id == def.id:
+		return summary + "\n已选法器 · 技能加成另计"
+	var current := BoomWeapons.get_def(_selected_id)
+	return (
+		summary
+		+ (
+			"\n换装基础差值：攻击 %+d · 生命 %+d · 移速 %+d%%"
+			% [
+				def.base_attack - current.base_attack,
+				def.max_hp_bonus - current.max_hp_bonus,
+				int(round((def.move_mult - current.move_mult) * 100.0))
+			]
+		)
+	)
 
 
 func _build_fight_button() -> Button:
@@ -220,7 +251,7 @@ func _build_fight_button() -> Button:
 	btn.pressed.connect(_on_fight_pressed)
 	add_child(btn)
 	var label := Label.new()
-	label.text = "FIGHT!"
+	label.text = "开  战"
 	label.position = Vector2.ZERO
 	label.size = BTN_SIZE
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -238,7 +269,7 @@ func _on_card_pressed(weapon_id: String) -> void:
 
 ## 技能配置区：两列分别代表普攻与主动技能分支，每列三阶并显示连接线。
 func _build_skill_panel() -> void:
-	_skill_header = _make_label("WEAPON TREE", 26, COL_GOLD)
+	_skill_header = _make_label("武器技能树", 26, COL_GOLD)
 	_skill_header.position = Vector2(50.0, SKILL_HEADER_Y)
 	_skill_header.size = Vector2(620.0, 32.0)
 	for branch in ["basic", "skill"]:
@@ -349,17 +380,17 @@ func _refresh_skill_row_labels(row: Button, skill_id: String) -> void:
 		return
 	var status := ""
 	if skill_sys.is_unlocked(skill_id):
-		status = " · EQUIPPED" if skill_sys.equipped.has(skill_id) else " · READY"
+		status = " · 已装备" if skill_sys.equipped.has(skill_id) else " · 可用"
 	elif skill_sys.unlock_cost(skill_id) > 0:
-		status = " · %d COINS" % skill_sys.unlock_cost(skill_id)
+		status = " · %d 金币" % skill_sys.unlock_cost(skill_id)
 	else:
-		status = " · LOCKED"
+		status = " · 未解锁"
 	title.text = skill.display_name + status
-	var kind := "PASSIVE" if skill.is_passive else "ACTIVE"
+	var kind := "被动" if skill.is_passive else "主动"
 	detail.text = "%s · %s" % [kind, BoomSkillSystem.description_for(skill_id)]
 
 
-## 单行文案：树序. 名称 + [EQUIPPED]（已勾选）/ 无标记（已解锁）/ [UNLOCK n]（未解锁）。
+## 单行文案：树序. 名称 + [已装备]（已勾选）/ 无标记（已解锁）/ [解锁 n]（未解锁）。
 func _skill_row_text(skill_id: String) -> String:
 	if skill_sys == null:
 		return skill_id
@@ -368,15 +399,15 @@ func _skill_row_text(skill_id: String) -> String:
 	var tag := ""
 	if skill_sys.is_unlocked(skill_id):
 		if skill_sys.equipped.has(skill_id):
-			tag = "  [EQUIPPED]"
+			tag = "  [已装备]"
 	elif skill_sys.unlock_cost(skill_id) > 0:
-		tag = " · UNLOCK %d" % skill_sys.unlock_cost(skill_id)
+		tag = " · 解锁 %d" % skill_sys.unlock_cost(skill_id)
 	else:
 		var node := skill_sys.tree_node(skill_id)
 		var prerequisite: String = str(node.get("depends_on", ""))
 		var previous := skill_sys.get_skill(prerequisite)
-		tag = " · REQUIRES %s" % (previous.display_name if previous != null else "PRIOR NODE")
-	var kind := "PASSIVE" if skill != null and skill.is_passive else "ACTIVE"
+		tag = " · 需前置 %s" % (previous.display_name if previous != null else "前置节点")
+	var kind := "被动" if skill != null and skill.is_passive else "主动"
 	return (
 		"        %s%s\n        %s · %s"
 		% [name_txt, tag, kind, BoomSkillSystem.description_for(skill_id)]
@@ -406,12 +437,16 @@ func skill_rows() -> Dictionary:
 func set_selected(weapon_id: String) -> void:
 	if not _cards.has(weapon_id):
 		return
+	if equipment_page != null:
+		if not equipment_page.equipment.equip("artifact", weapon_id):
+			return
 	_selected_id = weapon_id
 	for id in _cards:
 		var card := _cards[id] as Button
 		if card == null:
 			continue
 		var is_sel: bool = id == weapon_id
+		(_stat_labels[id] as Label).text = _stat_text(BoomWeapons.get_def(String(id)))
 		var style := _rounded(
 			COL_CARD, COL_GOLD if is_sel else Color(1.0, 1.0, 1.0, 0.55), 5 if is_sel else 3, 28
 		)

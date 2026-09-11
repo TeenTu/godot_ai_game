@@ -157,6 +157,8 @@ var input_move: Vector2 = Vector2.ZERO
 var weapon_cfg: BoomWeaponDef
 ## M5 R9：对局是否已开战（选武器期间 sim 已建但未发波）。
 var match_started: bool = false
+var equipment: BoomEquipmentSystem = null
+
 ## M7：属性容器（升级点消费落点）与经验曲线；升级点待消费数。
 var stats: BoomStats
 var exp_sys: BoomExperience
@@ -243,7 +245,26 @@ func step(delta: float) -> void:
 
 
 ## M5：纯数值重置（R9 把"开波"拆到 begin_match；存量调用语义 = 默认武器重开）。
+func bind_equipment(value: BoomEquipmentSystem) -> void:
+	if match_started:
+		return
+	if equipment != null and equipment.changed.is_connected(_equipment_changed):
+		equipment.changed.disconnect(_equipment_changed)
+	equipment = value
+	equipment.changed.connect(_equipment_changed)
+	_equipment_changed()
+
+
+func _equipment_changed() -> void:
+	if equipment == null or match_started:
+		return
+	stats.set_equipment_bonus(equipment.bonuses())
+	set_weapon(String(equipment.snapshot()["artifact"]))
+
+
 func restart() -> void:
+	if equipment != null:
+		equipment.locked = false
 	# M7：成长状态随对局重置（金币也在下方清零；解锁/跨局金币在 BoomSave 不清）。
 	stats.reset()
 	exp_sys.reset()
@@ -260,7 +281,11 @@ func restart() -> void:
 	boss_reward_pending = false
 	_boss_projectile_index = 0
 	_boss_add_cd = BOSS_ADD_INTERVAL
-	weapon_cfg = BoomWeapons.get_def(BoomWeapons.default_id())
+	var artifact := BoomWeapons.default_id()
+	if equipment != null:
+		artifact = String(equipment.snapshot()["artifact"])
+		stats.set_equipment_bonus(equipment.bonuses())
+	weapon_cfg = BoomWeapons.get_def(artifact)
 	player.apply_weapon(weapon_cfg)
 	_apply_stats_to_player()
 	wave = 1
@@ -317,6 +342,8 @@ func restart() -> void:
 
 ## M5：选择武器并落机体数值（§3.3 关键工程点 1）。
 func set_weapon(id: String) -> void:
+	if equipment != null and equipment.locked:
+		return
 	weapon_cfg = BoomWeapons.get_def(id)
 	player.apply_weapon(weapon_cfg)
 	_apply_stats_to_player()
@@ -358,12 +385,25 @@ func apply_level_upgrade(kind: String) -> bool:
 ## 把 stats 加成落到玩家机体；M8 §3.2：最大生命仅由武器决定，不随等级成长。
 func _apply_stats_to_player() -> void:
 	player.move_speed = BoomPlayer.MOVE_SPEED * weapon_cfg.move_mult * stats.move_mult()
-	player.max_hp = maxi(1, BoomPlayer.BASE_MAX_HP + weapon_cfg.max_hp_bonus)
+	player.max_hp = maxi(
+		1, BoomPlayer.BASE_MAX_HP + weapon_cfg.max_hp_bonus + int(stats.equipment_value("max_hp"))
+	)
+	player.hp = mini(player.hp, player.max_hp)
 
 
 ## M8 基础攻击力（§5.1）：当前武器决定的初始攻击参数。
 func _base_attack() -> int:
-	return maxi(1, int(floor(float(weapon_cfg.base_attack) * skill_base_attack_mult)))
+	return maxi(
+		1,
+		int(
+			floor(
+				(
+					(float(weapon_cfg.base_attack) + stats.equipment_value("attack"))
+					* skill_base_attack_mult
+				)
+			)
+		)
+	)
 
 
 ## M8 最终攻击力（§5.2）：floor(基础攻击力 × (1 + 伤害加成倍率))。
@@ -397,8 +437,35 @@ func stats_snapshot() -> Dictionary:
 	return BoomCombatMath.build_snapshot(stats, player, exp_sys, _base_attack(), _fire_interval())
 
 
+## 同步只读换装预览：复用战斗公式，不发信号、不换法器、不写存档。
+## 临时属性在返回前完整恢复；仅用于开战前六个普通装备槽。
+func preview_equipment(slot: String) -> Dictionary:
+	if equipment == null or match_started or slot == "artifact":
+		return {}
+	var candidate := BoomEquipmentSystem.new()
+	candidate.restore(equipment.snapshot())
+	if not candidate.snapshot().has(slot):
+		return {}
+	if candidate.snapshot()[slot] == "":
+		candidate.equip(slot, String(BoomEquipmentRegistry.DEFAULTS[slot]))
+	else:
+		candidate.unequip(slot)
+	var before := stats_snapshot()
+	var original_bonus := stats.equipment_bonus.duplicate(true)
+	var original_hp := player.hp
+	stats.set_equipment_bonus(candidate.bonuses())
+	_apply_stats_to_player()
+	var after := stats_snapshot()
+	stats.set_equipment_bonus(original_bonus)
+	_apply_stats_to_player()
+	player.hp = original_hp
+	return {"before": before, "after": after}
+
+
 ## M5：开战（= 原 restart 后半段 _spawn_props + _begin_wave；R9 与构造解耦）。
 func begin_match() -> void:
+	if equipment != null:
+		equipment.locked = true
 	match_started = true
 	_spawn_props()
 	_begin_wave()
@@ -560,11 +627,11 @@ func trigger_freeze(dur: float) -> void:
 ## M3 击杀播报：按当前连杀数给出播报文案（空串 = 不播报）；阈值 2/3/5，4 连杀维持 TRIPLE 档。
 static func announce_for_combo(combo: int) -> String:
 	if combo >= ANNOUNCE_RAMPAGE:
-		return "RAMPAGE"
+		return "狂暴"
 	if combo >= ANNOUNCE_TRIPLE:
-		return "TRIPLE"
+		return "三杀"
 	if combo >= ANNOUNCE_DOUBLE:
-		return "DOUBLE"
+		return "双杀"
 	return ""
 
 
@@ -987,7 +1054,9 @@ func _damage_player(from_pos: Vector3) -> void:
 func _damage_player_raw(raw: int, from_pos: Vector3) -> void:
 	if player.invuln_left > 0.0 or is_over:
 		return
-	var result: Array = BoomCombatMath.resolve_player_damage(raw, stats.dodge_rate(), stats.defense)
+	var result: Array = BoomCombatMath.resolve_player_damage(
+		raw, stats.dodge_rate(), stats.total_defense()
+	)
 	if result[1]:
 		player_dodged.emit(from_pos)
 		return

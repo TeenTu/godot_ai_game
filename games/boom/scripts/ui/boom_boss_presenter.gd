@@ -78,9 +78,9 @@ func _build_hud(hud: Control) -> void:
 	style.border_color = COL_DANGER
 	panel.add_theme_stylebox_override("panel", style)
 	_boss_hud.add_child(panel)
-	_hp_text = _make_label(panel, "LANTERN WARDEN", 22, COL_CREAM, Vector2(18, 9))
+	_hp_text = _make_label(panel, BoomBoss.DISPLAY_NAME, 22, COL_CREAM, Vector2(18, 9))
 	_hp_text.size = Vector2(454, 30)
-	_phase_label = _make_label(panel, "PHASE 1", 18, COL_GOLD, Vector2(492, 11))
+	_phase_label = _make_label(panel, "第 1 阶段", 18, COL_GOLD, Vector2(492, 11))
 	_phase_label.size = Vector2(128, 26)
 	_phase_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	var bar_bg := ColorRect.new()
@@ -127,7 +127,7 @@ func refresh() -> void:
 		var ratio := clampf(float(active_boss.hp) / float(active_boss.max_hp), 0.0, 1.0)
 		_hp_fill.size.x = 598.0 * ratio
 		_hp_text.text = "%s  %d / %d" % [BoomBoss.DISPLAY_NAME, active_boss.hp, active_boss.max_hp]
-		_phase_label.text = "PHASE %d" % active_boss.boss_phase
+		_phase_label.text = "第 %d 阶段" % active_boss.boss_phase
 		if active_boss.telegraph_left <= 0.0:
 			_attack_label.text = ""
 	elif not game.boss_reward_pending:
@@ -161,15 +161,15 @@ func debug_state() -> Dictionary:
 
 func _on_boss_spawned(_boss: BoomBoss) -> void:
 	_boss_hud.visible = true
-	_show_announce.call("LANTERN WARDEN", COL_DANGER)
+	_show_announce.call(BoomBoss.DISPLAY_NAME, COL_DANGER)
 	cam.add_trauma(0.45)
 
 
 func _on_attack_telegraphed(kind: String, _duration: float) -> void:
 	var labels: Dictionary = {
-		BoomBoss.ATTACK_GHOSTFIRE: "GHOSTFIRE FAN",
-		BoomBoss.ATTACK_DASH: "SOUL DASH",
-		BoomBoss.ATTACK_LANTERN_ARRAY: "LANTERN ARRAY",
+		BoomBoss.ATTACK_GHOSTFIRE: "鬼火扇",
+		BoomBoss.ATTACK_DASH: "魂掠",
+		BoomBoss.ATTACK_LANTERN_ARRAY: "灯阵",
 	}
 	_attack_label.text = "!  %s  !" % String(labels.get(kind, kind.to_upper()))
 	_attack_label.add_theme_color_override("font_color", COL_DANGER)
@@ -190,7 +190,7 @@ func _on_attack_released(kind: String, pos: Vector3) -> void:
 
 
 func _on_phase_changed(phase_index: int) -> void:
-	_show_announce.call("WARDEN PHASE %d" % phase_index, COL_DANGER)
+	_show_announce.call("无常 · 第 %d 阶段" % phase_index, COL_DANGER)
 	cam.add_trauma(0.55)
 
 
@@ -209,10 +209,10 @@ func _on_reward_chosen(choice: Dictionary) -> void:
 		return
 	if not BoomBossRewards.apply(choice, game, skill_system):
 		return
-	var title := String(choice.get("title", "BOSS REWARD"))
+	var title := String(choice.get("title", "首领奖励"))
 	_reward_panel.close()
 	BoomBossSystem.complete_reward(game, String(choice.get("type", "")))
 	reward_choices.clear()
 	_rebuild_skill_hud.call()
 	get_tree().paused = false
-	_show_toast.call("REWARD · %s" % title)
+	_show_toast.call("奖励 · %s" % title)

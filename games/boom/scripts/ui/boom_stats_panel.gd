@@ -5,7 +5,7 @@ extends Control
 ## 武器装备管理、技能树管理或升级选择。
 ## 打开时 main 置 get_tree().paused = true，本面板 PROCESS_MODE_ALWAYS 保证
 ## 暂停期间关闭/返回按钮可用；关闭后恢复战斗。
-## 界面文字用英文（ui_subset.ttf 子集字体不含所需中文字形，与现有 HUD 一致）。
+## 中文字形由 ui_subset.ttf 提供，新增文案需更新子集。
 
 signal closed
 
@@ -33,6 +33,7 @@ var _back_btn: Button
 
 
 func _init() -> void:
+	z_index = 200  # 模态查看层必须盖住战斗技能按钮及其他高 z HUD。
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	visible = false
@@ -56,7 +57,7 @@ func _init() -> void:
 	add_child(panel)
 
 	var title := Label.new()
-	title.text = "KEEPER STATS"
+	title.text = "灯使属性"
 	title.add_theme_font_size_override("font_size", 40)
 	title.add_theme_color_override("font_color", COL_TEXT)
 	title.position = Vector2(40, 28)
@@ -64,7 +65,7 @@ func _init() -> void:
 	panel.add_child(title)
 
 	var subtitle := Label.new()
-	subtitle.text = "Night Patrol Lantern Keeper"
+	subtitle.text = "巡夜司 · 灯使"
 	subtitle.add_theme_font_size_override("font_size", 20)
 	subtitle.add_theme_color_override("font_color", Color(COL_TEXT, 0.6))
 	subtitle.position = Vector2(40, 76)
@@ -81,11 +82,11 @@ func _init() -> void:
 	panel.add_child(close_btn)
 
 	var y := 124.0
-	y = _add_section(panel, "GROWTH", y)
-	y = _add_row(panel, "level", "Level", y, COL_VALUE, "%s")
-	y = _add_row(panel, "xp", "XP", y, COL_TEXT, "%s / %s")
-	y = _add_section(panel, "LIFE", y + 6.0)
-	y = _add_row(panel, "hp", "HP", y, COL_VALUE, "%s / %s")
+	y = _add_section(panel, "成长", y)
+	y = _add_row(panel, "level", "等级", y, COL_VALUE, "%s")
+	y = _add_row(panel, "xp", "经验", y, COL_TEXT, "%s / %s")
+	y = _add_section(panel, "生命", y + 6.0)
+	y = _add_row(panel, "hp", "气血", y, COL_VALUE, "%s / %s")
 	# 连续血条（§4.3）：米纸白 → 朱砂红 随比例渐变，与 HUD 同数值源。
 	var bar_bg := ColorRect.new()
 	bar_bg.position = Vector2(40, y + 6.0)
@@ -100,23 +101,23 @@ func _init() -> void:
 	_hp_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bar_bg.add_child(_hp_fill)
 	y += 42.0
-	y = _add_section(panel, "COMBAT", y + 6.0)
-	y = _add_row(panel, "base_attack", "Base Attack", y, COL_TEXT, "%s")
-	y = _add_row(panel, "final_attack", "Final Attack", y, COL_VALUE, "%s")
-	y = _add_row(panel, "attack_speed", "Attack Speed", y, COL_TEXT, "%s/s")
-	y = _add_row(panel, "crit_rate_pct", "Crit Rate", y, COL_CRIT, "%s%%")
-	y = _add_row(panel, "crit_dmg_pct", "Crit Damage", y, COL_CRIT, "%s%%")
-	y = _add_row(panel, "haste_pct", "Cooldown Reduction", y, COL_SKILL, "-%s%%")
-	y = _add_section(panel, "SURVIVAL", y + 6.0)
-	y = _add_row(panel, "max_hp", "Max HP", y, COL_TEXT, "%s")
-	y = _add_row(panel, "defense", "Defense", y, COL_TEXT, "%s")
-	y = _add_row(panel, "mitigation_pct", "Damage Reduction", y, COL_SKILL, "%s%%")
-	y = _add_row(panel, "dodge_pct", "Dodge", y, COL_SKILL, "%s%%")
-	y = _add_row(panel, "move_speed", "Move Speed", y, COL_TEXT, "%s")
+	y = _add_section(panel, "战斗", y + 6.0)
+	y = _add_row(panel, "base_attack", "基础攻击", y, COL_TEXT, "%s")
+	y = _add_row(panel, "final_attack", "最终攻击", y, COL_VALUE, "%s")
+	y = _add_row(panel, "attack_speed", "攻击速度", y, COL_TEXT, "%s/秒")
+	y = _add_row(panel, "crit_rate_pct", "暴击率", y, COL_CRIT, "%s%%")
+	y = _add_row(panel, "crit_dmg_pct", "暴击伤害", y, COL_CRIT, "%s%%")
+	y = _add_row(panel, "haste_pct", "冷却缩减", y, COL_SKILL, "-%s%%")
+	y = _add_section(panel, "生存", y + 6.0)
+	y = _add_row(panel, "max_hp", "生命上限", y, COL_TEXT, "%s")
+	y = _add_row(panel, "defense", "防御", y, COL_TEXT, "%s")
+	y = _add_row(panel, "mitigation_pct", "伤害减免", y, COL_SKILL, "%s%%")
+	y = _add_row(panel, "dodge_pct", "闪避", y, COL_SKILL, "%s%%")
+	y = _add_row(panel, "move_speed", "移动速度", y, COL_TEXT, "%s")
 
 	# 底部"返回战斗"（§12.2 关闭方式之一）。
 	_back_btn = Button.new()
-	_back_btn.text = "BACK TO BATTLE"
+	_back_btn.text = "返回战斗"
 	_back_btn.position = Vector2(120, PANEL_SIZE.y - 92)
 	_back_btn.size = Vector2(400, 68)
 	_back_btn.add_theme_font_size_override("font_size", 28)

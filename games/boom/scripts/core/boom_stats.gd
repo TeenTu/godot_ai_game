@@ -54,6 +54,20 @@ var defense: int = 0
 ## M11 首领奖励的局内稀有加成；不伪装成普通升级档数。
 var rare_crit_bonus: float = 0.0
 var rare_dodge_bonus: float = 0.0
+## 装备快照独立于局内成长，替换而非累加，重开清成长时保留。
+var equipment_bonus: Dictionary = {}
+
+
+func set_equipment_bonus(value: Dictionary) -> void:
+	equipment_bonus = value.duplicate(true)
+
+
+func equipment_value(key: String) -> float:
+	return float(equipment_bonus.get(key, 0.0))
+
+
+func total_defense() -> int:
+	return defense + int(equipment_value("defense"))
 
 
 func reset() -> void:
@@ -128,17 +142,24 @@ func dmg_mult() -> float:
 
 ## 攻速倍率：普攻间隔 / 挥斩周期 ÷ aspd_mult()。
 func aspd_mult() -> float:
-	return 1.0 + ASPD_PCT_PER_STACK * float(aspd_stacks)
+	return (1.0 + equipment_value("attack_speed")) * (1.0 + ASPD_PCT_PER_STACK * float(aspd_stacks))
 
 
 ## 暴击率（0 → 3% → 6% …，上限 100%）。
 func crit_rate() -> float:
-	return minf(1.0, CRIT_PCT_PER_STACK * float(crit_stacks) + rare_crit_bonus)
+	return minf(
+		1.0,
+		CRIT_PCT_PER_STACK * float(crit_stacks) + rare_crit_bonus + equipment_value("crit_rate")
+	)
 
 
 ## 暴击倍率：150% → 165% → 180% …（§6.2）。
 func crit_dmg_mult() -> float:
-	return BASE_CRIT_DMG + CRIT_DMG_PCT_PER_STACK * float(crit_dmg_stacks)
+	return (
+		BASE_CRIT_DMG
+		+ CRIT_DMG_PCT_PER_STACK * float(crit_dmg_stacks)
+		+ equipment_value("crit_dmg")
+	)
 
 
 ## 兼容旧存档/测试的急速倍率；新结算统一使用直接冷却缩减。
@@ -148,17 +169,22 @@ func haste_mult() -> float:
 
 ## 冷却缩减：每档固定 -8%，最多 -40%；最终冷却 = 基础冷却 × (1-CDR)。
 func cooldown_reduction() -> float:
-	return minf(COOLDOWN_REDUCTION_CAP, HASTE_PCT_PER_STACK * float(haste_stacks))
+	return minf(
+		COOLDOWN_REDUCTION_CAP, HASTE_PCT_PER_STACK * float(haste_stacks) + equipment_value("cdr")
+	)
 
 
 ## 移速倍率（BoomPlayer.MOVE_SPEED * weapon.move_mult 之上，乘算）。
 func move_mult() -> float:
-	return pow(MOVE_MULT_PER_STACK, float(speed_stacks))
+	return (1.0 + equipment_value("move_speed")) * pow(MOVE_MULT_PER_STACK, float(speed_stacks))
 
 
 ## 闪避率（0 → 3% → 6% …，20% 封顶，§8）。
 func dodge_rate() -> float:
-	return minf(DODGE_CAP, DODGE_PCT_PER_STACK * float(dodge_stacks) + rare_dodge_bonus)
+	return minf(
+		DODGE_CAP,
+		DODGE_PCT_PER_STACK * float(dodge_stacks) + rare_dodge_bonus + equipment_value("dodge")
+	)
 
 
 ## 减伤公式（§7.2）：min(40%, 防御力 / (防御力 + 100))。
@@ -169,7 +195,7 @@ static func mitigation_for(p_defense: int) -> float:
 
 
 func mitigation() -> float:
-	return mitigation_for(defense)
+	return mitigation_for(total_defense())
 
 
 ## 本局已消耗的升级总档数（HUD/结算展示用；heal 一次性不计数）。

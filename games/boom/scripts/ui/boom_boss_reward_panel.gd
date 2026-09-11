@@ -40,7 +40,7 @@ func _init() -> void:
 	panel.add_theme_stylebox_override("panel", style)
 	add_child(panel)
 	var title := Label.new()
-	title.text = "BOSS CHEST"
+	title.text = "首领取宝"
 	title.position = Vector2(0, 34)
 	title.size = Vector2(652, 58)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -48,7 +48,7 @@ func _init() -> void:
 	title.add_theme_color_override("font_color", COL_GOLD)
 	panel.add_child(title)
 	var hint := Label.new()
-	hint.text = "CHOOSE ONE NIGHT SEAL"
+	hint.text = "择一印"
 	hint.position = Vector2(0, 94)
 	hint.size = Vector2(652, 34)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

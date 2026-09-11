@@ -8,9 +8,9 @@ const TYPE_RARE: String = "rare_stat"
 const TYPE_COINS: String = "fallback_coins"
 
 const RARE_DEFS: Array[Dictionary] = [
-	{"id": "iron_paper", "title": "IRON PAPER", "desc": "Defense +15"},
-	{"id": "cinnabar_eye", "title": "CINNABAR EYE", "desc": "Crit Rate +6%"},
-	{"id": "mist_body", "title": "MIST BODY", "desc": "Dodge +5%"},
+	{"id": "iron_paper", "title": "铁纸", "desc": "防御 +15"},
+	{"id": "cinnabar_eye", "title": "朱砂瞳", "desc": "暴击率 +6%"},
+	{"id": "mist_body", "title": "雾身", "desc": "闪避 +5%"},
 ]
 
 
@@ -27,14 +27,14 @@ static func build_choices(skill_system: BoomSkillSystem, encounter_index: int) -
 					"id": TYPE_UNLOCK,
 					"type": TYPE_UNLOCK,
 					"target": unlock_target,
-					"title": "FREE NODE",
-					"desc": "Unlock %s" % skill_system.get_skill(unlock_target).display_name,
+					"title": "免费节点",
+					"desc": "解锁 %s" % skill_system.get_skill(unlock_target).display_name,
 					"icon": BoomSkillSystem.icon_path(unlock_target),
 				}
 			)
 		)
 	else:
-		choices.append(_coin_fallback("TREE COMPLETE"))
+		choices.append(_coin_fallback("树已圆满"))
 	if evolve_target != "":
 		(
 			choices
@@ -43,18 +43,14 @@ static func build_choices(skill_system: BoomSkillSystem, encounter_index: int) -
 					"id": TYPE_EVOLVE,
 					"type": TYPE_EVOLVE,
 					"target": evolve_target,
-					"title": "ACTIVE EVOLVE",
-					"desc":
-					(
-						"%s gains its evolved form"
-						% skill_system.get_skill(evolve_target).display_name
-					),
+					"title": "主动进化",
+					"desc": "%s · 进化为最终形态" % skill_system.get_skill(evolve_target).display_name,
 					"icon": BoomSkillSystem.icon_path(evolve_target),
 				}
 			)
 		)
 	else:
-		choices.append(_coin_fallback("ALL EVOLVED"))
+		choices.append(_coin_fallback("已全部进化"))
 	(
 		choices
 		. append(
@@ -109,6 +105,6 @@ static func _coin_fallback(reason: String) -> Dictionary:
 		"type": TYPE_COINS,
 		"target": "",
 		"title": reason,
-		"desc": "Spirit Seals +200",
+		"desc": "灵印 +200",
 		"icon": "res://assets/images/icons/spirit_seal_coin.png",
 	}

@@ -70,7 +70,7 @@ func _build() -> void:
 		stars.append(star)
 
 	var restart := Button.new()
-	restart.text = "TAP TO RETRY"
+	restart.text = "点击重试"
 	restart.add_theme_font_size_override("font_size", 30)
 	restart.position = Vector2(190, 720)
 	restart.size = Vector2(340, 90)
@@ -94,7 +94,7 @@ func show_game_over(final_score: int, kills: int, wave: int) -> void:
 	_final_score = final_score
 	_final_kills = kills
 	_final_wave = wave
-	_stats_label.text = "SCORE  %d\nKILLS  %d" % [final_score, kills]
+	_stats_label.text = "得分  %d\n击杀  %d" % [final_score, kills]
 	visible = true
 	Engine.time_scale = 0.3
 	slowmo_deadline_ms = Time.get_ticks_msec() + 350

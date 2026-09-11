@@ -115,7 +115,7 @@ static func build_snapshot(
 		"crit_rate_pct": int(round(stats.crit_rate() * 100.0)),
 		"crit_dmg_pct": int(round(stats.crit_dmg_mult() * 100.0)),
 		"haste_pct": int(round(stats.cooldown_reduction() * 100.0)),
-		"defense": stats.defense,
+		"defense": stats.total_defense(),
 		"mitigation_pct": snappedf(stats.mitigation() * 100.0, 0.1),
 		"dodge_pct": int(round(stats.dodge_rate() * 100.0)),
 		"move_speed": snappedf(player.move_speed, 0.01),

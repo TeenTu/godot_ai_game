@@ -2,6 +2,7 @@
 
 > 状态：2026-09-10 已实现，主动触发槽规则由 M12 修订。本文是本增量在 `games/boom/` 内的权威规格；旧 M7
 > 的共享 `fan/chain/nuke` 树只保留底层效果兼容，不再进入玩家可见技能池。
+> 2026-09-11 增补 §9：UI 全量中文化 + Web CJK 子集字体（撤销 2026-09-04 的临时英文化）。
 
 ## 1. 设计目标与边界
 
@@ -60,34 +61,34 @@ Boom 相机为竖屏正交相机，纵向尺寸 15.5m，720:1280 下横向半宽
 
 | 分支 | 阶 | 节点 ID / 名称 | 类型 | 效果 | 解锁价 |
 |---|---:|---|---|---|---:|
-| 普攻 | 1 | `lamp_quick_wick` / QUICK WICK | 被动 | 普攻速度 +15% | 免费 |
-| 普攻 | 2 | `lamp_bright_core` / BRIGHT CORE | 被动 | 基础攻击力 +20%，10→12 | 120 |
-| 普攻 | 3 | `lamp_threefold_seal` / THREEFOLD SEAL | 被动形态 | 每第 3 次普攻改为中轴 + 左右偏转的三重灵印 | 300 |
-| 技能 | 1 | `lamp_firefly_volley` / FIREFLY VOLLEY | 主动 | 4 秒冷却，向目标方向扇射 5 枚灵印 | 免费 |
-| 技能 | 2 | `lamp_echo` / LANTERN ECHO | 被动 | 本武器主动技能冷却 ×0.85 | 120 |
-| 技能 | 3 | `lamp_soul_beacon` / SOUL BEACON | 主动形态 | 12 秒冷却，360° 发射 12 枚环形灵印 | 300 |
+| 普攻 | 1 | `lamp_quick_wick` / 速燃灯芯 | 被动 | 普攻速度 +15% | 免费 |
+| 普攻 | 2 | `lamp_bright_core` / 明芯 | 被动 | 基础攻击力 +20%，10→12 | 120 |
+| 普攻 | 3 | `lamp_threefold_seal` / 三重灵印 | 被动形态 | 每第 3 次普攻改为中轴 + 左右偏转的三重灵印 | 300 |
+| 技能 | 1 | `lamp_firefly_volley` / 流萤齐射 | 主动 | 4 秒冷却，向目标方向扇射 5 枚灵印 | 免费 |
+| 技能 | 2 | `lamp_echo` / 灯影回响 | 被动 | 本武器主动技能冷却 ×0.85 | 120 |
+| 技能 | 3 | `lamp_soul_beacon` / 引魂灯 | 主动形态 | 12 秒冷却，360° 发射 12 枚环形灵印 | 300 |
 
 ## 6. 墨线判笔技能树
 
 | 分支 | 阶 | 节点 ID / 名称 | 类型 | 效果 | 解锁价 |
 |---|---:|---|---|---|---:|
-| 普攻 | 1 | `brush_firm_grip` / FIRM GRIP | 被动 | 基础攻击力 +20%，30→36 | 免费 |
-| 普攻 | 2 | `brush_flowing_script` / FLOWING SCRIPT | 被动 | 左挥、右挥、大回旋节奏速度 +15% | 120 |
-| 普攻 | 3 | `brush_verdict` / SCARLET VERDICT | 被动形态 | 左右挥扩大为 180°；大回旋 360°；三段伤害 ×1.25 | 300 |
-| 技能 | 1 | `brush_ink_wave` / INK WAVE | 主动 | 6 秒冷却，前方 100°/5m 墨浪，最多 8 目标，攻击 ×1.8 | 免费 |
-| 技能 | 2 | `brush_focus` / ONE-BREATH SCRIPT | 被动 | 本武器主动技能冷却 ×0.85 | 120 |
-| 技能 | 3 | `brush_seal_domain` / SEAL DOMAIN | 主动形态 | 15 秒冷却，4.5m 封域，最多 16 目标，攻击 ×2.5 | 300 |
+| 普攻 | 1 | `brush_firm_grip` / 稳执笔 | 被动 | 基础攻击力 +20%，30→36 | 免费 |
+| 普攻 | 2 | `brush_flowing_script` / 行云笔意 | 被动 | 左挥、右挥、大回旋节奏速度 +15% | 120 |
+| 普攻 | 3 | `brush_verdict` / 朱砂判 | 被动形态 | 左右挥扩大为 180°；大回旋 360°；三段伤害 ×1.25 | 300 |
+| 技能 | 1 | `brush_ink_wave` / 泼墨横波 | 主动 | 6 秒冷却，前方 100°/5m 墨浪，最多 8 目标，攻击 ×1.8 | 免费 |
+| 技能 | 2 | `brush_focus` / 一气呵成 | 被动 | 本武器主动技能冷却 ×0.85 | 120 |
+| 技能 | 3 | `brush_seal_domain` / 封域 | 主动形态 | 15 秒冷却，4.5m 封域，最多 16 目标，攻击 ×2.5 | 300 |
 
 每条分支必须按前置节点逐阶解锁；两个根节点默认免费解锁。两棵树的技能 ID、名称、图标
 和效果完全独立，不能再用共享 `fan/chain/nuke` 作为玩家可见节点。
 
 ## 7. 技能树界面与图标
 
-- 武器选择页在卡片下方显示两列：左列 `BASIC ATTACK`，右列 `ACTIVE SKILLS`。
+- 武器选择页在卡片下方显示两列：左列 `普攻`，右列 `主动技能`。
 - 每列三阶纵向排列并绘制连接线；每个节点显示 56px 图标、名称、主动/被动、效果摘要与状态。
-- 状态为 `EQUIPPED`、`UNLOCK 120/300` 或 `REQUIRES <前置节点>`。
+- 状态为 `已装备`、`解锁 120/300` 或 `需前置 <节点名>`。
 - 点击未解锁节点执行前置与金币校验；点击已解锁节点装备/卸下；总装备数仍不超过 3。
-- 技能树界面继续把被动节点标记为 `PASSIVE`；战斗 HUD 只显示主动技能投影，空手势槽灰显。
+- 技能树界面继续把被动节点标记为 `被动`；战斗 HUD 只显示主动技能投影，空手势槽灰显。
 - 12 枚运行时图标为透明底 256×256 PNG，位于 `assets/images/icons/skill_<id>.png`；
   ImageGen 原图保存在 `assets/references/skill_tree_icons/`，可由
   `tools/process_skill_tree_icons.py` 确定性裁切压缩。
@@ -103,3 +104,49 @@ Boom 相机为竖屏正交相机，纵向尺寸 15.5m，720:1280 下横向半宽
 - 两列 UI 的 6 个节点均可见且 12 枚图标均可加载。
 - 默认构筑 `[被动, 主动]` 时，tap 必须触发该主动技能；被动不得吞掉任何手势。
 - Boom 无头测试、全目录 lint/format、Web release 导出全部通过。
+- 全部玩家可见文案为中文（本地化，见 §9）；Web 产物无豆腐块。
+
+## 9. 中文字体与 UI 本地化
+
+### 9.1 问题
+
+Web 导出没有系统字体回退：`ui_subset.ttf` 若不含 CJK 字形，中文 UI 在网页端
+全部渲染为豆腐块（桌面端因可回退系统字体而不复现）。沿用 sonar 的三阶段根治
+结论（`d3653cf`/`f05cdcb`/`25cfbe9`）：
+
+1. `gui/theme/custom_font` **不生效**——它不参与默认主题字体解析；
+2. `ThemeDB.fallback_font` 同样不生效——默认主题自带字体，回退链根本不会被问到；
+3. 真正生效的是 **顶层 Control 的 `theme`**，经主题继承覆盖全部子控件。
+
+### 9.2 落地（四个位置，缺一不可）
+
+| 位置 | 作用 |
+|---|---|
+| `tools/make_font_subset.py` | 扫描 `scripts/**.gd` + `tools/*.gd` 字符串字面量，从 `msyh.ttc` 子集化 |
+| `assets/fonts/ui_subset.ttf` | 产物（含 `ui_subset_chars.txt` 字形清单），当前 741 字形 |
+| `assets/fonts/ui_theme.tres` | `Theme.default_font = ui_subset.ttf` |
+| `project.godot [gui] theme/custom` | 编辑器侧生效；**不参与导出依赖扫描** |
+| `main.gd`：`ThemeDB.fallback_font = load(...)` | 经代码引用保证字体被打进导出 pck |
+| `main.gd`：`hud.theme = load(UI_THEME_PATH)` | 运行时唯一生效路径（`_hud` 是全 UI 唯一顶层 Control） |
+
+**例外**：`Label3D` 不继承 Control 主题（`boom_hitnum.gd` 的伤害/技能飘字），
+必须显式 `l.font = load(FONT_PATH)`，否则中文飘字在 Web 上仍是豆腐块。
+
+### 9.3 本地化范围
+
+- 翻译：武器名/简介、12 技能名与描述、分支标题、升级卡、首领名与招式名、首领
+  奖励、结算面板、属性面板、选武器面板、战斗 HUD、连击播报、技能飘字。
+- 保留英文：代码注释、`push_error` 等开发者诊断、内部 `skill_id`/枚举名。
+- 无位图技能的圆心缩写用中文单字（`SKILL_ABBREVS`），手势标签为「点按 / ← 左滑 / 右滑 →」。
+
+### 9.4 验收
+
+- `[m10-font]`（`tools/play_test.gd`）：`ui_theme.tres` 的 `default_font` 就是
+  子集字体；`Control.get_theme_default_font()` 经主题继承取到该字体；12 技能名 +
+  12 描述 + 技能飘字 + 连击播报 + 手势提示 + 圆心缩写 + 分支标题 + 首领名 +
+  升级卡 + 稀有奖励**逐字 `has_char` 无缺字**（无头态，CI 门禁）。
+- `--floats`（`tools/visual_review.gd`）：真实渲染器下把 9 条 Label3D 飘字
+  （`嘭!/链!/轰!/萤!/引!/墨!/封!/闪避/+12 气血`）+ 连击播报「三杀」打到 3×3 网格
+  里截图，专门覆盖**不继承 Control 主题**的 Label3D 路径：
+  `--path games/boom --script res://tools/visual_review.gd -- --capture-dir=<dir> --floats`
+- 改任何可见文案后**必须重跑** `make_font_subset.py`，否则新增汉字缺字形。
