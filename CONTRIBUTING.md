@@ -25,14 +25,37 @@
 
 > main 的集成者是 **Codex CLI（唯一铁律）**。各游戏 Agent 在自己的 dev worktree 写完一批 → push 到远端 dev 分支 → **由开发 Agent 主动触发一次 `codex exec`**，Codex CLI 解决冲突并起记录 / 合并回 main（详见 §4）。**不存在任何 automation 兜底**，触发是开发完成后的显式动作。Agent 不直接 push main。
 
-新增 worktree 的命令（在主仓库执行）：
+### 唯一 worktree 管理入口
 
-```bash
-git worktree add <路径> <分支名>        # 已有分支
-git branch <分支名>; git worktree add <路径> <分支名>   # 或先建分支
-git worktree list                        # 查看所有 worktree
-git worktree remove <路径>               # 移除（先确保分支无未提交且已 push）
+worktree 元数据是仓库级共享状态，实际位于主仓库的 `.git/worktrees/`，不是某个 Agent 目录的私有文件。
+因此，任何 worktree 的创建、删除、锁定、解锁、修复、prune，都只能通过：
+
+```powershell
+pwsh tools/worktree_manager.ps1 status
+pwsh tools/worktree_manager.ps1 doctor
 ```
+
+禁止 Agent 或后台任务直接执行 `git worktree remove/prune/repair`，禁止删除 `.git/worktrees/*`。
+长期 worktree 默认保持 locked；只有迁移或明确维护时才由管理器解锁。
+
+新增或移除 worktree 时，先更新 `docs/worktree_registry.json`，再由管理器执行操作并通过 `doctor`。
+现有 Boom/Sonar worktree 不应日常删除重建。
+
+管理器支持的维护命令：
+
+```powershell
+pwsh tools/worktree_manager.ps1 lock -Name sonar
+pwsh tools/worktree_manager.ps1 unlock -Name sonar
+pwsh tools/worktree_manager.ps1 acquire -Name sonar
+pwsh tools/worktree_manager.ps1 release -Name sonar
+pwsh tools/worktree_manager.ps1 create -Name <name>
+pwsh tools/worktree_manager.ps1 remove -Name <name> -ConfirmAction
+pwsh tools/worktree_manager.ps1 repair -Name sonar -ConfirmAction
+pwsh tools/worktree_manager.ps1 prune -ConfirmAction
+```
+
+管理器会使用进程级互斥锁串行化结构变更，并在 Git common dir 下记录 Agent 租约。
+`prune` 默认只预览；存在租约或注册表不完整时拒绝执行。
 
 > 各游戏 worktree 内跑测试前，必须先注入共享资源（见 §5），否则 GameKitSfx 等共享类
 > 会报假 Parse error。
@@ -116,6 +139,8 @@ Codex CLI 在 **主工作区 `E:\Github\godot_ai_game`** 执行集成，职责�
 
 > 关键：**只有 Codex CLI（集成者）操作 main**。各游戏 Agent 的 push 权限止步于自己的 dev 分支。
 > 这样"谁合入 main、谁来保证 main 始终全绿"职责唯一，从根上杜绝多 Agent 互踩 main。
+
+此外，只有 worktree 管理器可以改变 worktree 拓扑；Codex CLI 也必须通过管理器执行结构维护，不能因清理任务直接操作 `.git/worktrees/`。
 
 ---
 

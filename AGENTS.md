@@ -10,6 +10,7 @@
 - 仓库：`https://github.com/TeenTu/godot_ai_game` → Pages：`https://teentu.github.io/godot_ai_game/<game>/`，git push 免密（Git Credential Manager），账号 TeenTu
 - 隔离 Python（Pillow/gdtoolkit 已装）：`C:/Users/10532/.workbuddy/binaries/python/envs/default/Scripts/{python,gdlint,gdformat}.exe`，pip 装包走清华源
 - ⚠️ 仓库已从 OneDrive 迁至 worktree 布局：`E:\Github\godot_ai_game`（main，集成口 Codex）+ `E:\Github\worktrees\sonar`（sonar-dev）+ `E:\Github\worktrees\boom`（boom-dev）。旧 OneDrive 地址已废弃清理。worktree 布局见 CONTRIBUTING.md §1。删除/rm 前先确认不在 worktree 检出冲突；优先用可回滚的 git 操作，恢复用 `git checkout HEAD -- games/*`
+- **worktree 唯一管理入口**：结构变更必须使用 `pwsh tools/worktree_manager.ps1`；禁止直接执行 `git worktree remove/prune/repair`，禁止删除 `.git/worktrees/*`。先运行 `pwsh tools/worktree_manager.ps1 doctor` 检查一致性。
 
 ## 2. 新游戏标准流程（SOP）
 
