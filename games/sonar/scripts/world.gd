@@ -25,6 +25,9 @@ var ping_cooldown_s: float = 15.0
 var ping_freq_min_hz: float = 2000.0
 var ping_freq_max_hz: float = 4000.0
 var ping_array_gain_db: float = 24.0
+## AC-01/AC-04：主动声呐的处理增益 PG（时间积累/后处理），与 AG 分开配置、
+## 相加一次后进入 SEa；不得用它掩盖传播/层损耗问题（只做游戏内合理校准）。
+var ping_processing_gain_db: float = 0.0
 var ping_sound_speed_m_s: float = AcousticService.SOUND_SPEED_M_S
 var ping_listen_window_s: float = 15.0  # 监听窗口：发射后等待回波的最长秒数
 var ping_pulse_duration_s: float = 0.25  # 脉冲时长（ActiveEmissionEvent/暴露刻画，REQ-05）
@@ -165,6 +168,7 @@ func load_scenario(scenario: Dictionary) -> void:
 	ping_freq_min_hz = float(as_cfg.get("freq_min_hz", ping_freq_min_hz))
 	ping_freq_max_hz = float(as_cfg.get("freq_max_hz", ping_freq_max_hz))
 	ping_array_gain_db = float(as_cfg.get("array_gain_db", ping_array_gain_db))
+	ping_processing_gain_db = float(as_cfg.get("processing_gain_db", ping_processing_gain_db))
 	ping_sound_speed_m_s = float(as_cfg.get("sound_speed_m_s", ping_sound_speed_m_s))
 	ping_listen_window_s = maxf(float(as_cfg.get("listen_window_s", ping_listen_window_s)), 0.5)
 	ping_pulse_duration_s = maxf(float(as_cfg.get("pulse_duration_s", ping_pulse_duration_s)), 0.05)
@@ -1121,7 +1125,7 @@ func _ping_sensor() -> SensorArray:
 				"owner_id": str(world["own"].id),
 				"freq_min_hz": ping_freq_min_hz,
 				"freq_max_hz": ping_freq_max_hz,
-				"array_gain_db": ping_array_gain_db,
+				"array_gain_db": ping_array_gain_db + ping_processing_gain_db,
 				"coverage_start_deg": ping_coverage_sector.x,
 				"coverage_end_deg": ping_coverage_sector.y,
 				"baffle_start_deg": ping_baffle_sector.x,

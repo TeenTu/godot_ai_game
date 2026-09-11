@@ -231,10 +231,12 @@ func set_data(d: Dictionary) -> void:
 	_lbl_mode.text = UiText.ping_mode(str(params.get("mode", "-")))
 	_lbl_freq.text = "%.1f kHz" % float(params.get("freq_khz", 0.0))
 	_lbl_sl.text = "%.0f dB" % float(params.get("sl_db", 0.0))
+	# AC-04：明确这是"监听窗决定的时延上限"，不得被当成保证探测距离承诺。
 	_lbl_listen.text = (
-		"%.0f 秒 / 最远 %.1f 千米"
+		"%.0f 秒 / 窗口最大测程 %.1f 千米"
 		% [float(params.get("listen_s", 0.0)), float(params.get("max_range_km", 0.0))]
 	)
+	_lbl_listen.tooltip_text = "由监听窗与声速决定的时延上限，不是保证探测距离"
 	_lbl_exposure.text = UiText.exposure(str(params.get("exposure", "-")))
 	_lbl_exposure.add_theme_color_override(
 		"font_color",

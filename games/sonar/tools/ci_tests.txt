@@ -134,3 +134,9 @@ mark_lock_test
 #   ai5_dt_invariance_test  P0-B AI-05：同一证据流下 dt=0.1/0.5/1.0 的发射时间分布一致/
 #                           固定 dt+seed 可复现/同一 Ping 多回调不重复抬质量（感知概率与 doctrine 分离）
 ai5_dt_invariance_test
+
+#   towed_performance_test  P0-C：统一声呐口径（手动/自动链 SE-Pd 一致、显示增益不改 Pd）/
+#                           拖曳阵方向响应重做（两舷可用、端射 ≤4dB、A/B 对称、FOM 相对
+#                           BOW≥12dB / FLANK≥8dB）/ 弱目标 ≥200 固定种子统计与 50% 建轨距离比 /
+#                           性能四态连续退化 + 主动同层/跨层 8km 校准（AC-01..04 / T07..T10）
+towed_performance_test

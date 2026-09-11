@@ -75,38 +75,17 @@ const CLASS_TEMPLATES: Dictionary = {
 	},
 }
 
-## 阵列覆盖（声呐综合修复 问题3）：以"阵列相对方位"(deg, wrap180)描述，不再用单一 Vector2。
-##   BOW    全向（除艉部盲区 aft baffle 150..210°）——由 full_circle + sectors_excluded 表达
-##   FLANK  左右舷双扇区 [+55..+125, −125..−55]
-##   TOWED  相对拖曳阵自身航向前视扇区（航向滞后由批次2 拖曳阵状态机注入）
+## 阵列覆盖与方向响应（AC-01/AC-02）：一切数值口径集中在 SensorAcousticProfile，
+## 本类不再自持 0/4/8 之类的增益常量，也不再重复实现方向衰减公式。
+##   BOW   艇艏/球形阵：全向（除艉部盲区）
+##   FLANK 舷侧阵：左右舷双扇区
+##   TOWED 拖曳线阵：两舷广泛可用 + 端射精度退化 + 左右舷镜像歧义（A/B）
 ## 阵列相对方位 frame：BOW/FLANK 用 own.course；TOWED 用独立 array_heading。
-const ARRAY_DEFS: Dictionary = {
-	"BOW":
-	{
-		"full_circle": true,
-		"sectors_excluded": [Vector2(150.0, 210.0)],
-		"gain_db": 0.0,
-		"sigma_min": 1.2,
-		"beamwidth_deg": 5.0,
-	},
-	"FLANK":
-	{
-		"sectors": [Vector2(55.0, 125.0), Vector2(-125.0, -55.0)],
-		"gain_db": 4.0,
-		"sigma_min": 0.6,
-		"beamwidth_deg": 3.0,
-	},
-	"TOWED":
-	{
-		"sectors": [Vector2(-100.0, 100.0)],
-		"gain_db": 8.0,
-		"sigma_min": 0.9,
-		"beamwidth_deg": 4.0,
-		"mirror_lr": true,  # 单线阵：对阵轴两侧等角响应 → A/B 镜像候选（S1-03A）
-	},
-}
+const ARRAY_IDS: Array = ["BOW", "FLANK", "TOWED"]
 
 var active_array_id: String = "BOW"
+## 各阵列的有效声学口径（AC-01 单一配置源，可由场景 configure_profiles 覆盖）。
+var array_profiles: Dictionary = {}
 # S1-03B：BB/NB/DEMON 每阵列独立历史缓冲。切换阵列绝不把其它阵列的历史行
 # 混进当前瀑布；rows_by_array[aid] = {bb:[], nb:[], demon:[]}。公开的
 # bb_rows/nb_rows/demon_rows 恒为"当前 active 阵列"缓冲的引用（保留公开名与
@@ -149,9 +128,58 @@ static func display_amp_db(se_db: float, scale: float = 0.6, cap_db: float = 30.
 
 
 func _init() -> void:
-	for aid in ARRAY_DEFS:
+	for aid in ARRAY_IDS:
+		array_profiles[aid] = SensorAcousticProfile.builtin_profile(aid)
 		rows_by_array[aid] = {"bb": [], "nb": [], "demon": []}
 	_bind_rows_to_active()
+
+
+## AC-01：用场景配置覆盖阵列口径（键为 array_id，值为 profile 字段字典）。
+## 未列出的阵列保持内置基线；未知阵列 id 忽略。
+func configure_profiles(overrides: Dictionary) -> void:
+	for aid in ARRAY_IDS:
+		if not overrides.has(aid):
+			continue
+		var src: Variant = overrides[aid]
+		if src is Dictionary:
+			var merged: Dictionary = _profile_dict(aid)
+			for k in src as Dictionary:
+				merged[k] = (src as Dictionary)[k]
+			array_profiles[aid] = _profile_from(merged)
+		elif src is SensorAcousticProfile:
+			array_profiles[aid] = src
+
+
+## 把 profile 展平成可覆盖的字段字典（保留 array_id 与默认值）。
+func _profile_dict(aid: String) -> Dictionary:
+	var p: SensorAcousticProfile = array_profiles[aid]
+	return {
+		"array_id": aid,
+		"freq_min_hz": p.freq_min_hz,
+		"freq_max_hz": p.freq_max_hz,
+		"center_freq_hz": p.center_freq_hz,
+		"bandwidth_hz": p.bandwidth_hz,
+		"array_gain_db": p.array_gain_db,
+		"processing_gain_db": p.processing_gain_db,
+		"detection_threshold_db": p.detection_threshold_db,
+		"detection_k_d": p.detection_k_d,
+		"bearing_sigma_min_deg": p.sigma_min_deg,
+		"bearing_sigma_max_deg": p.sigma_max_deg,
+		"sigma_floor_deg": p.sigma_floor_deg,
+		"beamwidth_deg": p.beamwidth_deg,
+		"full_circle": p.full_circle,
+		"line_array_direction": p.line_array_direction,
+		"mirror_lr": p.mirror_lr,
+		"sectors": p.sectors,
+		"sectors_excluded": p.sectors_excluded,
+		"self_noise_db": p.self_noise_db,
+	}
+
+
+func _profile_from(d: Dictionary) -> SensorAcousticProfile:
+	var p := SensorAcousticProfile.new()
+	p.from_dict(d)
+	return p
 
 
 ## 把公开 bb/nb/demon_rows 引用绑定到当前阵列缓冲（切阵列后调用）。
@@ -190,7 +218,7 @@ func setup(world_dict: Dictionary) -> void:
 
 
 func set_array(id: String) -> void:
-	if not ARRAY_DEFS.has(id):
+	if not array_profiles.has(id):
 		return
 	if id == active_array_id:
 		return
@@ -199,8 +227,12 @@ func set_array(id: String) -> void:
 	_bind_rows_to_active()
 
 
-func _array_def() -> Dictionary:
-	return ARRAY_DEFS[active_array_id]
+func _profile() -> SensorAcousticProfile:
+	return array_profiles[active_array_id]
+
+
+func profile_for(aid: String) -> SensorAcousticProfile:
+	return array_profiles.get(aid, array_profiles[active_array_id])
 
 
 ## 本艇是否真的安装了拖曳阵硬件（S1-03：无硬件时 TOWED 禁用，不提供
@@ -234,30 +266,16 @@ func _towed_usable_factor() -> float:
 
 
 ## 该目标(阵列相对方位)是否落在当前阵列的覆盖内。
-## 覆盖结构：sectors(被覆盖) 或 full_circle+sectors_excluded(除盲区外全向)。
-static func in_array_coverage(array_rel_deg: float, def: Dictionary) -> bool:
-	if bool(def.get("full_circle", false)):
-		var excl: Array = def.get("sectors_excluded", [])
-		return not NavUtils.in_sectors(array_rel_deg, excl)
-	return NavUtils.in_sectors(array_rel_deg, def.get("sectors", []))
+## AC-01/AC-02：覆盖结构由 SensorAcousticProfile 唯一定义（全向阵列只排盲区，
+## 线阵两舷广泛可用、不设硬盲区）。
+static func in_array_coverage(array_rel_deg: float, prof: SensorAcousticProfile) -> bool:
+	return prof.in_coverage(array_rel_deg)
 
 
-## 方向性增益(dB)：目标位于某覆盖扇区内→0(扇区中心)，偏离→连续衰减。
-## 多扇区阵列取"所有覆盖扇区中响应最高的一支"（S1-01：初始化为 -INF 取 maxf，
-## 不得取 min——否则 FLANK 一侧永远被对侧扇区的最差值惩罚）。
-## 完全不在覆盖内→极弱(调用方应直接跳过该接触)。
-## full_circle(全向)阵列无方向性，恒 0。
-static func _array_direction_gain_db(array_rel_deg: float, def: Dictionary) -> float:
-	if bool(def.get("full_circle", false)):
-		return 0.0
-	var sectors: Array = def.get("sectors", [])
-	if sectors.is_empty():
-		return 0.0
-	var best: float = -INF
-	for s in sectors:
-		var c: float = NavUtils.wrap180((float(s.x) + float(s.y)) * 0.5)
-		best = maxf(best, NavUtils.sector_gain_db(array_rel_deg, c, 40.0))
-	return best
+## 方向性增益(dB)：委托 profile 的连续方向响应（AC-02 已删除"前视 ±100°、
+## 侧向 −25 dB"的旧模型）。完全不在覆盖内由调用方直接跳过。
+static func _array_direction_gain_db(array_rel_deg: float, prof: SensorAcousticProfile) -> float:
+	return prof.direction_gain_db(array_rel_deg)
 
 
 func _randn() -> float:
@@ -299,8 +317,10 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 	if sim_time - _last_row_t < ROW_INTERVAL_S:
 		return
 	_last_row_t = sim_time
-	var def := _array_def()
-	var gain: float = def["gain_db"]
+	var prof: SensorAcousticProfile = _profile()
+	var gain: float = prof.detection_gain_db()
+	var dt_db: float = prof.detection_threshold_db
+	var center_freq: float = prof.center_freq_hz
 	var own: RefCounted = _own_ref
 	var own_speed: float = float(own.speed_kn)
 	var own_depth: float = float(own.depth_m)
@@ -332,7 +352,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 	var tow: TowedArray = null
 	if active_array_id == "TOWED" and _own_ref != null:
 		tow = _own_ref.get("towed")
-	var mirror_lr: bool = bool(def.get("mirror_lr", false))
+	var mirror_lr: bool = prof.mirror_lr
 	# S1-03C-P0-02：本行传感器原点 —— BOW/FLANK/ACTIVE = 艇心；TOWED = 阵列
 	# 声学中心。方位/距离/TL/LOB 全部从该原点出发，杜绝"艇心算方位、阵心写
 	# observer"的 ~6° 系统误差（距离越近、缆越长越明显）。
@@ -365,31 +385,30 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		var true_brg: float = rad_to_deg(atan2(d.x, d.y))
 		# 阵列相对方位决定覆盖/方向增益（问题2/3）；BB 显示相对方位用于瀑布/mark。
 		var array_rel: float = NavUtils.true_to_array(array_heading, true_brg)
-		if not in_array_coverage(array_rel, def):
+		if not in_array_coverage(array_rel, prof):
 			continue
-		var dir_gain: float = _array_direction_gain_db(array_rel, def)
-		# 拖曳阵可用度（孔径×沉降）缩放增益；BOW/FLANK 恒 1；
-		# 弯曲/高速损失另计（不与孔径重复相乘，S1-03）
-		dir_gain += 10.0 * log(maxf(_towed_usable_factor(), 1e-3)) / log(10.0)
+		# AC-02/AC-03：方向响应 + 拖曳阵连续性能损失（孔径/沉降/弯曲/流噪各计一次）。
+		var dir_gain: float = _array_direction_gain_db(array_rel, prof)
 		if tow != null:
-			dir_gain += tow.bend_speed_loss_db()
+			dir_gain += tow.performance_loss_db()
 		var speed_kn: float = float(tgt.speed_kn)
 		# S1-04/G-03 统一声学模型：TL 走 EnvironmentModel（含频率吸收），
 		# 不得散落 20log10*1.2 之类简化公式
-		var tl: float = AcousticService.propagation_loss(rng_m, 500.0, _env)
-		var noise: float = _env.effective_noise_db(500.0, own_speed)
+		var tl: float = AcousticService.propagation_loss(rng_m, center_freq, _env)
+		var noise: float = prof.receiver_noise_db(_env, own_speed)
 		# REQ-AC-03：BB SE 吃宽带干扰（按接触方位的波束响应，线性功率合成）。
 		var jam_bb: float = _env.interference_noise_db(
-			500.0, obs_e, obs_n, own_depth, true_brg, float(def["beamwidth_deg"])
+			center_freq, obs_e, obs_n, own_depth, true_brg, prof.beamwidth_deg
 		)
 		noise = EnvironmentModel.combine_db(noise, jam_bb)
 		var level_db: float = ac.broadband_sl_db(speed_kn, float(tgt.depth_m)) - tl
-		var se_db: float = level_db + gain + dir_gain - noise
+		var se_db: float = level_db + gain + dir_gain - noise - dt_db
 		# S1-07A（Commit 2）：跨温跃层附加 TL（与自动测量链同源；旧场景=0）。
-		se_db -= _env.cross_layer_extra_db(500.0, own_depth, float(tgt.depth_m))
+		se_db -= _env.cross_layer_extra_db(center_freq, own_depth, float(tgt.depth_m))
 		total_se = maxf(total_se, se_db)
-		# 概率探测 P_d（S1-04）：不再用 SE<=0 硬门限，弱目标间歇出现
-		var pd: float = AcousticService.detection_probability(se_db)
+		# 概率探测 P_d（S1-04/AC-01）：不再用 SE<=0 硬门限，弱目标间歇出现；
+		# k_d 与 DT 同出一份 profile（与自动船员链一致）。
+		var pd: float = prof.detection_probability(se_db)
 		# REQ-AC-01：BB 一次 miss 不再整体跳过 NB/DEMON——窄带特征按自身
 		# 频率 SE/概率独立积累（BB 与 NB 带宽/处理增益可不同）。
 		var bb_hit: bool = _rng.randf() < pd
@@ -398,10 +417,10 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 		if bb_hit:
 			detection_count += 1
 			# BB 行：高斯波束峰（幅度∝SE），叠加每行随机方位噪声
-			var beamw: float = float(def["beamwidth_deg"])
-			var brg_noise: float = (
-				_randn() * maxf(float(def["sigma_min"]) * pow(2.0, -se_db / 6.0), 0.2)
-			)
+			var beamw: float = prof.beamwidth_deg
+			# AC-02：显示/测量方位噪声统一走 profile 的误差模型（线阵端射按
+			# 1/|sin α| 有界放大）；显示幅度（amp）只影响配色，不参与 Pd。
+			var brg_noise: float = _randn() * prof.bearing_sigma_deg(se_db, array_rel)
 			var amp: float = display_amp_db(se_db)
 			# TOWED 单线阵：对阵轴两侧等角响应 → 生成共享证据的 A/B 镜像候选
 			# （S1-03A：pair 同 ID/同 SE/同噪声样本，消歧前对玩家等价，不标真假）。
@@ -459,7 +478,7 @@ func update(sim_time: float, targets: Array, acs: Dictionary) -> void:
 			var noise_f: float = _env.effective_noise_db(f_hz, own_speed)
 			# REQ-AC-03：NB 谱线同样吃宽带干扰（同一 N_eff 口径）。
 			var jam_f: float = _env.interference_noise_db(
-				f_hz, obs_e, obs_n, own_depth, true_brg, float(def["beamwidth_deg"])
+				f_hz, obs_e, obs_n, own_depth, true_brg, prof.beamwidth_deg
 			)
 			noise_f = EnvironmentModel.combine_db(noise_f, jam_f)
 			# P1-03/REQ-08：NB tonal 也吃方向增益 + 部署/弯曲/超速损失——与 BB 同源，
@@ -670,9 +689,9 @@ func create_mark(
 ) -> Measurement:
 	# S1-03B：行来源阵列优先；无行上下文（旧调用）才回退当前 active 阵列
 	var src_array: String = str(row.get("array_id", active_array_id))
-	if not ARRAY_DEFS.has(src_array):
+	if not array_profiles.has(src_array):
 		src_array = active_array_id
-	var def: Dictionary = ARRAY_DEFS[src_array]
+	var prof: SensorAcousticProfile = profile_for(src_array)
 	# ---- 行上下文（缺省回退当前状态，仅供旧测试兼容）----
 	var r_t: float = float(row.get("t", sim_time))
 	var own_course: float = float(row.get("course", float(_own_ref.course_deg)))
@@ -702,9 +721,13 @@ func create_mark(
 		dedupe_key = "%s:%s" % [str(row["row_id"]), str(matched["peak_id"])]
 		if _marks_by_row_peak.has(dedupe_key):
 			return _marks_by_row_peak[dedupe_key]
-	var sigma: float = float(def["sigma_min"])
-	if se_db > 0.0:
-		sigma = maxf(sigma * pow(2.0, -se_db / 6.0), 0.2)
+	# AC-02：方位 sigma 统一走 profile 的误差模型（线阵端射按 1/|sin α| 有界放大，
+	# A/B 两支共用同一 sigma，只符号相反）。
+	var peak_true_brg: float = (
+		NavUtils.wrap360(bearing_deg) if as_true else NavUtils.rel_to_true(own_course, input_disp)
+	)
+	var peak_array_rel: float = NavUtils.true_to_array(arr_hdg, peak_true_brg)
+	var sigma: float = prof.bearing_sigma_deg(se_db, peak_array_rel)
 	var m: Measurement = Measurement.new()
 	m.timestamp = r_t
 	m.sensor_id = "OP_" + src_array

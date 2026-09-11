@@ -63,6 +63,15 @@ const _TOWED := {
 	"UNKNOWN": "未知",
 }
 
+## AC-03：拖曳阵性能状态中文名（BEST/DEGRADED/UNSTABLE/STOWED）。
+const _TOWED_PERF := {
+	"BEST": "最佳",
+	"DEGRADED": "可用（性能下降）",
+	"UNSTABLE": "不稳定",
+	"STOWED": "无有效孔径",
+	"UNKNOWN": "未知",
+}
+
 ## 武器事件 / 证据种类 / 告警分级（alert_panel、weapon_panel、in_water 面板共用）
 const _EVENT := {
 	"POSSIBLE_TORPEDO": "疑似鱼雷",
@@ -567,6 +576,12 @@ const LABELS := {
 	"own_depth_cmd_fmt": " → %.0f 米（约 %.0f 秒）",
 	"towed_none": "拖曳阵：未布放",
 	"towed_line_fmt": "拖曳阵：%s | 实长 %.0f 米 / 命令 %.0f 米 | 阵位 %.0f° | 可用 %d%%",
+	# AC-03：阵列名称旁持续标注线阵的两项固有特性（高灵敏 + 左右歧义）。
+	"towed_flags": "拖曳阵：高灵敏度／左右歧义",
+	# AC-03：性能状态 + 四项独立损失（dB 估计），让退化原因可解释。
+	"towed_perf_fmt": "性能 %s | 损失 孔径%.1f 沉降%.1f 弯曲%.1f 流噪%.1f dB",
+	"towed_perf_reason_bend": "刚过死区/严重弯曲",
+	"towed_perf_reason_speed": "超出正常拖速",
 	"residual_hint": "点击切换：度/米/σ",
 	"truth_watermark": "开发真值 — 非玩家情报",
 	"coast_tag": "外推",
@@ -872,6 +887,10 @@ static func agc(k: String) -> String:
 
 static func towed_state(k: String) -> String:
 	return str(_TOWED.get(k, k))
+
+
+static func towed_perf(k: String) -> String:
+	return str(_TOWED_PERF.get(k, k))
 
 
 static func event(k: String) -> String:

@@ -117,6 +117,8 @@ func _ready() -> void:
 	world.auto_measurements = false
 	op = OperatorSonar.new()
 	op.setup(world.world)
+	# AC-01：阵列口径来自场景 sonar_arrays（与自动船员链同一份 profile）。
+	op.configure_profiles(world.world.get("sonar_arrays", {}))
 	mark_flow.tracker = tracker
 	mark_flow.op = op
 	mark_flow.world = world

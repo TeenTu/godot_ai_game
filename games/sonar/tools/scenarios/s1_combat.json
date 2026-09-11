@@ -26,7 +26,7 @@
     "lower_hold_depth_m": 180,
     "cross_layer_loss_db_by_frequency": {
       "500": 6,
-      "3000": 10
+      "3000": 5
     }
   },
   "own_ship": {
@@ -55,6 +55,7 @@
       "freq_min_hz": 2000.0,
       "freq_max_hz": 4000.0,
       "array_gain_db": 24.0,
+      "processing_gain_db": 6.0,
       "sound_speed_m_s": 1500.0,
       "listen_window_s": 15.0
     }
@@ -137,24 +138,50 @@
       "torpedo_autonomy_distance_m": 800.0
     }
   },
+  "sonar_arrays": {
+    "BOW": {
+      "array_gain_db": 0.0,
+      "processing_gain_db": 0.0,
+      "detection_threshold_db": 0.0,
+      "detection_k_d": 3.0,
+      "freq_min_hz": 100.0,
+      "freq_max_hz": 1000.0,
+      "center_freq_hz": 500.0,
+      "beamwidth_deg": 5.0,
+      "full_circle": true,
+      "sectors_excluded": [
+        [
+          150.0,
+          210.0
+        ]
+      ]
+    },
+    "FLANK": {
+      "array_gain_db": 4.5,
+      "processing_gain_db": 0.0,
+      "detection_threshold_db": 0.0,
+      "detection_k_d": 3.0,
+      "center_freq_hz": 500.0,
+      "beamwidth_deg": 3.0
+    },
+    "TOWED": {
+      "array_gain_db": 12.0,
+      "processing_gain_db": 0.0,
+      "detection_threshold_db": 0.0,
+      "detection_k_d": 3.0,
+      "center_freq_hz": 500.0,
+      "beamwidth_deg": 4.0,
+      "full_circle": true,
+      "line_array_direction": true,
+      "mirror_lr": true
+    }
+  },
   "sensors": [
     {
+      "profile": "BOW",
       "sensor_id": "hull_broadband",
       "array_type": "passive_broadband",
       "owner_id": "own",
-      "freq_min_hz": 100.0,
-      "freq_max_hz": 1000.0,
-      "array_gain_db": 20.0,
-      "detection_threshold_db": 3.0,
-      "detection_k_d": 4.0,
-      "bearing_sigma_min_deg": 0.8,
-      "bearing_sigma_max_deg": 6.0,
-      "bearing_se0_db": 8.0,
-      "bearing_k_sigma_db": 5.0,
-      "coverage_start_deg": 0.0,
-      "coverage_end_deg": 360.0,
-      "baffle_start_deg": 0.0,
-      "baffle_end_deg": 0.0,
       "update_interval_s": 2.0,
       "tracker_capacity": 64,
       "deployed": true

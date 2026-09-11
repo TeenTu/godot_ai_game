@@ -57,7 +57,7 @@ func _init() -> void:
 	row.add_child(arr_lbl)
 	var arr_opt := OptionButton.new()
 	var arr_ids: Array = []
-	for aid in OperatorSonar.ARRAY_DEFS:
+	for aid in OperatorSonar.ARRAY_IDS:
 		arr_ids.append(str(aid))
 		arr_opt.add_item(UiText.arr(str(aid)))
 	arr_opt.item_selected.connect(
@@ -169,7 +169,7 @@ func _init() -> void:
 		func(i: int):
 			var mode: String = "rel" if i == 0 else "true"
 			wf_bb.set_bearing_mode(mode)
-			_lbl_bb_mode.text = UiText.t("bb_relative") if i == 0 else UiText.t("bb_true")
+			_refresh_array_flags()
 	)
 	bb_mode_row.add_child(bb_mode_opt)
 
@@ -287,6 +287,19 @@ func _mk_label(txt: String) -> Label:
 	return l
 
 
+## AC-03：BB 瀑布标注行同时承载"当前阵列固有特性"——TOWED 常驻显示
+## "高灵敏度／左右歧义"，让玩家在任何时刻都知道该阵的两项代价与优势。
+func _refresh_array_flags() -> void:
+	if _lbl_bb_mode == null or wf_bb == null:
+		return
+	var base: String = (
+		UiText.t("bb_relative") if wf_bb.bearing_mode == "rel" else UiText.t("bb_true")
+	)
+	if _sonar != null and _sonar.active_array_id == "TOWED":
+		base += " · " + UiText.t("towed_flags")
+	_lbl_bb_mode.text = base
+
+
 ## 设置拖曳硬件可用性（S1-03）：未安装硬件时禁用 TOWED 选项，不得提供
 ## "跟艇+满可用"的虚构回退。
 func set_towed_available(avail: bool) -> void:
@@ -352,6 +365,7 @@ func refresh(op: OperatorSonar) -> void:
 	var aid: String = op.active_array_id
 	var force: bool = aid != _last_array_id
 	_last_array_id = aid
+	_refresh_array_flags()
 	var n: int = op.bb_rows.size()
 	if n == _last_row_count and op.waterfall_seq == _last_wf_seq and not force:
 		return
