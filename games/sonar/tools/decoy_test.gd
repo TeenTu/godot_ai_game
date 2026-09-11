@@ -14,6 +14,9 @@ extends SceneTree
 ##          （不读 is_decoy，纯声学竞争）；World 集成（激活事件/到期移除）。
 ##   SPEC   §6.1 鱼雷运行噪声谱线随模式（QUIET/CRUISE/HIGH 不同谱线）；
 ##          §7.4 w_c 分类一致性：稳定谱保持高、抖动假峰被稀释。
+##   T32    DC-06 画像快照与计时：同程序两枚干扰器画像独立（谱抖动互不修改、
+##          不回写源画像），频段 band_min/max_hz 完整随快照复制；同一 tick 寿命
+##          耗尽与激活竞争时过期优先。
 ##
 ## 全部确定性（固定 seed），可无头运行：
 ##   godot --headless --path games/sonar --script res://tools/decoy_test.gd
@@ -33,7 +36,193 @@ func _initialize() -> void:
 	_world_integration(fails)
 	_spec_01_torpedo_tonals(fails)
 	_spec_02_classification(fails)
+	_t32_signature_snapshot(fails)
+	_t33_auto_reload(fails)
 	_finish(fails)
+
+
+## ---- T33 / DC-07：备用弹自动再装填（库存守恒 / 计时 / 暂停 / 无备用 / 幂等）----
+## 总库存口径：开火 ready-- 且 inventory--；装填只 ready++（不额外扣 inventory）。
+## 装填按仿真时间推进（暂停不装填、倍速由 dt 折算），单通道幂等（不会超容量/库存）。
+func _t33_auto_reload(fails: Array) -> void:
+	var cm := CountermeasureSystem.new()
+	(
+		cm
+		. configure(
+			{
+				"ready_rounds": 2,
+				"inventory": 4,
+				"launcher_capacity": 2,
+				"reload_time_s": 45.0,
+				"launch_cooldown_s": 0.0,
+			}
+		)
+	)
+	var own := _mk_truth("OWN", 0.0, 0.0, "blue")
+	var d1: Decoy = cm.launch(_mk_prog(), own, 0.0, _rng(21), 50.0, 50.0)
+	_assert_bool(fails, "T33 first shot ok", d1 != null, true)
+	_assert_bool(
+		fails,
+		"T33 fire decrements ready+inventory",
+		cm.ready_rounds == 1 and cm.inventory == 3,
+		true
+	)
+	_assert_bool(fails, "T33 ammo invariant holds", cm.ammo_errors().is_empty(), true)
+	_assert_bool(fails, "T33 reload pending", cm.needs_reload(), true)
+	cm.step(44.0)
+	_assert_bool(fails, "T33 not early", cm.ready_rounds == 1, true)
+	_assert_bool(fails, "T33 left ~1s", absf(cm.reload_left_s() - 1.0) < 0.01, true)
+	cm.step(1.0)
+	_assert_bool(fails, "T33 reloaded one", cm.ready_rounds == 2, true)
+	_assert_bool(fails, "T33 reload keeps inventory", cm.inventory == 3, true)
+	_assert_bool(fails, "T33 capacity reached stops", cm.needs_reload(), false)
+	cm.step(200.0)  # 重复推进幂等：不超容量、不超库存。
+	_assert_bool(
+		fails, "T33 no overfill on repeated step", cm.ready_rounds == 2 and cm.inventory == 3, true
+	)
+	# 无备用弹（inventory == ready）→ 不装填。
+	var cm2 := CountermeasureSystem.new()
+	cm2.configure({"ready_rounds": 2, "inventory": 2, "reload_time_s": 45.0})
+	cm2.launch(_mk_prog(), own, 0.0, _rng(22), 50.0, 50.0)
+	cm2.step(120.0)
+	_assert_bool(fails, "T33 no spare no reload", cm2.ready_rounds == 1, true)
+	# 开火失败（冷却中）不扣弹。
+	var cm3 := CountermeasureSystem.new()
+	(
+		cm3
+		. configure(
+			{
+				"ready_rounds": 2,
+				"inventory": 4,
+				"launch_cooldown_s": 10.0,
+				"reload_time_s": 45.0,
+			}
+		)
+	)
+	cm3.launch(_mk_prog(), own, 0.0, _rng(23), 50.0, 50.0)
+	var before_r: int = cm3.ready_rounds
+	var before_i: int = cm3.inventory
+	var d_fail: Decoy = cm3.launch(_mk_prog(), own, 1.0, _rng(24), 50.0, 50.0)
+	_assert_bool(fails, "T33 cooldown rejects", d_fail == null, true)
+	_assert_bool(
+		fails,
+		"T33 failed shot costs nothing",
+		cm3.ready_rounds == before_r and cm3.inventory == before_i,
+		true
+	)
+	# 暂停不装填 / 恢复后按仿真时间装填（World 集成路径）。
+	var w: World = _t33_world()
+	var cmw: CountermeasureSystem = w.countermeasures
+	_assert_bool(fails, "T33 world launch ok", w._launch_decoy(_mk_prog()), true)
+	w.set_paused(true)
+	w.run_steps(200)  # dt=0.5；暂停 → tick 提前返回，不推进装填。
+	_assert_bool(fails, "T33 paused no reload", cmw.ready_rounds == 1, true)
+	w.set_paused(false)
+	w.run_steps(100)  # 50 仿真秒 ≥ 45 → 装填一发。
+	_assert_bool(fails, "T33 resumed reload", cmw.ready_rounds == 2, true)
+
+
+## T33 用的最小 World（stage1 + 显式反制配置；无目标）。
+func _t33_world() -> World:
+	var sc: Dictionary = ConfigLoader.load_scenario("stage1_basic_passive")
+	sc["seed"] = SEED
+	sc["targets"] = []
+	var own_ship: Dictionary = sc.get("own_ship", {})
+	own_ship["countermeasures"] = {
+		"ready_rounds": 2,
+		"inventory": 4,
+		"launcher_capacity": 2,
+		"reload_time_s": 45.0,
+		"launch_cooldown_s": 0.0,
+	}
+	sc["own_ship"] = own_ship
+	var w := World.new()
+	w.load_scenario(sc)
+	return w
+
+
+## ---- T32 / DC-06：画像快照独立 + 频段字段完整 + 过期优先 ----
+## 两枚干扰器共用同一 program 快照：画像必须是各自实例，谱抖动互不修改、也不回写
+## 源画像；频段（band_min/max_hz）必须随快照复制（旧逐属性白名单漏掉过）；
+## 同一 tick 内寿命耗尽与激活竞争时过期优先（不得越过寿命后激活一帧）。
+func _t32_signature_snapshot(fails: Array) -> void:
+	var cm := CountermeasureSystem.new()
+	(
+		cm
+		. configure(
+			{
+				"ready_rounds": 2,
+				"inventory": 2,
+				"launch_cooldown_s": 0.0,
+				"supported_types": [DecoyProgram.TYPE_JAMMER],
+			}
+		)
+	)
+	var own := _mk_truth("OWN", 0.0, 0.0, "blue")
+	var prog := DecoyProgram.new()
+	prog.decoy_type = DecoyProgram.TYPE_JAMMER
+	prog.launch_bearing_deg = 90.0
+	prog.activation_delay_s = 0.0
+	prog.lifetime_s = 120.0
+	var src: AcousticProfile = _mk_ac(200.0, true)
+	src.band_min_hz = 800.0
+	src.band_max_hz = 1200.0
+	src.tonal_lines = [{"freq_hz": 900.0, "level_db": 180.0}]
+	prog.signature = src
+	var d1: Decoy = cm.launch(prog, own, 0.0, _rng(11), 50.0, 50.0)
+	var d2: Decoy = cm.launch(prog, own, 0.0, _rng(12), 50.0, 50.0)
+	_assert_bool(fails, "T32 two jammers launched", d1 != null and d2 != null, true)
+	if d1 == null or d2 == null:
+		return
+	_assert_bool(
+		fails, "T32 signatures are distinct instances", d1.signature_ac != d2.signature_ac, true
+	)
+	_assert_bool(
+		fails,
+		"T32 band copied to decoy 1",
+		(
+			is_equal_approx(float(d1.signature_ac.get("band_min_hz")), 800.0)
+			and is_equal_approx(float(d1.signature_ac.get("band_max_hz")), 1200.0)
+		),
+		true
+	)
+	_assert_bool(
+		fails,
+		"T32 band copied to decoy 2",
+		is_equal_approx(float(d2.signature_ac.get("band_max_hz")), 1200.0),
+		true
+	)
+	var src_f0: float = float((src.tonal_lines[0] as Dictionary)["freq_hz"])
+	# 谱线字典不得共享：深拷贝下原地改写诱饵谱线不回写源画像（浅拷贝会共享
+	# 内层 Dictionary，此处必须变红）。
+	(d1.signature_ac.get("tonal_lines")[0] as Dictionary)["level_db"] = -777.0
+	var src_lvl: float = float((src.tonal_lines[0] as Dictionary)["level_db"])
+	_assert_bool(fails, "T32 no shared tonal dict", is_equal_approx(src_lvl, 180.0), true)
+	for i in range(24):
+		d1.step(0.5)
+		d2.step(0.5)
+	var src_after: float = float((src.tonal_lines[0] as Dictionary)["freq_hz"])
+	_assert_bool(fails, "T32 source profile untouched", is_equal_approx(src_f0, src_after), true)
+	var f1: float = float((d1.signature_ac.get("tonal_lines")[0] as Dictionary)["freq_hz"])
+	var f2: float = float((d2.signature_ac.get("tonal_lines")[0] as Dictionary)["freq_hz"])
+	_assert_bool(fails, "T32 jitter independent", not is_equal_approx(f1, f2), true)
+	# 过期优先：lifetime(1.5s) < activation_delay(2.0s)，dt=1.0 时第 2 tick 同时
+	# 跨过两者——旧序先判激活会发出"已过期激活"，新序过期优先。
+	var p2 := DecoyProgram.new()
+	p2.decoy_type = DecoyProgram.TYPE_JAMMER
+	p2.launch_bearing_deg = 0.0
+	p2.activation_delay_s = 2.0
+	p2.lifetime_s = 1.5
+	p2.signature = _mk_ac(190.0, true)
+	var d3 := Decoy.new()
+	d3.deploy(p2, own, 50.0, 50.0)
+	d3.bind_signature(p2.signature.copy())
+	var ever_activated: bool = false
+	for i in range(4):
+		if d3.step(1.0):
+			ever_activated = true
+	_assert_bool(fails, "T32 expiry wins over activation", ever_activated, false)
+	_assert_bool(fails, "T32 never activated then expired", (not d3.activated) and d3.expired, true)
 
 
 ## ---- CM-01：玩家与敌方均能发射（同一类，origin 任意 TruthEntity）----

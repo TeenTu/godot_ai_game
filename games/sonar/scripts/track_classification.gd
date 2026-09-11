@@ -66,6 +66,10 @@ static func _accum_measurements(track: Track, acc: Dictionary) -> void:
 	for m in track.measurement_history:
 		if not (m is Measurement) or not m.detected:
 			continue
+		# MK-03：纯人工假设（玩家自由落点、无实测峰支撑）不为分类升级提供依据。
+		# 它照常是合法的方位证据（TMA/发射链），只是不等于"探测成功"。
+		if m.manual_hypothesis:
+			continue
 		var key: String = _key_of(m)
 		if seen.has(key):
 			continue

@@ -124,11 +124,16 @@ static func pair_cost(r: Dictionary, t: Dictionary) -> float:
 
 
 ## 谱线失配惩罚：双方都带谱线且完全不重叠 → 惩罚；任一方无谱线 → 0。
+## PG-02：两侧可能是主动回波的字典 DTO，也可能是被动 Mark 的纯数值数组，
+## 这里一律先归一化成频点数值再比较——绝不能直接 float(元素)
+## （元素是 Dictionary 时会运行时报错，把整条主动关联链打掉）。
 static func spectral_penalty(a: Array, b: Array) -> float:
-	if a.is_empty() or b.is_empty():
+	var fa_list: Array = Measurement.spectral_freqs(a)
+	var fb_list: Array = Measurement.spectral_freqs(b)
+	if fa_list.is_empty() or fb_list.is_empty():
 		return 0.0
-	for fa in a:
-		for fb in b:
+	for fa in fa_list:
+		for fb in fb_list:
 			if absf(float(fa) - float(fb)) <= 25.0:
 				return 0.0
 	return SPECTRAL_PENALTY

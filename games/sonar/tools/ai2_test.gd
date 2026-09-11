@@ -163,27 +163,33 @@ func _ai_2_filter_neutral_counterfire(fails: Array) -> void:
 			fails, "AI-2b class not DECOY", str(e.get("source_class", "")) != "DECOY", true
 		)
 	# c) 反应延迟 ∈ [3,15]s 的完整反击闭环（响亮本艇 3.5km）。
+	# AI-01：延迟基准改为**取得攻击资格**的时刻（不是"质量过线"——质量过线
+	# 只是怀疑/跟踪，攻击资格还要证据数与观察跨度）。
 	var w := _mk_combat_world(3500.0, 45.0, true)
-	var th: float = float(w.enemy_ai.doctrine.get("fire_quality_threshold", 0.7))
-	var t_cross: float = -1.0
+	var d_lo: float = float(w.enemy_ai.doctrine.get("reaction_delay_min_s", 3.0))
+	var d_hi: float = float(w.enemy_ai.doctrine.get("reaction_delay_max_s", 15.0))
+	var t_auth: float = -1.0
 	var t_fire: float = -1.0
 	for i in range(900):
 		w.run_steps(1)
-		if t_cross < 0.0 and not w.enemy_ai.tracks.tracks.is_empty():
+		if t_auth < 0.0:
 			var bt: Dictionary = w.enemy_ai.tracks.best_track()
-			if float(bt.get("quality", 0.0)) >= th:
-				t_cross = w.sim_time
+			if (
+				not bt.is_empty()
+				and w.enemy_ai.tracks.attack_authorized(bt, w.sim_time, w.enemy_ai.doctrine)
+			):
+				t_auth = w.sim_time
 		if not w.enemy_weapons.torpedoes.is_empty():
 			t_fire = w.sim_time
 			break
-	_assert_bool(fails, "AI-2c quality crossed threshold", t_cross > 0.0, true)
+	_assert_bool(fails, "AI-2c attack authorized", t_auth > 0.0, true)
 	_assert_bool(fails, "AI-2c enemy counterfired", t_fire > 0.0, true)
-	if t_fire > 0.0 and t_cross > 0.0:
-		var delay: float = t_fire - t_cross
+	if t_fire > 0.0 and t_auth > 0.0:
+		var delay: float = t_fire - t_auth
 		_assert_bool(
 			fails,
-			"AI-2c reaction delay in [2,16] (%.1f)" % delay,
-			delay >= 2.0 and delay <= 16.0,
+			"AI-2c reaction delay in [%.0f,%.0f] (%.1f)" % [d_lo, d_hi, delay],
+			delay >= d_lo - 1.0 and delay <= d_hi + 2.0,
 			true
 		)
 
@@ -191,10 +197,12 @@ func _ai_2_filter_neutral_counterfire(fails: Array) -> void:
 ## ---- AI-3：拒发不占名额 / 击沉取消 / 双向换层规避 ----
 func _ai_3_lifecycle(fails: Array) -> void:
 	# a) FIRE 调度→名额占用→拒发回执归还（拒发绝不占死在水武器名额）。
+	# AI-01/AI-02 语义：先喂够攻击资格（≥3 条独立证据 / 跨度 ≥15s / 质量 ≥0.7），
+	# 再由泊松机会（λ 给大值 → 间隔趋 0）在**下一次** update 触发调度。
+	# 第一次 update 只建立机会基准线（AI-05 的 dt 无关性要求不能靠当 tick 抽签）。
 	var ctl := _mk_controller(50.0)
-	var ev := _mk_evidence(45.0, 0.95)
-	ctl.tracks.feed(ev, 0.0)
-	var actions: Array = ctl.update(0.0, 0.5, [])
+	_feed_attack_ready(ctl, 45.0)
+	var actions: Array = ctl.update(15.0, 0.5, [])
 	_assert_bool(
 		fails,
 		"AI-3a no same-tick fire (reaction delay)",
@@ -207,10 +215,17 @@ func _ai_3_lifecycle(fails: Array) -> void:
 		ctl.state == EnemyDoctrineController.State.ATTACKING,
 		true
 	)
+	var actions_edge: Array = ctl.update(16.0, 0.5, [])
+	_assert_bool(
+		fails,
+		"AI-3a fire scheduled but not executed same tick",
+		not ctl._pending.is_empty() and _find_action(actions_edge, "FIRE_TORPEDO").is_empty(),
+		true
+	)
 	for p in ctl._pending:
 		if str(p["action"].get("action", "")) == "FIRE_TORPEDO":
-			p["at"] = 1.0  # 压缩反应延迟到 1s，验证到期执行
-	var actions2: Array = ctl.update(2.0, 0.5, [])
+			p["at"] = 16.5  # 压缩反应延迟，验证到期（经 AI-04 复核）执行
+	var actions2: Array = ctl.update(16.5, 0.5, [])
 	_assert_bool(
 		fails,
 		"AI-3a fire due after delay",
@@ -220,6 +235,26 @@ func _ai_3_lifecycle(fails: Array) -> void:
 	_assert_bool(fails, "AI-3a slot occupied", ctl.active_torpedo_count() == 1, true)
 	ctl.notify_fire_rejected()
 	_assert_bool(fails, "AI-3a rejected fire returns slot", ctl.active_torpedo_count() == 0, true)
+	# a2) AI-04：到期复核——证据过期（超出 attack_max_evidence_age_s）时撤销发射
+	# 并归还名额，绝不占死在水武器名额、也不按旧方位发射。
+	var ctl_exp := _mk_controller(50.0)
+	_feed_attack_ready(ctl_exp, 45.0)
+	ctl_exp.update(15.0, 0.5, [])
+	ctl_exp.update(16.0, 0.5, [])
+	for p in ctl_exp._pending:
+		if str(p["action"].get("action", "")) == "FIRE_TORPEDO":
+			p["at"] = 16.5
+	var stale_now: float = (
+		16.5 + float(ctl_exp.doctrine.get("attack_max_evidence_age_s", 30.0)) + 5.0
+	)
+	var stale_actions: Array = ctl_exp.update(stale_now, 0.5, [])
+	_assert_bool(
+		fails,
+		"AI-4 stale FIRE revalidated out",
+		_find_action(stale_actions, "FIRE_TORPEDO").is_empty(),
+		true
+	)
+	_assert_bool(fails, "AI-4 stale FIRE returns slot", ctl_exp.active_torpedo_count() == 0, true)
 	# b) 击沉：取消全部待执行动作，停止一切新动作。
 	var ctl2 := _mk_controller(50.0)
 	ctl2.tracks.feed(_mk_evidence(90.0, 0.9), 0.0)
@@ -368,8 +403,13 @@ func _mk_combat_world(range_m: float, bearing_deg: float, loud: bool) -> World:
 			"suspicious_quality_threshold": 0.25,
 			"reaction_delay_min_s": 3.0,
 			"reaction_delay_max_s": 15.0,
-			"counterfire_probability": 1.0,
+			# AI-02：λ 取大值 → 泊松机会间隔趋 0，延迟测量只反映反应延迟本身。
+			"counterfire_rate_per_s": 50.0,
 			"counterfire_cooldown_s": 120.0,
+			# AI-01：攻击资格四项（本用例显式写出，便于审查）。
+			"attack_min_evidence": 3,
+			"attack_min_span_s": 15.0,
+			"attack_max_evidence_age_s": 30.0,
 			"max_simultaneous_weapons": 2,
 			"sample_interval_s": 2.0,
 			"torpedo_active_enable_time_s": 60.0,
@@ -393,8 +433,12 @@ func _mk_controller(depth_m: float) -> EnemyDoctrineController:
 		"suspicious_quality_threshold": 0.25,
 		"reaction_delay_min_s": 1.0,
 		"reaction_delay_max_s": 1.0,
-		"counterfire_probability": 1000.0,  # λ·Δt 大 → p≈1（确定性调度）
+		# AI-02：λ = 1000/s → 泊松机会间隔 ~1ms（确定性调度，不是"每 tick 抽签"）。
+		"counterfire_rate_per_s": 1000.0,
 		"counterfire_cooldown_s": 120.0,
+		"attack_min_evidence": 3,
+		"attack_min_span_s": 15.0,
+		"attack_max_evidence_age_s": 30.0,
 		"max_simultaneous_weapons": 1,
 		"sample_interval_s": 2.0,
 		"evade_other_band_hold_depth_m": 180.0,
@@ -406,6 +450,13 @@ func _mk_controller(depth_m: float) -> EnemyDoctrineController:
 
 func _hold(band: String) -> float:
 	return 180.0 if band == "LOWER" else 70.0
+
+
+## AI-01：喂够"攻击资格"所需的独立证据——≥3 条、观察跨度 ≥15s、质量 ≥0.7。
+## 单条强证据只能进 SUSPICIOUS/TRACKING（alpha_first=0.3），拿不到发射资格。
+func _feed_attack_ready(ctl: EnemyDoctrineController, bearing_deg: float) -> void:
+	for i in range(4):
+		ctl.tracks.feed(_mk_evidence(bearing_deg, 0.95, 100 + i), float(i) * 5.0)
 
 
 func _mk_entity(id: String, e: float, n: float, depth: float) -> TruthEntity:
@@ -439,9 +490,10 @@ func _mk_event(kind: String, bearing_deg: float, range_m: float, sl_db: float) -
 
 
 ## 高置信净化证据（喂航迹管理用）。
-func _mk_evidence(bearing_deg: float, pd: float) -> Dictionary:
+## AI-01：`evidence_id` 必须唯一——同一条物理证据重复投喂不得重复抬高质量。
+func _mk_evidence(bearing_deg: float, pd: float, ev_id: int = 1) -> Dictionary:
 	return {
-		"evidence_id": 1,
+		"evidence_id": ev_id,
 		"timestamp": 0.0,
 		"kind": "EMISSION_INTERCEPT",
 		"source_class": "PLATFORM",

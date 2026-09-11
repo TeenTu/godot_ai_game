@@ -25,6 +25,10 @@ extends RefCounted
 enum Mode { MANUAL, ASSISTED, FULL_AUTO }
 
 const MODE_NAMES: Array = ["MANUAL", "ASSISTED", "FULL_AUTO"]
+## PG-01：规范词汇 MANUAL / ASSIST / AUTO（旧名 MANUAL/ASSISTED/FULL_AUTO 保留为
+## 兼容别名）。本类仍是**唯一**自动化模式源——主动声呐卡片的 TMA 模式、值班链、
+## 威胁自动化一律由 `mode` 派生，不得各自持一份状态（T21）。
+const CANON_NAMES: Array = ["MANUAL", "ASSIST", "AUTO"]
 
 const MODE_MANUAL: int = Mode.MANUAL
 const MODE_ASSISTED: int = Mode.ASSISTED
@@ -67,8 +71,42 @@ func set_roe(key: String, value: bool, now: float) -> void:
 	log_command("ROE", "%s=%s" % [key, str(value)], now)
 
 
+## PG-01：按名称切模式（规范名 MANUAL/ASSIST/AUTO 与旧名都接受）。返回是否变更。
+func set_mode_by_name(name: String, now: float) -> bool:
+	return set_mode(from_canon_name(name), now)
+
+
 func mode_name() -> String:
 	return MODE_NAMES[mode]
+
+
+## PG-01：规范词汇名（MANUAL / ASSIST / AUTO）。
+func canon_name() -> String:
+	return canon_name_of(mode)
+
+
+## PG-01：ASSIST 与 AUTO 都自动记录/关联/分类/更新位置估计与条件充分时的 TMA；
+## 两者差别只在 ROE 允许的动作（自动发射/诱饵）与草案占用。
+static func is_automatic(m: int) -> bool:
+	return m == Mode.ASSISTED or m == Mode.FULL_AUTO
+
+
+func automatic() -> bool:
+	return is_automatic(mode)
+
+
+static func canon_name_of(m: int) -> String:
+	return CANON_NAMES[clampi(m, 0, CANON_NAMES.size() - 1)]
+
+
+## PG-01：名称 → 模式。规范名与旧名都接受（未知一律 MANUAL，绝不静默升级权限）。
+static func from_canon_name(name: String) -> int:
+	var up: String = name.strip_edges().to_upper()
+	var i: int = CANON_NAMES.find(up)
+	if i >= 0:
+		return i
+	var j: int = MODE_NAMES.find(up)
+	return j if j >= 0 else Mode.MANUAL
 
 
 ## REQ-AU-04：Take Control —— 一 tick 生效的 PLAYER OVERRIDE。

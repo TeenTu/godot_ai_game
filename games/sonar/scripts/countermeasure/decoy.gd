@@ -10,11 +10,26 @@ extends TruthEntity
 ##   MOBILE_DECOY：模拟目标运动与噪声（稳定谱线 + 真实机动）。
 ##   JAMMER_CONFUSER：宽带高噪抬噪声底 + 运行时抖动的假峰谱线（稀释/混淆，
 ##     不稳定谱 → 航迹 classification_match 低 → score 竞争中被稀释）。
+##
+## P1-C 运动约定（DC-01..DC-03）：
+##   - 运动**只**由自身 course/speed/commanded_depth 积分（TruthEntity.advance），
+##     本艇转弯/提速/换层与地图平移缩放都不改变诱饵世界坐标；
+##   - 出管方向只有一个来源：program 的投放方向（course<0 时）或显式高级巡航
+##     航向（DC-02）；发射后程序已快照，本艇后续命令不再作用于诱饵；
+##   - 出管瞬间**一次**继承平台动量作为初速度（不持续绑定平台），随后按自身
+##     加速度限制收敛到分离速度/巡航速度（DC-03）；
+##   - 分离阶段（separation_duration_s）产生真实有限位移，之后降到 speed_kn。
 
 ## REQ-CM-01：全局唯一序号，存于主循环 meta（跨 World 实例单调递增）。不用
 ## static var——Godot 4.5 Windows 退出阶段 static 清理会随机段错误（曾是
 ## decoy_test 关机 crash 的根因）；主循环 meta 随 SceneTree 释放，无此问题。
 const _SERIAL_META := "_decoy_serial_next"
+## DC-03：出管后速度收敛率（kn/s）。只限制诱饵自身速度变化，不影响平台。
+const DEFAULT_DECEL_KN_S: float = 1.0
+## DC-04：诱饵状态（STANDBY 出管未激活 / ACTIVE / EXPIRED），单一口径。
+const STATE_STANDBY := "STANDBY"
+const STATE_ACTIVE := "ACTIVE"
+const STATE_EXPIRED := "EXPIRED"
 
 var decoy_type: String = DecoyProgram.TYPE_MOBILE
 var activation_delay_s: float = 2.0
@@ -25,9 +40,19 @@ var age_s: float = 0.0
 var activated: bool = false
 var expired: bool = false
 
+## DC-01/DC-04：出管方向与分离阶段留档（地图方向显示、调试记录与测试断言用）。
+var launch_bearing_deg: float = 0.0
+var separation_duration_s: float = 0.0
+var separation_speed_kn: float = 0.0
+var cruise_speed_kn: float = 0.0
+var initial_speed_kn: float = 0.0
+## DC-02：是否为高级独立巡航方向（与投放方向不同）。
+var advanced_course: bool = false
+
 var signature_ac: RefCounted = null  # 诱饵声学画像（adapter 经 contact_acs 读取）
 var _jitter_rng: RandomNumberGenerator = null
 var _base_tonals: Array = []  # 出厂谱线（JAMMER 抖动的基准）
+var _sep_done: bool = false
 
 
 ## 全局自增序号（REQ-CM-01）。经 Engine.get_main_loop() meta 持久化；无主循环
@@ -64,14 +89,29 @@ func deploy(
 	depth_m = initial_depth_m
 	commanded_depth_m = z_cmd_m  # REQ-CM-02：修复参数遮蔽（原句等于自赋值）
 	max_vertical_speed_m_s = 2.0
-	course_deg = prog.launch_bearing_deg
-	commanded_course_deg = (
-		prog.course_deg if prog.decoy_type == DecoyProgram.TYPE_MOBILE else prog.launch_bearing_deg
-	)
-	speed_kn = 0.0
-	commanded_speed_kn = prog.speed_kn if prog.decoy_type == DecoyProgram.TYPE_MOBILE else 0.0
+	# DC-02：方向只有一个来源。出管瞬间朝投放方向，随后（如有）转到程序的
+	# 出管航向——未设置独立巡航方向时二者相同，不存在后台默认航向。
+	launch_bearing_deg = NavUtils.wrap360(prog.launch_bearing_deg)
+	advanced_course = prog.is_advanced_course()
+	course_deg = launch_bearing_deg
+	commanded_course_deg = prog.resolved_course_deg()
+	# DC-03：分离阶段与巡航速度；出管动量只在此处取一次平台实际航速。
+	separation_duration_s = prog.separation_duration_s
+	separation_speed_kn = prog.resolved_separation_speed_kn()
+	cruise_speed_kn = prog.speed_kn
+	initial_speed_kn = from.speed_kn
+	speed_kn = initial_speed_kn
+	commanded_speed_kn = separation_speed_kn if prog.has_separation_phase() else cruise_speed_kn
 	turn_rate_deg_s = 4.0
+	acceleration_kn_s = DEFAULT_DECEL_KN_S
 	_motion_commanded = true
+
+
+## DC-04：对外状态（地图 DTO 与面板共用同一口径）。
+func state() -> String:
+	if expired:
+		return STATE_EXPIRED
+	return STATE_ACTIVE if activated else STATE_STANDBY
 
 
 func bind_signature(ac: RefCounted) -> void:
@@ -87,20 +127,34 @@ func bind_jitter_rng(r: RandomNumberGenerator) -> void:
 
 ## 每步：寿命/激活推进 + 运动（TruthEntity.advance 同源限速率）+ JAMMER 谱抖动。
 ## 返回 true 表示本帧刚激活（供 World 记 DECOY_ACTIVATION 事件，§9.1）。
+## DC-03：声学激活延时**不**阻止出管后的运动——advance 在激活判定之前执行；
+## 分离阶段在 advance 之前切换速度命令，保证分离位移真实存在。
 func step(dt: float) -> bool:
 	age_s += dt
 	if expired:
 		return false
+	_step_separation()
 	advance(dt)
-	if not activated and age_s >= activation_delay_s:
-		activated = true
-		return true
+	# DC-06：同一 tick 内寿命耗尽与声学激活竞争时**过期优先**——不得越过寿命后
+	# 再激活一帧（旧序先判激活，lifetime<=activation_delay 时会发出已过期激活）。
 	if age_s >= lifetime_s:
 		expired = true
 		return false
+	if not activated and age_s >= activation_delay_s:
+		activated = true
+		return true
 	if activated and decoy_type == DecoyProgram.TYPE_JAMMER and _jitter_rng != null:
 		_jitter_tonals()
 	return false
+
+
+## 分离阶段结束 → 把速度命令降到巡航/漂浮速度（只改命令，实际按加速度收敛）。
+func _step_separation() -> void:
+	if _sep_done or age_s < separation_duration_s:
+		return
+	_sep_done = true
+	if absf(commanded_speed_kn - cruise_speed_kn) > 0.001:
+		commanded_speed_kn = cruise_speed_kn
 
 
 ## JAMMER：每次声学采样推进对假峰频率做小幅随机游走 → 航迹谱一致性被稀释

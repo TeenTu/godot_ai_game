@@ -43,8 +43,25 @@ func _on_context(ctx: Dictionary) -> void:
 	# 绘制态菜单只保留「完成航线（仅当有效）/ 取消本次绘制」，
 	# 因此必须把航线有效性一并注入，不能让「完成航线」点了没反应。
 	ctx["route_can_commit"] = bool(wmc != null and wmc.is_route_ready())
+	# DC-05：诱饵投放可用性（类型/真方位/可用数量/禁用原因）。菜单只展示；
+	# 打开或关闭菜单都不消耗库存、不发射。
+	ctx["decoy_offer"] = _decoy_offer(ctx)
 	var gp: Vector2 = _chart.get_screen_transform() * (ctx["screen_position"] as Vector2)
 	_menu.open_at(gp, ctx)
+
+
+## DC-05：以菜单世界点求 direction-only 的真方位与两种类型的可用性（纯读）。
+func _decoy_offer(ctx: Dictionary) -> Dictionary:
+	var w = _ui.world
+	if w == null or w.countermeasures == null:
+		return {}
+	var own: TruthEntity = w.world.get("own", null)
+	if own == null:
+		return {}
+	var p: Vector2 = ctx.get("world_position", Vector2(own.position_east_m, own.position_north_m))
+	return DecoyLaunchBuilder.offer(
+		w.countermeasures, own, p, float(w.sim_time), bool(w.is_mission_running())
+	)
 
 
 func _on_action(action: String, ctx: Dictionary) -> void:
@@ -61,9 +78,12 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 		"contact_select":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
 		"contact_mark_group":
-			_ui.mark_flow.active_group_id = str(ctx.get("hit_id", ""))
+			# MK-01：地图菜单与面板共用同一个状态入口（select_group），
+			# 不能只改 MarkFlow 而不刷新面板，也不能各存一份状态。
+			var gid: String = str(ctx.get("hit_id", ""))
+			_ui.mark_flow.select_group(gid)
 			_ui._refresh_mark_panel()
-			_ui._update_status(str(UiText.t("mark_group_set_to")) + str(ctx.get("hit_id", "")))
+			_ui._update_status(str(UiText.t("mark_group_set_to")) + gid)
 		"contact_goto_tma":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
 			_pager.select("tactics")
@@ -99,6 +119,10 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 			var mc = _map()
 			if mc != null:
 				mc.cancel_current_edit()
+		"empty_decoy_mobile":
+			_launch_decoy_at(DecoyProgram.TYPE_MOBILE, ctx)
+		"empty_decoy_jammer":
+			_launch_decoy_at(DecoyProgram.TYPE_JAMMER, ctx)
 		"empty_torpedo_goto":
 			_map().map_goto_point(ctx["world_position"])
 		"empty_torpedo_waypoint":
@@ -121,6 +145,42 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 ## 地图武器总控（发射航线 + 在水鱼雷地图命令）。
 func _map():
 	return _ui.map_control() if _ui.has_method("map_control") else null
+
+
+## DC-05：地图右键投放。菜单世界点**只用于定义方向**（bearing_to_true(own, p)），
+## 诱饵从本艇当前实际位置出管；点击离本艇过近 → "方向不明确"，不发射（不默认
+## 偷偷发射）。与面板共用 DecoyLaunchBuilder + CountermeasureSystem（同一份程序
+## 构建与物理参数，不复制两套）。重复事件幂等：第二次同向投放被冷却/库存拒绝。
+func _launch_decoy_at(decoy_type: String, ctx: Dictionary) -> void:
+	var w: World = _ui.world
+	if w == null or w.countermeasures == null:
+		return
+	var own: TruthEntity = w.world.get("own", null)
+	if own == null:
+		return
+	var offer: Dictionary = ctx.get("decoy_offer", {})
+	if offer.is_empty():
+		offer = _decoy_offer(ctx)
+	var info: Dictionary = (offer.get("types", {}) as Dictionary).get(decoy_type, {})
+	if not bool(info.get("enabled", false)):
+		_ui._update_status(
+			(
+				UiText.t("decoy_reject")
+				% UiText.decoy_offer_reason(
+					str(info.get("reason", "")), float(info.get("cooldown_left_s", 0.0))
+				)
+			)
+		)
+		return
+	var prog: DecoyProgram = DecoyLaunchBuilder.build(
+		w.countermeasures, decoy_type, float(offer.get("bearing_deg", 0.0)), own
+	)
+	if w._launch_decoy(prog):
+		_ui._update_status(
+			UiText.t("decoy_launch") % [UiText.decoy(decoy_type), prog.launch_bearing_deg]
+		)
+		return
+	_ui._update_status(UiText.t("decoy_reject") % UiText.reject(str(w.last_decoy_reject_reason)))
 
 
 ## §4.3：选中鱼雷（写图表选择 + 弹出浮动栏）。

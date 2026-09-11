@@ -289,6 +289,77 @@ func append_group_direct(track: Track, group: Array) -> Track:
 	return track
 
 
+## MK-06：纯计算候选——只评分，不改动任何 Track。
+## SUGGEST 模式必须在玩家接受前保持零副作用（旧实现先 feed 再提示，等于
+## 未获同意就改了航迹，且让同一观测有可能被算两遍）。返回按代价升序的
+## [{track, d2}]，调用方自行决定提示/改绑。
+func score_group_candidates(group: Array, max_angle_deg: float = 8.0) -> Array:
+	var cands: Array = []
+	for m in group:
+		if m is Measurement and m.detected:
+			cands.append(m)
+	var out: Array = []
+	if cands.is_empty():
+		return out
+	for track in _tracks:
+		var t := track as Track
+		if t.state != Track.TrackState.ACTIVE:
+			continue
+		var d2: float = _group_track_d2(cands, t, max_angle_deg)
+		if d2 >= 0.0:
+			out.append({"track": t, "d2": d2})
+	out.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool: return float(a["d2"]) < float(b["d2"])
+	)
+	return out
+
+
+## MK-03/MK-06：把一条物理证据（A/B 镜像组整体）原子地从一个 Track 移到另一个。
+##   - 组内每个成员要么全部迁移成功，要么整体回滚（不允许只搬走 A 支，
+##     留下 B 支在原组形成"同一观测两处计数"的裂缝）；
+##   - 保持同一 evidence_id / pair_id（改绑不是新探测）；
+##   - 返回成功迁移的成员数组（空数组 = 未做任何改动，可原样撤销）。
+## source_track 为 null 时自动按当前归属推断。
+func move_evidence_group(group: Array, to_track: Track, source_track: Track = null) -> Array:
+	var empty: Array = []
+	if to_track == null or to_track.state == Track.TrackState.MERGED:
+		return empty
+	var members: Array = []
+	for m in group:
+		if m is Measurement:
+			members.append(m as Measurement)
+	if members.is_empty():
+		return empty
+	var from_t: Track = source_track
+	if from_t == null:
+		from_t = track_of_measurement(members[0])
+	if from_t == null or from_t == to_track:
+		return empty
+	var moved: Array = []
+	for m in members:
+		if not from_t.measurement_history.has(m):
+			# 组内成员分散在不同 Track（历史上不该出现）：整体放弃，保持原状。
+			_rollback_group(from_t, moved)
+			return empty
+		if from_t.remove_measurement(m):
+			moved.append(m)
+		else:
+			_rollback_group(from_t, moved)
+			return empty
+	for m in members:
+		to_track.add_measurement(m)
+	to_track.association_confidence = 1.0
+	to_track.last_association_mode = "manual"
+	to_track.last_association_score = 0.0
+	return moved
+
+
+func _rollback_group(from_t: Track, moved: Array) -> void:
+	for m in moved:
+		if not from_t.measurement_history.has(m):
+			from_t.add_measurement(m)
+
+
 ## 公开按 id 查找（UI/控制器用；REQ-B1-03 后台 REFIT 不改选中时需要）。
 func track_by_id(track_id: String) -> Track:
 	return _find_track(track_id)

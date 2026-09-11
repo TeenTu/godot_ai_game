@@ -23,8 +23,20 @@ var available_time: float = -1.0  # 对接收机"可用"时刻（主动回波=�
 var detected: bool = true
 var evidence_id: String = ""
 
-var observer_east_m: float = 0.0  # 测量时刻本艇位置
+var observer_east_m: float = 0.0  # 观测参考站位（= 参考时刻本艇位置，见下）
 var observer_north_m: float = 0.0
+
+# ---- PG-04 统一观测参考时刻（参考站位）----
+# 主动回波的历史实现把"发射时刻的几何距离"与"到达时刻的本艇站位/方位"混用，
+# 远距/大机动时产生虚假精度。修订后：一次 Ping 的全部回波共享**发射瞬间**冻结
+# 的参考站位（reference_east_m/north_m）与参考时刻（reference_time_s），
+# observer_east_m/north_m 即该参考站位。往返 τ 内本艇位移的不确定量记在
+# motion_bias_m（= 0.5·v·τ，运动近似偏差），由位置协方差显式吸收，不再隐藏。
+var reference_east_m: float = 0.0
+var reference_north_m: float = 0.0
+var reference_time_s: float = -1.0  # <0 = 未声明（消费方回退到 timestamp）
+var motion_bias_m: float = 0.0  # 运动近似偏差（m，1σ 计法见 ActivePositionObs）
+var observer_pos_sigma_m: float = -1.0  # 本艇导航位置 1σ（m）；<0 = 用消费方默认
 
 var measured_bearing_deg: float = 0.0
 var bearing_sigma_deg: float = 0.0
@@ -36,9 +48,19 @@ var signal_excess_db: float = 0.0
 var snr_db: float = 0.0
 var detection_probability: float = 0.0
 
-var detected_frequencies: Array = []  # [{freq_hz, level_db, snr_db}]
+# PG-02 统一谱线 DTO：规范形式是 [{freq_hz, level_db?, snr_db?}]（SpectralFeature）。
+# 被动操作员 Mark 的谱线历史上是纯数值数组（峰上的 freqs_hz），两种形式都会
+# 出现在 detected_frequencies 里——消费方一律走 spectral_freqs()/spectral_features()
+# 归一化，禁止直接 float(元素)（字典会运行时报错）。
+var detected_frequencies: Array = []
 var classification_features: Dictionary = {}
 
+# MK-03：本次记录是"纯人工假设"（玩家在瀑布数据区自由落点，未命中任何实测峰）。
+# 它仍是一条合法方位证据（进 TMA、可发射），但不得被当成自动探测成功：
+# 不给它虚构高 SE/Pd，也不让它单独推动目标分类升级。
+var manual_hypothesis: bool = false
+
+## 是否属于拖曳阵镜像歧义组（A/B 共享证据）。
 # ---- 拖曳线阵左右舷镜像歧义（S1-03A）----
 # 同一次声学到达产生 A/B 两个候选方位（共享证据），pair_id 相同：
 #   ambiguity_branch: 0=无歧义；+1=A 支；-1=B 支（关于阵轴镜像）
@@ -53,7 +75,6 @@ var array_center_north_m: float = 0.0
 var actual_tow_length_m: float = 0.0
 
 
-## 是否属于拖曳阵镜像歧义组（A/B 共享证据）。
 func has_ambiguity() -> bool:
 	return ambiguous_pair_id != "" and ambiguity_branch != 0
 
@@ -62,6 +83,16 @@ func has_ambiguity() -> bool:
 ## 统一判据（S1-04B-REQ-02）：距离与误差必须同时有效，禁止只给距离不给 σ。
 func has_range() -> bool:
 	return measured_range_m >= 0.0 and range_sigma_m > 0.0
+
+
+## PG-04：观测参考站位 + 参考时刻（含回退）。未声明参考站位（旧数据/测试构造）
+## 时回退到 observer_* 与 timestamp，保证消费方永远只有**一个**几何基准。
+func reference_station() -> Dictionary:
+	return {
+		"east_m": observer_east_m,
+		"north_m": observer_north_m,
+		"time_s": reference_time_s if reference_time_s >= 0.0 else timestamp,
+	}
 
 
 func to_dict() -> Dictionary:
@@ -78,6 +109,9 @@ func to_dict() -> Dictionary:
 		"evidence_id": evidence_id,
 		"observer_east_m": observer_east_m,
 		"observer_north_m": observer_north_m,
+		"reference_east_m": reference_east_m,
+		"reference_north_m": reference_north_m,
+		"reference_time_s": reference_time_s,
 		"bearing_deg": measured_bearing_deg,
 		"bearing_sigma_deg": bearing_sigma_deg,
 		"range_m": measured_range_m,
@@ -86,6 +120,7 @@ func to_dict() -> Dictionary:
 		"snr_db": snr_db,
 		"pd": detection_probability,
 		"frequencies": detected_frequencies,
+		"manual_hypothesis": manual_hypothesis,
 		"ambiguous_pair_id": ambiguous_pair_id,
 		"ambiguity_branch": ambiguity_branch,
 		"ambiguity_resolved": ambiguity_resolved,
@@ -94,3 +129,37 @@ func to_dict() -> Dictionary:
 		"array_center_n": array_center_north_m,
 		"tow_length_m": actual_tow_length_m,
 	}
+
+
+## PG-02：把一个谱线数组归一化成 SpectralFeature DTO 列表。
+## 输入允许规范字典、纯数值（旧式）或混合；无有效 freq_hz 的条目直接丢弃，
+## 而不是塞 NAN/0 进后续评分。空输入 → 空数组（"无谱线"≠"确定不匹配"）。
+static func spectral_features(list: Array) -> Array:
+	var out: Array = []
+	for f in list:
+		var hz: float = NAN
+		var lvl: float = NAN
+		var snr: float = NAN
+		if f is Dictionary:
+			hz = float(f.get("freq_hz", NAN))
+			lvl = float(f.get("level_db", NAN))
+			snr = float(f.get("snr_db", NAN))
+		elif f is float or f is int:
+			hz = float(f)
+		if not is_finite(hz):
+			continue
+		var dto: Dictionary = {"freq_hz": hz}
+		if is_finite(lvl):
+			dto["level_db"] = lvl
+		if is_finite(snr):
+			dto["snr_db"] = snr
+		out.append(dto)
+	return out
+
+
+## PG-02：评分前提取有限数值 freq_hz（关联器只比较频率，不比较电平）。
+static func spectral_freqs(list: Array) -> Array:
+	var out: Array = []
+	for dto in spectral_features(list):
+		out.append(float((dto as Dictionary)["freq_hz"]))
+	return out

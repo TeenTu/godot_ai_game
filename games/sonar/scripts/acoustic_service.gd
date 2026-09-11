@@ -106,21 +106,41 @@ static func passive_se_layer(
 ) -> float:
 	var tl: float = env.propagation_loss_layer(range_m, freq_hz, z_s, z_r)
 	# P1-05：self_noise_db >= 0 时用平台专用接收机自噪替代潜艇级 own_noise
-	# （同一 SE 方程，仅噪声项替换；-1 = 旧行为）。
-	# REQ-AC-03：提供接收端位置时用统一 N_eff（含宽带干扰源，波束内/外
-	# 按响应）；否则旧行为（旧场景零变化）。
-	var n_eff: float = (
+	# （同一 SE 方程，仅噪声项替换；-1 = 采用平台默认自噪）。
+	# AC-01：self_noise=-1 只表示"采用默认自噪"，**不能**因此跳过干扰源——
+	# 旧条件分支把 (self_noise_db >= 0) 当成"是否计入干扰"的开关，导致默认自噪
+	# 的接收机完全听不到 JAMMER。现按"是否有接收端位置"决定是否启用统一 N_eff，
+	# effective_noise_db_at() 自己处理 self_noise<0 的回退。
+	var n_eff: float = _receiver_n_eff(
+		env, freq_hz, self_noise_db, own_speed_kn, z_r, rx_e, rx_n, rx_course_deg, beam_half_deg
+	)
+	return sl_db - tl - n_eff + ag_db - dt_db
+
+
+## 统一接收端 N_eff：能给接收端位置且存在干扰源 → 走含干扰的合成；否则退化为
+## 仅环境+自噪（旧场景零行为变化）。AC-01：自噪是否显式与是否计干扰解耦。
+static func _receiver_n_eff(
+	env: RefCounted,
+	freq_hz: float,
+	self_noise_db: float,
+	own_speed_kn: float,
+	rx_z: float,
+	rx_e: float,
+	rx_n: float,
+	rx_course_deg: float,
+	beam_half_deg: float
+) -> float:
+	return (
 		env.effective_noise_db_at(
-			freq_hz, self_noise_db, own_speed_kn, rx_e, rx_n, z_r, rx_course_deg, beam_half_deg
+			freq_hz, self_noise_db, own_speed_kn, rx_e, rx_n, rx_z, rx_course_deg, beam_half_deg
 		)
-		if (self_noise_db >= 0.0 and rx_e > -1.0e8 and not env.interferers.is_empty())
+		if (rx_e > -1.0e8 and not env.interferers.is_empty())
 		else (
 			env.effective_noise_db_with_self(freq_hz, self_noise_db)
 			if self_noise_db >= 0.0
 			else env.effective_noise_db(freq_hz, own_speed_kn)
 		)
 	)
-	return sl_db - tl - n_eff + ag_db - dt_db
 
 
 static func active_se_layer(
@@ -143,16 +163,8 @@ static func active_se_layer(
 ) -> float:
 	var tl_out: float = env.propagation_loss_layer(range_m, freq_hz, z_tx, z_tgt)
 	var tl_ret: float = env.propagation_loss_layer(range_m, freq_hz, z_rx, z_tgt)
-	var n_eff: float = (
-		env.effective_noise_db_at(
-			freq_hz, self_noise_db, own_speed_kn, rx_e, rx_n, z_rx, rx_course_deg, beam_half_deg
-		)
-		if (self_noise_db >= 0.0 and rx_e > -1.0e8 and not env.interferers.is_empty())
-		else (
-			env.effective_noise_db_with_self(freq_hz, self_noise_db)
-			if self_noise_db >= 0.0
-			else env.effective_noise_db(freq_hz, own_speed_kn)
-		)
+	var n_eff: float = _receiver_n_eff(
+		env, freq_hz, self_noise_db, own_speed_kn, z_rx, rx_e, rx_n, rx_course_deg, beam_half_deg
 	)
 	return ping_sl_db - tl_out - tl_ret + target_ts_db - n_eff + ag_db - dt_db
 

@@ -112,7 +112,7 @@ func _initialize() -> void:
 
 
 func _regression_multi_sector_gain(fails: Array) -> void:
-	var flank: Dictionary = OperatorSonar.ARRAY_DEFS["FLANK"]
+	var flank: SensorAcousticProfile = SensorAcousticProfile.builtin_profile("FLANK")
 	# 右舷扇区中心 +90 / 左舷扇区中心 -90：都应取该扇区的 0 dB（最优支），
 	# 而不是被对侧扇区的 -70 dB 拖垮（旧 minf 实现的 bug）
 	var g_r: float = OperatorSonar._array_direction_gain_db(90.0, flank)
@@ -122,18 +122,25 @@ func _regression_multi_sector_gain(fails: Array) -> void:
 	# 两扇区之间（0°）不在覆盖内：应显著衰减
 	var g_mid: float = OperatorSonar._array_direction_gain_db(0.0, flank)
 	_assert_bool(fails, "R1 flank gap attenuated", g_mid < -3.0, true)
-	# 单扇区 TOWED 不受影响：阵轴中心 0 dB，扇区外衰减
-	var towed: Dictionary = OperatorSonar.ARRAY_DEFS["TOWED"]
+	# AC-02：TOWED 改为"两舷广泛可用 + 只有端射 ±15° 连续退化"的线阵模型。
+	# 正横（±90°）不再被旧的"侧向 −25 dB"惩罚；阵轴端射仍为可用的低精度区。
+	var towed: SensorAcousticProfile = SensorAcousticProfile.builtin_profile("TOWED")
 	_assert_bool(
 		fails,
-		"T1 towed center gain ~0",
-		OperatorSonar._array_direction_gain_db(0.0, towed) > -1.0,
+		"T1 towed broadside gain ~0",
+		OperatorSonar._array_direction_gain_db(90.0, towed) > -1.0,
 		true
 	)
 	_assert_bool(
 		fails,
-		"R1 towed outside attenuated",
-		OperatorSonar._array_direction_gain_db(150.0, towed) < -3.0,
+		"T1 towed endfire penalty bounded (<=4dB)",
+		OperatorSonar._array_direction_gain_db(0.0, towed) >= -4.0 - 1e-6,
+		true
+	)
+	_assert_bool(
+		fails,
+		"T1 towed no hard blind zone at stern arc",
+		OperatorSonar._array_direction_gain_db(150.0, towed) > -1.0,
 		true
 	)
 

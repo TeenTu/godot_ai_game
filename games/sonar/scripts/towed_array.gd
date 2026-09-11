@@ -26,6 +26,14 @@ enum State {
 	RETRIEVING,  # 收缆中（actual > commanded）
 }
 
+## AC-03 性能状态（相对"满长稳定"的连续退化分级，非枚举跳变）。
+enum Perf {
+	STOWED,  # 无有效孔径（收回/未过死区）：只显示噪声背景
+	UNSTABLE,  # 刚过死区、严重弯曲或超出正常拖速：允许暂时弱于 BOW，须明示原因
+	DEGRADED,  # 有效长度 60%~85%、转向沉降中或 8~12 节：优势连续下降但不低于 BOW
+	BEST,  # 长度≥85%、settle≥0.85、bend≥0.85、航速≤8 节：完整优势
+}
+
 # ---- 长度与收放（S1-03 必需字段）----
 var max_tow_length_m: float = 400.0
 var actual_tow_length_m: float = 0.0
@@ -44,6 +52,14 @@ var ref_align_speed_ms: float = 2.5  # tau 速度标定参考航速（此速下 
 var bend_penalty_db: float = 6.0  # 阵形全弯时的附加损失上限
 var max_tow_speed_kn: float = 12.0  # 超过此拖速开始产生高速损失
 var speed_penalty_db: float = 6.0  # 高速损失上限（按超速比例线性）
+## AC-03：转向后等待阵形稳定的沉降损失上限（只作用于沉降项，一次）。
+var settle_penalty_db: float = 6.0
+## AC-03 DEGRADED 门槛（连续退化分级的判定基准）。
+var best_aperture_min: float = 0.85
+var best_factor_min: float = 0.85
+var best_speed_max_kn: float = 8.0
+var degraded_aperture_min: float = 0.60
+var unstable_bend_max: float = 0.5
 
 # ---- 状态输出 ----
 var state: int = State.STOWED
@@ -77,6 +93,7 @@ func setup(params: Dictionary = {}) -> void:
 	bend_penalty_db = float(params.get("bend_penalty_db", bend_penalty_db))
 	max_tow_speed_kn = float(params.get("max_tow_speed_kn", max_tow_speed_kn))
 	speed_penalty_db = float(params.get("speed_penalty_db", speed_penalty_db))
+	settle_penalty_db = float(params.get("settle_penalty_db", settle_penalty_db))
 	array_heading_deg = NavUtils.wrap360(float(params.get("array_heading_deg", array_heading_deg)))
 	# 兼容旧字段：给初始长度（默认 STOWED 全收）
 	actual_tow_length_m = clampf(
@@ -135,6 +152,15 @@ func deploy() -> bool:
 	return true
 
 
+## 直接把实际缆长设为给定值并同步命令值、刷新状态。
+## 用途：场景装配初值、复位、以及按长度采样性能曲线（UI/测试）。
+## 正常运行路径仍应走 set_length_command + step（玩家不能瞬移缆长）。
+func set_actual_length(length_m: float) -> void:
+	actual_tow_length_m = clampf(length_m, 0.0, max_tow_length_m)
+	commanded_tow_length_m = actual_tow_length_m
+	_refresh_state()
+
+
 func retract() -> bool:
 	retrieve()
 	return true
@@ -189,14 +215,77 @@ func gain_penalty_db() -> float:
 ## 弯曲 + 高速拖曳损失（dB，≤0）。孔径项另计（见 gain_penalty_db），
 ## 避免调用方把 usable_fraction（已含孔径）与本项一起用时重复扣孔径。
 func bend_speed_loss_db() -> float:
-	var bend_db: float = -bend_penalty_db * (1.0 - bend_factor)
-	var speed_db: float = 0.0
-	if _last_own_speed_ms >= 0.0 and max_tow_speed_kn > 0.0:
-		var over: float = (
-			(NavUtils.ms_to_kn(_last_own_speed_ms) - max_tow_speed_kn) / max_tow_speed_kn
-		)
-		speed_db = -speed_penalty_db * clampf(over, 0.0, 1.0)
-	return bend_db + speed_db
+	return bend_loss_db() + speed_loss_db()
+
+
+## 弯曲损失（dB，≤0）：转向差角越大越接近 -bend_penalty_db。
+func bend_loss_db() -> float:
+	return -bend_penalty_db * (1.0 - bend_factor)
+
+
+## 高速拖曳流噪损失（dB，≤0）：超过 max_tow_speed_kn 后按超速比例线性。
+func speed_loss_db() -> float:
+	if _last_own_speed_ms < 0.0 or max_tow_speed_kn <= 0.0:
+		return 0.0
+	var over: float = (NavUtils.ms_to_kn(_last_own_speed_ms) - max_tow_speed_kn) / max_tow_speed_kn
+	return -speed_penalty_db * clampf(over, 0.0, 1.0)
+
+
+## 沉降损失（dB，≤0）：转向大幅机动后阵形未稳的成本（与孔径/弯曲独立）。
+func settle_loss_db() -> float:
+	return -settle_penalty_db * (1.0 - settle_factor)
+
+
+## AC-03：连续性能损失分解（dB，≤0）。四项独立、互不重复计同一物理效果：
+##   aperture 有效孔径、settle 阵形沉降、bend 阵形弯曲、speed 高速流噪。
+## 调用方把四项加到"满性能优势"上得到连续退化，而不是先给一个低于 BOW 的基础值。
+func performance_loss_breakdown() -> Dictionary:
+	var q: float = aperture_fraction()
+	return {
+		"aperture_db": 10.0 * log(maxf(q, 1e-3)) / log(10.0),
+		"settle_db": settle_loss_db(),
+		"bend_db": bend_loss_db(),
+		"speed_db": speed_loss_db(),
+	}
+
+
+## 性能损失合计（dB，≤0）。
+func performance_loss_db() -> float:
+	var b: Dictionary = performance_loss_breakdown()
+	return (
+		float(b["aperture_db"]) + float(b["settle_db"]) + float(b["bend_db"]) + float(b["speed_db"])
+	)
+
+
+## AC-03：性能状态分级（连续退化，非瞬时跳变）。判定只读本类物理量。
+func performance_state() -> int:
+	if not is_acoustically_active():
+		return Perf.STOWED
+	var q: float = aperture_fraction()
+	var spd_kn: float = NavUtils.ms_to_kn(_last_own_speed_ms) if _last_own_speed_ms >= 0.0 else 0.0
+	if q < degraded_aperture_min or bend_factor < unstable_bend_max or spd_kn > max_tow_speed_kn:
+		return Perf.UNSTABLE
+	if (
+		q >= best_aperture_min
+		and settle_factor >= best_factor_min
+		and bend_factor >= best_factor_min
+		and spd_kn <= best_speed_max_kn
+	):
+		return Perf.BEST
+	return Perf.DEGRADED
+
+
+func performance_state_name() -> String:
+	match performance_state():
+		Perf.STOWED:
+			return "STOWED"
+		Perf.UNSTABLE:
+			return "UNSTABLE"
+		Perf.DEGRADED:
+			return "DEGRADED"
+		Perf.BEST:
+			return "BEST"
+	return "UNKNOWN"
 
 
 ## 阵列声学中心距本艇的距离（米）：有效孔径 [L_dead, L] 的中点。

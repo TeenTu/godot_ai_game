@@ -88,10 +88,40 @@ static func rebuild(ui) -> void:
 	)
 
 
+## P1-C DC-01：记录海图相机与绘制坐标（world_to_screen 的参数）。
+static func camera_info(chart) -> Dictionary:
+	return {
+		"center_e": float(chart.cam_center.x),
+		"center_n": float(chart.cam_center.y),
+		"view_radius_m": float(chart.view_radius_m),
+		"size_x": float(chart.size.x),
+		"size_y": float(chart.size.y),
+	}
+
+
+## P1-C DC-04：己方诱饵图层 DTO。只吃**合法己方资产遥测**
+## （OwnAssetRegistry.decoys()：本艇发射的诱饵，位置/状态/类型/方向/寿命都是
+## 本艇事实），measured=true。绝不用本艇位置顶替诱饵位置，也不用激活事件 LOA
+## 代替实体位置图标；没有遥测的条目必须显式 measured=false（程序估计 + 计龄）。
+static func decoy_markers(ui) -> Array:
+	var rows: Array = []
+	var reg = ui.world.own_assets
+	if reg == null or not reg.has_method("decoys"):
+		return rows
+	for r in reg.decoys():
+		var d: Dictionary = (r as Dictionary).duplicate()
+		d["measured"] = true
+		d["updated_time"] = float(ui.world.sim_time)  # 遥测时刻（计龄基准）
+		rows.append(d)
+	return rows
+
+
 ## 轻刷新：海图注入数据（威胁快照/本艇/试拟/系统解/深度条）+ 方位盘。
 static func update_light(ui) -> void:
 	var own: TruthEntity = ui.world.world["own"]
 	ui._chart.now_time = ui.world.sim_time
+	# P1-C DC-01：把相机/绘制坐标推入调试记录（默认关闭时是空操作；战术 UI 不读）。
+	ui.world.decoy_trace.set_camera(camera_info(ui._chart))
 	ui._chart.set_threat_evidence(ui.world.player_evidence, ui.world.sim_time)
 	ui._chart.threat_snapshots = ui.world.threat_tracks.ui_snapshots()
 	ui._threat_hud.refresh(ui._chart.threat_snapshots, ui.world.sim_time)
@@ -122,6 +152,9 @@ static func update_light(ui) -> void:
 		ui.world, ui._chart.show_truth or bool(ui._chart.layers.get("truth", false))
 	)
 	ui._chart.depth_badges = depth_badges(ui)
+	ui._chart.contact_markers = contact_markers(ui)
+	# P1-C DC-04：诱饵图层（活动条目 + 世界坐标轨迹；注销条目进历史仍可查询）。
+	ui._chart.decoy_layer.sync(decoy_markers(ui), ui.world.sim_time)
 	ui._chart.queue_redraw()
 
 	ui._bearing.own_course_deg = own.course_deg
@@ -168,6 +201,78 @@ static func depth_badges(ui) -> Array:
 			)
 		)
 	return out
+
+
+## PG-06：普通接触标记（短 ID + 概率分类 + 估计点 + 更新时间；选中才展开）。
+## mirror 淘汰：与威胁航迹同名（同一观测被两个视图建模）的条目标记 mirror_of，
+## 由 ContactChartOverlay 丢弃，避免重叠假双目标。绝不读 Truth。
+static func contact_markers(ui) -> Array:
+	return marker_rows(
+		ui.tracker,
+		ui.selected_track_id,
+		ui._ping_ctrl,
+		ui._chart.threat_snapshots,
+		ui.world.sim_time
+	)
+
+
+## 接触标记装配（纯输入 → 纯输出，便于无头断言）。
+static func marker_rows(
+	tracker: Tracker,
+	selected_id: String,
+	ping_ctrl: ActivePingController,
+	threat_snaps: Array,
+	now: float
+) -> Array:
+	var tt_ids: Dictionary = {}
+	for s in threat_snaps:
+		tt_ids[str((s as Dictionary).get("track_id", ""))] = true
+	var out: Array = []
+	for t in tracker.all_tracks():
+		if t.state != Track.TrackState.ACTIVE:
+			continue
+		var lm: Measurement = t.latest_measurement()
+		var est: Dictionary = ping_ctrl.position_estimate_for(t.track_id)
+		var has_est: bool = bool(est.get("has_position", false))
+		var row: Dictionary = {
+			"track_id": t.track_id,
+			"class_label": t.classification_label(),
+			"updated_time": float(lm.timestamp) if lm != null else now,
+			"selected": t.track_id == selected_id,
+			"has_estimate": has_est,
+			"mirror_of": t.track_id if tt_ids.has(t.track_id) else "",
+			"history": _est_history(t),
+		}
+		if lm != null:
+			row["observer_east_m"] = float(lm.observer_east_m)
+			row["observer_north_m"] = float(lm.observer_north_m)
+			row["bearing_deg"] = float(lm.measured_bearing_deg)
+			row["bearing_known"] = true
+		if has_est:
+			row["east_m"] = float(est.get("east_m", 0.0))
+			row["north_m"] = float(est.get("north_m", 0.0))
+			row["sigma_m"] = float(est.get("major_m", 0.0))
+			row["is_sector"] = bool(est.get("is_sector", false))
+			row["range_m"] = float(est.get("range_m", 0.0))
+			row["range_sigma_m"] = float(est.get("range_sigma_m", 0.0))
+			row["has_motion"] = bool(est.get("has_motion", false))
+			if bool(est.get("has_motion", false)):
+				row["course_deg"] = float(est.get("course_deg", 0.0))
+				row["speed_kn"] = float(est.get("speed_kn", 0.0))
+		out.append(row)
+	return out
+
+
+## 接触的历史估计点（每条带测距的证据 → 单次位置解；历史仅选中时绘制）。
+static func _est_history(t: Track) -> Array:
+	var pts: Array = []
+	for m in t.measurement_history:
+		if m.measured_range_m <= 0.0:
+			continue
+		var o: Dictionary = ActivePositionObs.observation_of(m)
+		if bool(o.get("valid", false)):
+			pts.append(Vector2(float(o["east_m"]), float(o["north_m"])))
+	return pts
 
 
 static func own_track_cache(ui) -> Array:

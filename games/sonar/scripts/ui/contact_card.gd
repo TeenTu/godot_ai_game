@@ -22,7 +22,7 @@ const ACTION_KEYS: Dictionary = {
 	"target": "contact_action_target",
 }
 
-var action_row: HBoxContainer = null
+var action_row: HFlowContainer = null  # UI-01：空间不足自动换行（不撑宽侧栏）
 var detail_toggle: Button = null
 var detail_box: VBoxContainer = null
 var ui: Control = null  # 主 UI（选中态/状态回调）
@@ -46,8 +46,9 @@ func _ready() -> void:
 	_lbl.text = UiText.t("contact_no_selection")
 	_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_lbl)
-	action_row = HBoxContainer.new()
-	action_row.add_theme_constant_override("separation", 4)
+	action_row = HFlowContainer.new()
+	action_row.add_theme_constant_override("h_separation", 4)
+	action_row.add_theme_constant_override("v_separation", 4)
 	add_child(action_row)
 	for aid in ACTION_IDS:
 		var b := Button.new()

@@ -11,11 +11,22 @@ extends RefCounted
 ##
 ## 所有随机走注入的 RNG，固定种子 → 固定测量流。
 
+## PG-02 谱线噪声的私有随机源。
+##
+## 为什么必须独立：`_build_lofar` 需要为每条被探测到的谱线多抽 3 个噪声样本，
+## 如果直接用共享 `_rng`，就会改变**每个场景的随机流消耗序列**——所有固定种子
+## 的回归夹具（发射编程自然链、主动融合 E2E 等）会因为一个纯显示层的噪声模型
+## 改动而整体漂移，把"噪声去 Truth 化"变成无法审查的行为变更。
+## 谱线噪声只影响"这条线的读数有多糊"，不影响任何几何/检出决策，所以放到
+## 独立随机源里：共享流消耗与基线逐位一致，谱线噪声本身仍可复现。
+const LOFAR_NOISE_SEED: int = 0x10F0A2
+
 ## S109 P0-06：内核内部身份台账（evidence_id → 源实体 id）。仅供 Debrief/
 ## 调试/测试通道；测量对象与玩法 DTO 不再携带 target_id。
 var identity_by_evidence: Dictionary = {}
 
 var _rng: RandomNumberGenerator = null
+var _lofar_rng: RandomNumberGenerator = null
 var _env: RefCounted = null  # EnvironmentModel
 var _own_profile: RefCounted = null  # 本艇 AcousticProfile（用于自噪由传感器侧自理，这里无需）
 var _measurement_counter: int = 0
@@ -25,6 +36,8 @@ var _evidence_counter: int = 0  # S1-00：每次物理到达发唯一 evidence_i
 func setup(rng: RandomNumberGenerator, env: RefCounted) -> void:
 	_rng = rng
 	_env = env
+	_lofar_rng = RandomNumberGenerator.new()
+	_lofar_rng.seed = LOFAR_NOISE_SEED
 
 
 ## S1-00：为一次物理到达铸造唯一证据 id（A/B 镜像由调用方共享）。
@@ -194,21 +207,39 @@ func generate_active(
 	return m
 
 
-## 构建窄带 Lofar 谱线。SE 越高，谱线越完整。
+## 构建窄带 Lofar 谱线（PG-02：输出接收端带噪估计，不泄露 Truth 画像电平）。
+##
+## 纪律：`target_ac.tonal_lines[i].level_db` 是**目标声源**幅值，属于 Truth，
+## 不能原样作为"测得特征"写进 Measurement（分类器会据此直接认目标）。
+## 输出只保留可观测量：
+##   - freq_hz：测量频率（含一个很小的频率估计误差）
+##   - snr_db ：该线在接收端的信噪比估计 = SE + 该线相对本目标最强线的相对强度 + 噪声
+##   - level_db：接收端线电平估计（相对宽带基准，含噪声）
+## 相对强度（线 vs 线）本身是可测的，所以允许使用；绝对源级不允许。
+## 未知/缺失的电平留空，而不是塞 0 假装测到了。
 func _build_lofar(target_ac: RefCounted, se_db: float) -> Array:
 	var lines: Array = []
-	for t in target_ac.tonal_lines:
-		var base_level: float = float(t.get("level_db", 0.0))
-		# 探测到的概率随 SE 提高（谱线完整度）
-		var detect_p: float = 1.0 / (1.0 + exp(-(se_db - 3.0) / 3.0))
+	var profile_lines: Array = target_ac.tonal_lines
+	if profile_lines.is_empty():
+		return lines
+	var ref_db: float = 0.0
+	for t in profile_lines:
+		ref_db = maxf(ref_db, float(t.get("level_db", 0.0)))
+	for t in profile_lines:
+		# 相对强度：本线比本目标最强线低多少 dB（可测，不含绝对源级）。
+		var rel_db: float = float(t.get("level_db", 0.0)) - ref_db
+		var line_se: float = se_db + rel_db
+		# 探测到的概率随该线自身的接收 SE 提高（谱线完整度）。
+		var detect_p: float = 1.0 / (1.0 + exp(-(line_se - 3.0) / 3.0))
 		if _rng.randf() < detect_p:
+			var hz: float = float(t.get("freq_hz", 0.0))
 			(
 				lines
 				. append(
 					{
-						"freq_hz": float(t.get("freq_hz", 0.0)),
-						"level_db": base_level,
-						"snr_db": base_level + se_db,
+						"freq_hz": hz + _lofar_rng.randfn(0.0, 0.5),
+						"level_db": se_db + _lofar_rng.randfn(0.0, 1.5),
+						"snr_db": line_se + _lofar_rng.randfn(0.0, 1.5),
 					}
 				)
 			)
