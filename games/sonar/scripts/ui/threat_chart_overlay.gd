@@ -15,29 +15,113 @@ extends RefCounted
 const COL_EST := Color(1.0, 0.32, 0.28)
 const COL_ELLIPSE := Color(1.0, 0.45, 0.4, 0.85)
 const COL_VECTOR := Color(1.0, 0.6, 0.5, 0.9)
+const COL_MERGED := Color(1.0, 0.5, 0.45, 0.75)
 const LOST_HOLD_S: float = 180.0
 const AIDED_HIGHLIGHT_S: float = 10.0
 const VECTOR_HORIZON_S: float = 60.0
+## PG-06：扇区摘要的分区宽度（度）。
+const SECTOR_WIDTH_DEG: float = 45.0
+
+
+## PG-06 减载：最高威胁鱼雷保留详情，其余告警合并为数量/扇区摘要。
+## 排序口径：p_torpedo → confidence → 证据数 → 最近更新（确定性）。
+## 返回 {primary: Dictionary, merged: Array, summary: {count, sectors:[{sector_deg, count}]}}。
+static func declutter(snaps: Array, sim_now: float) -> Dictionary:
+	var live: Array = []
+	for s in snaps:
+		var d: Dictionary = s
+		if str(d.get("state", "")) == "LOST":
+			if sim_now - float(d.get("last_update_time", sim_now)) > LOST_HOLD_S:
+				continue
+		live.append(d)
+	if live.is_empty():
+		return {"primary": {}, "merged": [], "summary": {"count": 0, "sectors": []}}
+	live.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return _rank(a) > _rank(b))
+	var primary: Dictionary = live[0]
+	var merged: Array = live.slice(1)
+	var buckets: Dictionary = {}
+	for m in merged:
+		var key: int = _sector_key(float(m.get("bearing_est_deg", 0.0)))
+		buckets[key] = int(buckets.get(key, 0)) + 1
+	var sectors: Array = []
+	for k in buckets.keys():
+		sectors.append({"sector_deg": int(k), "count": int(buckets[k])})
+	sectors.sort_custom(
+		func(a: Dictionary, b: Dictionary) -> bool:
+			return int(a["sector_deg"]) < int(b["sector_deg"])
+	)
+	return {
+		"primary": primary,
+		"merged": merged,
+		"summary": {"count": merged.size(), "sectors": sectors}
+	}
+
+
+## 合并告警摘要文案（空 = 无合并项）。
+static func summary_text(summary: Dictionary) -> String:
+	var n: int = int(summary.get("count", 0))
+	if n <= 0:
+		return ""
+	var parts: Array = []
+	for s in summary.get("sectors", []):
+		parts.append("%03d°×%d" % [int(s["sector_deg"]), int(s["count"])])
+	return "另有 %d 个威胁告警（%s）已合并" % [n, "、".join(parts)]
+
+
+static func _rank(s: Dictionary) -> float:
+	return (
+		float(s.get("p_torpedo", 0.0)) * 1000.0
+		+ float(s.get("confidence", 0.0)) * 100.0
+		+ float(s.get("evidence_count", 0)) * 0.01
+		+ float(s.get("last_update_time", 0.0)) * 1.0e-6
+	)
+
+
+static func _sector_key(bearing_deg: float) -> int:
+	var b: float = fposmod(bearing_deg, 360.0)
+	return int(b / SECTOR_WIDTH_DEG) * int(SECTOR_WIDTH_DEG)
 
 
 static func draw(chart: ChartView, snaps: Array, sim_now: float) -> void:
-	for s in snaps:
-		var st: String = str(s.get("state", ""))
-		var age: float = sim_now - float(s.get("last_update_time", sim_now))
-		if st == "LOST" and age > LOST_HOLD_S:
-			continue
-		var alpha: float = 0.8
-		if st == "COASTING":
-			alpha = 0.45
-		elif st == "LOST":
-			alpha = 0.3
-		elif st == "RANGE_AIDED" and age < AIDED_HIGHLIGHT_S:
-			alpha = 1.0
-		var cen_e: Variant = s.get("draw_center_e_m")
-		var cen_n: Variant = s.get("draw_center_n_m")
-		if cen_e == null or cen_n == null:
-			continue
-		var center := Vector2(float(cen_e), float(cen_n))
+	var groups: Dictionary = declutter(snaps, sim_now)
+	var primary: Dictionary = groups["primary"]
+	if not primary.is_empty():
+		_one(chart, primary, sim_now, true)
+	# 合并项只画轻标记（不铺误差椭圆/速度向量/红色 LOA），并给出数量/扇区摘要。
+	for m in groups["merged"]:
+		_marker_only(chart, m)
+	var txt: String = summary_text(groups["summary"])
+	if txt != "":
+		chart._draw_label(Vector2(12, chart.size.y * 0.5), txt, COL_MERGED, 12)
+
+
+## 合并项的轻标记：一个小三角（方位指示），无椭圆/向量/长标签。
+static func _marker_only(chart: ChartView, s: Dictionary) -> void:
+	var cen_e: Variant = s.get("draw_center_e_m")
+	var cen_n: Variant = s.get("draw_center_n_m")
+	if cen_e == null or cen_n == null:
+		return
+	var at: Vector2 = chart.world_to_screen(Vector2(float(cen_e), float(cen_n)))
+	var pts := PackedVector2Array([at + Vector2(0, -5), at + Vector2(4, 4), at + Vector2(-4, 4)])
+	chart.draw_polyline(pts + PackedVector2Array([pts[0]]), COL_MERGED, 1.2)
+
+
+static func _one(chart: ChartView, s: Dictionary, sim_now: float, detail: bool) -> void:
+	var st: String = str(s.get("state", ""))
+	var age: float = sim_now - float(s.get("last_update_time", sim_now))
+	var alpha: float = 0.8
+	if st == "COASTING":
+		alpha = 0.45
+	elif st == "LOST":
+		alpha = 0.3
+	elif st == "RANGE_AIDED" and age < AIDED_HIGHLIGHT_S:
+		alpha = 1.0
+	var cen_e: Variant = s.get("draw_center_e_m")
+	var cen_n: Variant = s.get("draw_center_n_m")
+	if cen_e == null or cen_n == null:
+		return
+	var center := Vector2(float(cen_e), float(cen_n))
+	if detail:
 		_ellipse(
 			chart,
 			center,
@@ -46,22 +130,30 @@ static func draw(chart: ChartView, snaps: Array, sim_now: float) -> void:
 			float(s.get("ellipse_angle_deg", 0.0)),
 			alpha
 		)
-		if bool(s.get("converged", false)):
-			_symbol(chart, center, float(s.get("course_est_deg", 0.0)), alpha)
+	if bool(s.get("converged", false)):
+		_symbol(chart, center, float(s.get("course_est_deg", 0.0)), alpha)
+		if detail:
 			_vector(chart, s, center, alpha)
-		else:
-			_cross(chart, center, alpha)
-		var lab: String = "%s %s" % [str(s.get("track_id", "?")), st]
-		if s.get("range_est_m") != null:
-			lab += " 距%.0f±%.0f 米" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
-		if st == "COASTING":
-			lab += " 外推"
-		chart._draw_label(
-			chart.world_to_screen(center) + Vector2(11, 14),
-			lab,
-			Color(COL_EST.r, COL_EST.g, COL_EST.b, alpha),
-			13
-		)
+	else:
+		_cross(chart, center, alpha)
+	chart._draw_label(
+		chart.world_to_screen(center) + Vector2(11, 14),
+		primary_label(s, st),
+		Color(COL_EST.r, COL_EST.g, COL_EST.b, alpha),
+		13
+	)
+
+
+## PG-06：自动建立的威胁航迹标注"自动"；有距离估计则附距离/误差。
+static func primary_label(s: Dictionary, state: String) -> String:
+	var lab: String = "%s %s" % [str(s.get("track_id", "?")), state]
+	if bool(s.get("auto_created", true)):
+		lab += " 自动"
+	if s.get("range_est_m") != null:
+		lab += " 距%.0f±%.0f 米" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
+	if state == "COASTING":
+		lab += " 外推"
+	return lab
 
 
 static func _ellipse(

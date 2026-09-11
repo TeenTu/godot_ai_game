@@ -196,6 +196,8 @@ func estimate_snapshot(tr: Dictionary) -> Dictionary:
 		"confidence": float(tr.get("confidence", 0.0)),
 		"evidence_count": int(tr.get("evidence_count", 0)),
 		"last_update_time": float(tr.get("last_time", 0.0)),
+		# PG-06：true = 自动探测/分类链建立（海图标注"自动"）。
+		"auto_created": bool(tr.get("auto_created", true)),
 		"bearing_est_deg": float(tr.get("bearing_deg", 0.0)),
 		"bearing_sigma_deg": float(tr.get("sigma_deg", 2.0)),
 		"range_est_m": tr.get("range_est_m"),
@@ -310,6 +312,9 @@ func ingest(e: Dictionary, now: float) -> String:
 			"range_est_m": null,
 			"range_sigma_m": null,
 			"est": null,
+			# PG-06：威胁航迹由自动探测/分类链建立（玩家手工标绘走普通接触航迹），
+			# 海图据此标注"TTxxx 自动"，与玩家确认过的目标区分。
+			"auto_created": true,
 		}
 		_tracks.append(best)
 		if obs_ok:

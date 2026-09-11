@@ -122,6 +122,7 @@ static func update_light(ui) -> void:
 		ui.world, ui._chart.show_truth or bool(ui._chart.layers.get("truth", false))
 	)
 	ui._chart.depth_badges = depth_badges(ui)
+	ui._chart.contact_markers = contact_markers(ui)
 	ui._chart.queue_redraw()
 
 	ui._bearing.own_course_deg = own.course_deg
@@ -168,6 +169,78 @@ static func depth_badges(ui) -> Array:
 			)
 		)
 	return out
+
+
+## PG-06：普通接触标记（短 ID + 概率分类 + 估计点 + 更新时间；选中才展开）。
+## mirror 淘汰：与威胁航迹同名（同一观测被两个视图建模）的条目标记 mirror_of，
+## 由 ContactChartOverlay 丢弃，避免重叠假双目标。绝不读 Truth。
+static func contact_markers(ui) -> Array:
+	return marker_rows(
+		ui.tracker,
+		ui.selected_track_id,
+		ui._ping_ctrl,
+		ui._chart.threat_snapshots,
+		ui.world.sim_time
+	)
+
+
+## 接触标记装配（纯输入 → 纯输出，便于无头断言）。
+static func marker_rows(
+	tracker: Tracker,
+	selected_id: String,
+	ping_ctrl: ActivePingController,
+	threat_snaps: Array,
+	now: float
+) -> Array:
+	var tt_ids: Dictionary = {}
+	for s in threat_snaps:
+		tt_ids[str((s as Dictionary).get("track_id", ""))] = true
+	var out: Array = []
+	for t in tracker.all_tracks():
+		if t.state != Track.TrackState.ACTIVE:
+			continue
+		var lm: Measurement = t.latest_measurement()
+		var est: Dictionary = ping_ctrl.position_estimate_for(t.track_id)
+		var has_est: bool = bool(est.get("has_position", false))
+		var row: Dictionary = {
+			"track_id": t.track_id,
+			"class_label": t.classification_label(),
+			"updated_time": float(lm.timestamp) if lm != null else now,
+			"selected": t.track_id == selected_id,
+			"has_estimate": has_est,
+			"mirror_of": t.track_id if tt_ids.has(t.track_id) else "",
+			"history": _est_history(t),
+		}
+		if lm != null:
+			row["observer_east_m"] = float(lm.observer_east_m)
+			row["observer_north_m"] = float(lm.observer_north_m)
+			row["bearing_deg"] = float(lm.measured_bearing_deg)
+			row["bearing_known"] = true
+		if has_est:
+			row["east_m"] = float(est.get("east_m", 0.0))
+			row["north_m"] = float(est.get("north_m", 0.0))
+			row["sigma_m"] = float(est.get("major_m", 0.0))
+			row["is_sector"] = bool(est.get("is_sector", false))
+			row["range_m"] = float(est.get("range_m", 0.0))
+			row["range_sigma_m"] = float(est.get("range_sigma_m", 0.0))
+			row["has_motion"] = bool(est.get("has_motion", false))
+			if bool(est.get("has_motion", false)):
+				row["course_deg"] = float(est.get("course_deg", 0.0))
+				row["speed_kn"] = float(est.get("speed_kn", 0.0))
+		out.append(row)
+	return out
+
+
+## 接触的历史估计点（每条带测距的证据 → 单次位置解；历史仅选中时绘制）。
+static func _est_history(t: Track) -> Array:
+	var pts: Array = []
+	for m in t.measurement_history:
+		if m.measured_range_m <= 0.0:
+			continue
+		var o: Dictionary = ActivePositionObs.observation_of(m)
+		if bool(o.get("valid", false)):
+			pts.append(Vector2(float(o["east_m"]), float(o["north_m"])))
+	return pts
 
 
 static func own_track_cache(ui) -> Array:

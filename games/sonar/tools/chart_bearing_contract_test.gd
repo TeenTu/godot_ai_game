@@ -226,8 +226,15 @@ func _initialize() -> void:
 	# S109 Batch 7：文案已集中到 UiText（按目录键断言接线存在）。
 	_assert(fails, ui_src.find("chk_sel_only") >= 0, "Selected Track Only toggle wired")
 	var cv_src2: String = cv_src.source_code
+	# PG-06：图例随相机装饰层拆到 ChartCameraOverlay（海图仍调用它绘制）。
+	var cam_src: String = (load("res://scripts/ui/chart_camera_overlay.gd") as Script).source_code
 	for legend_key in ["legend_launch", "legend_noise", "legend_ping", "legend_return"]:
-		_assert(fails, cv_src2.find(legend_key) >= 0, "threat legend entry: %s" % legend_key)
+		_assert(fails, cam_src.find(legend_key) >= 0, "threat legend entry: %s" % legend_key)
+	_assert(
+		fails,
+		cv_src2.find("ChartCameraOverlay.draw_camera_overlays") >= 0,
+		"camera overlay (legend) still drawn by the chart",
+	)
 
 	_finish(fails)
 

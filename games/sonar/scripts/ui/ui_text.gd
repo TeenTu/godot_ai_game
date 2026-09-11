@@ -561,6 +561,8 @@ const LABELS := {
 	"legend_noise": "鱼雷噪声",
 	"legend_ping": "主动脉冲",
 	"legend_return": "主动回波",
+	"legend_contact": "接触（未选中）",
+	"legend_contact_sel": "接触（选中/展开）",
 	"legend_best": "最优拟合",
 	"legend_alt": "备选解 A/B/C",
 	"legend_trial": "试拟解",

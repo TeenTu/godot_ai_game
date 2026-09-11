@@ -155,3 +155,11 @@ active_echo_auto_test
 #                              ≠ 证据库容量）
 #                              （PG-05 / T16 T17 T18 T19）
 active_return_global_test
+
+#   chart_declutter_test       P1-A：地图输出与减载（接触短 ID+分类+估计点+更新时间，
+#                              未选中只画简洁标记、选中才展开误差区/历史/运动向量；
+#                              同一观测只画一份物体；最高威胁鱼雷保留详情+自动标注，
+#                              其余告警合并为数量/扇区摘要；误差区按证据如实呈现，
+#                              不做"每 Ping 固定缩圈"）
+#                              （PG-06）
+chart_declutter_test

@@ -41,6 +41,9 @@ const COL_OWN := Color(0.35, 0.7, 1.0)
 const COL_THREAT_LAUNCH := Color(1.0, 0.8, 0.25)
 const COL_THREAT_NOISE := Color(1.0, 0.35, 0.3)
 const COL_THREAT_PING := Color(1.0, 0.35, 0.9)
+## PG-06：普通接触标记（未选中 = 简洁标记；选中 = 展开误差区/历史/运动向量）。
+const COL_CONTACT := Color(0.35, 0.9, 0.85)
+const COL_CONTACT_SEL := Color(1.0, 0.95, 0.55)
 const THREAT_LOB_LENGTH_M: float = 6000.0  # 有限长度 LOB（非无限射线）
 const THREAT_HALF_LIFE_S: float = 300.0
 
@@ -98,6 +101,10 @@ var torpedoes: Array = []
 var threat_lobs: Array = []
 var threat_snapshots: Array = []  # ThreatTrackManager.ui_snapshots() 输出（§4.5）
 var depth_badges: Array = []  # S1-11 §7.4 敌方深度概率徽标（UiChartData 装配）
+# PG-06 接触标记：[{track_id, short_id, class_label, updated_time, selected,
+#   has_estimate, east_m, north_m, sigma_m, is_sector, bearing_deg, history,
+#   course_deg, speed_kn}]（UiChartData 装配；未选中只画简洁标记）。
+var contact_markers: Array = []
 var selected_torpedo_id: String = ""  # 地图点击选中（P1-02 命中测试）
 var selected_evidence_id: int = -1  # 选中威胁证据（地图/告警交叉联动，P0-07.4）
 var now_time: float = 0.0  # 当前仿真时刻（脉冲动画/龄期衰减）
@@ -276,50 +283,25 @@ func _draw() -> void:
 	if bool(layers.get("threat", true)):
 		_draw_threat_lobs()
 		ThreatChartOverlay.draw(self, threat_snapshots, now_time)
+	# PG-06：普通接触标记（短 ID + 分类 + 估计点 + 更新时间；选中才展开）。
+	ContactChartOverlay.draw(self, contact_markers, now_time)
 	_draw_torpedoes()
 	DepthBadgeOverlay.draw(self, depth_badges, now_time)
 	_draw_hover_link()
 	_draw_camera_overlays()
 
 
+## 网格 / 步长 / 距离标签 / 相机角标：实现在 ChartCameraOverlay（行数治理）。
 func _draw_grid() -> void:
-	var step_m: float = _nice_step(view_radius_m)
-	var sp: float = step_m * _scale_px()
-	if sp < 8.0:
-		return
-	var col := Color(0.15, 0.25, 0.28, 0.35)
-	var origin := world_to_screen(Vector2.ZERO)
-	var x: float = fposmod(origin.x, sp)
-	while x < size.x:
-		draw_line(Vector2(x, 0), Vector2(x, size.y), col, 1.0)
-		x += sp
-	var y: float = fposmod(origin.y, sp)
-	while y < size.y:
-		draw_line(Vector2(0, y), Vector2(size.x, y), col, 1.0)
-		y += sp
-	# 网格标注（左下第一格处标单位）
-	draw_string(
-		_font,
-		Vector2(6, size.y - 6),
-		_dist_label(step_m),
-		HORIZONTAL_ALIGNMENT_LEFT,
-		-1,
-		14,
-		Color(0.4, 0.6, 0.65, 0.8)
-	)
+	ChartCameraOverlay.draw_grid(self)
 
 
 func _nice_step(radius_m: float) -> float:
-	var target: float = radius_m / 4.0
-	var mag: float = pow(10.0, floor(log(maxf(target, 1.0)) / log(10.0)))
-	for m in [1.0, 2.0, 5.0, 10.0]:
-		if target <= m * mag:
-			return m * mag
-	return 10.0 * mag
+	return ChartCameraOverlay.nice_step(radius_m)
 
 
 func _dist_label(m: float) -> String:
-	return "%.0f 千米" % [m / 1000.0] if m >= 1000.0 else "%.0f 米" % m
+	return ChartCameraOverlay.dist_label(m)
 
 
 ## 本艇符号：随实际艏向旋转的三角 + 艏向线（S1-01.4：不再固定朝上）。
@@ -1141,59 +1123,10 @@ func _draw_label(pos: Vector2, text: String, col: Color, font_px: int = 14) -> v
 	)
 
 
+## 相机固定装饰层（比例尺/北向/图例）：实现在 ChartCameraOverlay。
 func _draw_camera_overlays() -> void:
-	# 比例尺（左下）
-	var bar_m: float = _nice_step(view_radius_m / 3.0)
-	var bar_px: float = bar_m * _scale_px()
-	var y: float = size.y - 22.0
-	draw_line(Vector2(10, y), Vector2(10 + bar_px, y), Color(1, 1, 1, 0.85), 2.5)
-	draw_line(Vector2(10, y - 4), Vector2(10, y + 4), Color(1, 1, 1, 0.85), 2.0)
-	draw_line(Vector2(10 + bar_px, y - 4), Vector2(10 + bar_px, y + 4), Color(1, 1, 1, 0.85), 2.0)
-	draw_string(
-		_font,
-		Vector2(12, y - 8),
-		_dist_label(bar_m),
-		HORIZONTAL_ALIGNMENT_LEFT,
-		-1,
-		14,
-		Color(1, 1, 1, 0.9)
-	)
-	# 北向标记（右上）：箭头 + N
-	var nc := Vector2(size.x - 24.0, 30.0)
-	draw_line(nc, nc + Vector2(0, 22), Color(1, 1, 1, 0.8), 2.0)
-	var head := PackedVector2Array([nc + Vector2(0, -8), nc + Vector2(5, 2), nc + Vector2(-5, 2)])
-	draw_colored_polygon(head, Color(1, 1, 1, 0.9))
-	draw_string(
-		_font, nc + Vector2(-4, 36), "N", HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.9)
-	)
-	# 图例（右下）——含 REQ-B3-02 威胁图层图例。
-	var lg := Vector2(size.x - 190.0, size.y - 92.0)
-	var items := [
-		[UiText.t("legend_launch"), COL_THREAT_LAUNCH],
-		[UiText.t("legend_noise"), COL_THREAT_NOISE],
-		[UiText.t("legend_ping"), COL_THREAT_PING],
-		[UiText.t("legend_return"), COL_THREAT_PING],
-		[UiText.t("legend_best"), COL_BEST],
-		[UiText.t("legend_alt"), ALT_COLORS[0]],
-		[UiText.t("legend_trial"), COL_TRIAL],
-		[UiText.t("legend_system"), COL_TRIAL],
-		[UiText.t("legend_outlier"), COL_OUTLIER],
-	]
-	var ly: float = lg.y - 4.0 * 18.0  # 威胁图例占额外 4 行
-	for it in items:
-		draw_line(Vector2(lg.x, ly + 5.0), Vector2(lg.x + 22.0, ly + 5.0), it[1] as Color, 2.5)
-		draw_string(
-			_font,
-			Vector2(lg.x + 28.0, ly + 9.0),
-			it[0] as String,
-			HORIZONTAL_ALIGNMENT_LEFT,
-			-1,
-			14,
-			Color(1, 1, 1, 0.85)
-		)
-		ly += 18.0
+	ChartCameraOverlay.draw_camera_overlays(self)
 
 
 func _mmss(t: float) -> String:
-	var s: int = int(maxf(t, 0.0))
-	return "%02d:%02d" % [s / 60, s % 60]
+	return ChartCameraOverlay.mmss(t)
