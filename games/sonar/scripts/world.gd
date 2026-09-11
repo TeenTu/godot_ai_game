@@ -227,6 +227,8 @@ func tick() -> void:
 		weapons.step(dt, sim_time, torpedo_ctx)
 	# 3b) 推进活动诱饵（Commit 8 §8：激活/寿命/JAMMER 抖动；到期移出采样集）
 	_advance_decoys(dt)
+	# 3c) DC-07：反制发射器备用弹再装填（按仿真时间；暂停/终局时 tick 提前返回）
+	_advance_countermeasures(dt)
 	# 4) 推进 PingSession（结算到点回波 + 状态转移，与自动测量无关）
 	_advance_ping_session()
 	# 5) 敌方感知/Doctrine（Commit 9）：证据 → 航迹 → 状态机 → 动作。
@@ -249,6 +251,7 @@ func _advance_only() -> void:
 	if weapons != null and not weapons.torpedoes.is_empty():
 		weapons.step(dt, sim_time, torpedo_ctx)
 	_advance_decoys(dt)
+	_advance_countermeasures(dt)
 	_advance_ping_session()
 	_advance_enemy_ai(dt)
 	_sync_torpedo_shadows()  # REQ-09：同 tick()——无条件同步统一声场
@@ -301,6 +304,15 @@ func _advance_decoys(dt: float) -> void:
 			torpedo_ctx.sensor_adapter.contact_acs.erase(str(d.id))
 	# DC-01：周期采样本艇/诱饵世界坐标 + 相机/绘制坐标（默认关闭时零成本）。
 	decoy_trace.sample(sim_time, decoys, world.get("own", null))
+
+
+## DC-07：按仿真时间推进双方反制发射器的备用弹再装填。tick()/_advance_only() 在
+## 暂停或终局时提前返回 → 不推进装填；dt 已按 time_scale 折算 → 倍速按仿真时间。
+func _advance_countermeasures(dt: float) -> void:
+	if countermeasures != null:
+		countermeasures.step(dt)
+	if enemy_countermeasures != null:
+		enemy_countermeasures.step(dt)
 
 
 ## 玩家发射诱饵（§8.5）：发射器库存/冷却/程序合法性校验；诱饵先进入活动 列表随 tick 推进，激活瞬间才进入武器采样集（激活前静默）。

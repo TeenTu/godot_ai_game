@@ -135,12 +135,14 @@ func step(dt: float) -> bool:
 		return false
 	_step_separation()
 	advance(dt)
-	if not activated and age_s >= activation_delay_s:
-		activated = true
-		return true
+	# DC-06：同一 tick 内寿命耗尽与声学激活竞争时**过期优先**——不得越过寿命后
+	# 再激活一帧（旧序先判激活，lifetime<=activation_delay 时会发出已过期激活）。
 	if age_s >= lifetime_s:
 		expired = true
 		return false
+	if not activated and age_s >= activation_delay_s:
+		activated = true
+		return true
 	if activated and decoy_type == DecoyProgram.TYPE_JAMMER and _jitter_rng != null:
 		_jitter_tonals()
 	return false

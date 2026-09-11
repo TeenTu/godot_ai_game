@@ -58,6 +58,33 @@ func tonal_level_at(freq_hz: float) -> Variant:
 	return null
 
 
+## DC-06：明确的画像快照。逐脚本属性复制**全部**生效字段（含 band_min_hz /
+## band_max_hz 等频段字段——旧 _dup_signature 逐属性白名单漏掉过它们），
+## tonal_lines 逐条深拷贝。两枚诱饵的画像/谱线因此互不修改，也不回写源画像。
+func copy() -> AcousticProfile:
+	var cp := AcousticProfile.new()
+	for p in get_property_list():
+		if int(p.get("usage", 0)) & PROPERTY_USAGE_SCRIPT_VARIABLE == 0:
+			continue
+		var prop: String = str(p.get("name", ""))
+		if prop == "tonal_lines":
+			cp.tonal_lines = copy_tonals(tonal_lines)
+		else:
+			cp.set(prop, get(prop))
+	return cp
+
+
+## 谱线深拷贝（字典逐条 duplicate(true)）；供 copy() 与调用方复用。
+static func copy_tonals(src: Array) -> Array:
+	var out: Array = []
+	for tl in src:
+		if tl is Dictionary:
+			out.append((tl as Dictionary).duplicate(true))
+		else:
+			out.append(tl)
+	return out
+
+
 func from_dict(d: Dictionary) -> void:
 	broadband_base_level_db = float(d.get("broadband_base_level_db", broadband_base_level_db))
 	speed_noise_a = float(d.get("speed_noise_a", speed_noise_a))

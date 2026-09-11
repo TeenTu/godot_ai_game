@@ -109,9 +109,21 @@ func sync() -> void:
 					% [str(d.id), maxf(float(d.activation_delay_s) - float(d.age_s), 0.0)]
 				)
 			)
+	# DC-07：待发 / 备用 / 装填剩余时间（与 CountermeasureSystem.ammo_summary 同源）。
+	var ammo: Dictionary = cm.ammo_summary()
+	var reload_txt: String = ""
+	if bool(ammo["reloading"]):
+		reload_txt = " | " + (UiText.t("cm_reload_fmt") % float(ammo["reload_left_s"]))
 	var state: String = (
-		"弹药 %d | 库存 %d | 冷却 %.0fs | 己方诱饵 %d" % [cm.ready_rounds, cm.inventory, cd, lines.size()]
+		"%s | %s | 冷却 %.0fs | 己方诱饵 %d"
+		% [
+			UiText.t("cm_ready_fmt") % int(ammo["ready"]),
+			UiText.t("cm_spare_fmt") % int(ammo["spare"]),
+			cd,
+			lines.size(),
+		]
 	)
+	state += reload_txt
 	# REQ-UI-03 频带提示：JAMMER 配置的干扰频带（发射前即可见，本艇事实）。
 	var jam: Dictionary = cm.profile_for(DecoyProgram.TYPE_JAMMER)
 	if not jam.is_empty() and float(jam.get("band_max_hz", 0.0)) > 0.0:
