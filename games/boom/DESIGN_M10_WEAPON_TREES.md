@@ -150,4 +150,3 @@ Web 导出没有系统字体回退：`ui_subset.ttf` 若不含 CJK 字形，中�
   里截图，专门覆盖**不继承 Control 主题**的 Label3D 路径：
   `--path games/boom --script res://tools/visual_review.gd -- --capture-dir=<dir> --floats`
 - 改任何可见文案后**必须重跑** `make_font_subset.py`，否则新增汉字缺字形。
-
