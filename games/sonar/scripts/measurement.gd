@@ -23,8 +23,20 @@ var available_time: float = -1.0  # 对接收机"可用"时刻（主动回波=�
 var detected: bool = true
 var evidence_id: String = ""
 
-var observer_east_m: float = 0.0  # 测量时刻本艇位置
+var observer_east_m: float = 0.0  # 观测参考站位（= 参考时刻本艇位置，见下）
 var observer_north_m: float = 0.0
+
+# ---- PG-04 统一观测参考时刻（参考站位）----
+# 主动回波的历史实现把"发射时刻的几何距离"与"到达时刻的本艇站位/方位"混用，
+# 远距/大机动时产生虚假精度。修订后：一次 Ping 的全部回波共享**发射瞬间**冻结
+# 的参考站位（reference_east_m/north_m）与参考时刻（reference_time_s），
+# observer_east_m/north_m 即该参考站位。往返 τ 内本艇位移的不确定量记在
+# motion_bias_m（= 0.5·v·τ，运动近似偏差），由位置协方差显式吸收，不再隐藏。
+var reference_east_m: float = 0.0
+var reference_north_m: float = 0.0
+var reference_time_s: float = -1.0  # <0 = 未声明（消费方回退到 timestamp）
+var motion_bias_m: float = 0.0  # 运动近似偏差（m，1σ 计法见 ActivePositionObs）
+var observer_pos_sigma_m: float = -1.0  # 本艇导航位置 1σ（m）；<0 = 用消费方默认
 
 var measured_bearing_deg: float = 0.0
 var bearing_sigma_deg: float = 0.0
@@ -73,6 +85,16 @@ func has_range() -> bool:
 	return measured_range_m >= 0.0 and range_sigma_m > 0.0
 
 
+## PG-04：观测参考站位 + 参考时刻（含回退）。未声明参考站位（旧数据/测试构造）
+## 时回退到 observer_* 与 timestamp，保证消费方永远只有**一个**几何基准。
+func reference_station() -> Dictionary:
+	return {
+		"east_m": observer_east_m,
+		"north_m": observer_north_m,
+		"time_s": reference_time_s if reference_time_s >= 0.0 else timestamp,
+	}
+
+
 func to_dict() -> Dictionary:
 	# Truth 隔离（S1-04B-REQ-03）：玩家信息流不含 target_id；需要 Truth 对照的
 	# 测试走独立 debug 钩子（Measurement.target_id 字段本身保留给内部/测试）。
@@ -87,6 +109,9 @@ func to_dict() -> Dictionary:
 		"evidence_id": evidence_id,
 		"observer_east_m": observer_east_m,
 		"observer_north_m": observer_north_m,
+		"reference_east_m": reference_east_m,
+		"reference_north_m": reference_north_m,
+		"reference_time_s": reference_time_s,
 		"bearing_deg": measured_bearing_deg,
 		"bearing_sigma_deg": bearing_sigma_deg,
 		"range_m": measured_range_m,

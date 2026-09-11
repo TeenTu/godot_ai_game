@@ -59,6 +59,7 @@ var _lbl_tma_fit: Label = null
 var _opt_fit_mode: OptionButton = null  # REQ-02：AUTO/ASSISTED/MANUAL
 var _prompt_box: HBoxContainer = null  # REQ-02：Apply range to Trial? 提示行
 var _btn_undo: Button = null
+var _lbl_note: Label = null  # PG-03/PG-04：无回波解释 / 系统位置估计档位
 var _ping_cd: float = 0.0  # 冷却剩余（本艇事实，可显示）
 
 
@@ -175,6 +176,14 @@ func _init() -> void:
 	_btn_undo.flat = true
 	_btn_undo.pressed.connect(func(): undo_requested.emit())
 	add_child(_btn_undo)
+	# PG-03/PG-04：说明行（无回波解释 / 系统位置估计档位）。默认隐藏。
+	_lbl_note = Label.new()
+	_lbl_note.text = ""
+	_lbl_note.visible = false
+	_lbl_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lbl_note.add_theme_font_size_override("font_size", 11)
+	_lbl_note.add_theme_color_override("font_color", Color(0.75, 0.85, 0.9))
+	add_child(_lbl_note)
 
 
 func _on_fit_mode_selected(index: int) -> void:
@@ -204,7 +213,8 @@ func _add_param_row(grid: GridContainer, key: String) -> Label:
 ##   returns: [{ping_id:int, time:float, bearing_deg:float, range_m:float,
 ##              range_sigma_m:float, se_db:float, track_id:String, detected:bool}],
 ##   tma: {track:String, evidence:String, fit:String},
-##   undo_enabled: bool, ping_disabled_reason: String
+##   undo_enabled: bool, ping_disabled_reason: String,
+##   outcome: String, note: String（PG-03/PG-04 说明行：无回波解释 / 位置估计档位）
 ## }
 func set_data(d: Dictionary) -> void:
 	var state: String = str(d.get("state", "UNAVAILABLE"))
@@ -282,6 +292,10 @@ func set_data(d: Dictionary) -> void:
 	var pending: bool = bool(d.get("pending_apply", false))
 	_prompt_box.visible = pending and fm == "ASSISTED"
 	_btn_undo.disabled = not bool(d.get("undo_enabled", false))
+	# PG-03/PG-04：说明行（无回波解释 / 系统位置估计档位）。
+	var note: String = str(d.get("note", ""))
+	_lbl_note.text = note
+	_lbl_note.visible = note != ""
 
 
 func _badge_tooltip(state: String) -> String:

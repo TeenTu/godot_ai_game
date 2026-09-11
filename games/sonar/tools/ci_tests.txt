@@ -140,3 +140,10 @@ ai5_dt_invariance_test
 #                           BOW≥12dB / FLANK≥8dB）/ 弱目标 ≥200 固定种子统计与 50% 建轨距离比 /
 #                           性能四态连续退化 + 主动同层/跨层 8km 校准（AC-01..04 / T07..T10）
 towed_performance_test
+
+#   active_echo_auto_test   P1-A：主动回波自动处理与粗定位（单次回波立即 POSITION_ONLY、
+#                           不被"4 条证据"拦截；无回波不造虚假位置且清掉上次摘要；
+#                           往返机动时参考站位/参考时刻统一、运动偏差入协方差；
+#                           卡片与全局模式同源、自动估计不覆盖玩家手动草案）
+#                           （PG-01/PG-03/PG-04 / T14 T15 T20 T21）
+active_echo_auto_test

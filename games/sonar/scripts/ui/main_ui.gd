@@ -29,6 +29,9 @@ var _ctx_actions: ChartContextActions = null  # S109 §9.3 海图右键菜单动
 var _threat_hud: ThreatHud = null  # §8.3 顶栏固定告警条（banner-only）
 var _threat_list: ThreatHud = null  # 航迹页威胁列表（list-only）
 var _ping_ctrl: ActivePingController = null  # S1-04 主动 Ping 接线（拆出，控行数）
+## PG-01：唯一自动化模式源（自动化面板 + 主动声呐卡片 + 值班链共用）。
+var _auto_ctrl := AutomationController.new()
+var _auto_panel: AutomationPanelUI = null
 
 var _chart: ChartView = null
 var _bearing: BearingDisplay = null
@@ -106,10 +109,14 @@ func _ready() -> void:
 	_ping_ctrl = ActivePingController.new()
 	_ping_ctrl.world = world
 	_ping_ctrl.tracker = tracker
+	# PG-01：模式唯一源注入（卡片 fit_mode 成为派生视图，T21）。
+	_ping_ctrl.automation = _auto_ctrl
 	_ping_ctrl.on_status = _update_status
 	_ping_ctrl.on_dirty = func(): _dirty = true
 	_ping_ctrl.on_echo_hits = _on_ping_echo_hits
 	_ping_ctrl.on_fit_requested = _on_ping_fit_requested
+	# PG-01/PG-04：ASSIST/AUTO 自动系统估计（独立于玩家草案；不自动发射）。
+	_ping_ctrl.on_auto_estimate = _on_auto_estimate
 	_ping_ctrl.on_assoc_undone = func(_tid: String):
 		_dirty = true
 		_update_status(UiText.t("st_undo"))
@@ -348,10 +355,10 @@ func _build_tactics_page(pg: VBoxContainer) -> void:
 	_spin_range = UiSection.spin_row(pg, UiText.t("spin_range"), 100, 50000, 100, 0)
 	_spin_course = UiSection.spin_row(pg, UiText.t("spin_course"), 0, 359, 1, 0)
 	_spin_speed = UiSection.spin_row(pg, UiText.t("spin_speed"), 0, 40, 0.5, 0)
-	_spin_bearing.value_changed.connect(func(v): trial.set_bearing(v))
-	_spin_range.value_changed.connect(func(v): trial.set_range(v))
-	_spin_course.value_changed.connect(func(v): trial.set_course(v))
-	_spin_speed.value_changed.connect(func(v): trial.set_speed(v))
+	_spin_bearing.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_bearing(v)))
+	_spin_range.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_range(v)))
+	_spin_course.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_course(v)))
+	_spin_speed.value_changed.connect(func(v): _manual_trial_edit(func(): trial.set_speed(v)))
 	_build_own_page(pg)  # S1-11 D-18：本艇页并入战术页，不再有第四个顶级页
 
 
@@ -386,7 +393,11 @@ func _build_own_page(pg: VBoxContainer) -> void:
 	UiSection.body(sec_status).add_child(_lbl_status)
 	pg.add_child(sec_status)
 	var auto_panel := AutomationPanelUI.new()
+	# PG-01：自动化面板与主动声呐卡片共享唯一模式源（_auto_ctrl），
+	# 卡片切模式 = 全局切模式，不再各自持一份状态（T21）。
+	auto_panel.ctrl = _auto_ctrl
 	auto_panel.bind(tracker, _auto_refit_track, world)
+	_auto_panel = auto_panel
 	var auto_sec := UiSection.make(UiText.t("sec_automation"))
 	UiSection.body(auto_sec).add_child(auto_panel)
 	pg.add_child(auto_sec)
@@ -764,6 +775,14 @@ func _on_mark() -> void:
 	_update_status(UiText.t("st_manual_mark"))
 
 
+## PG-01/T21：数字输入 = 玩家手动草案。置保护位后，自动（ASSIST/AUTO）系统
+## 估计只写另一份，绝不覆盖正在编辑的草案。
+func _manual_trial_edit(apply: Callable) -> void:
+	if selected_track_id != "":
+		fcc.mark_manual_draft(selected_track_id)
+	apply.call()
+
+
 ## Auto Fit：只拟合 selected_track_id（主动回波 REFIT 复用）。
 func _on_fit_tma() -> void:
 	var sel: Track = _selected_track()
@@ -774,6 +793,8 @@ func _on_fit_tma() -> void:
 	if sel.evidence_count() < 4:
 		_update_status(UiText.t("evt_needs_evidence") + " " + sel.track_id + " ≥4 条证据")
 		return
+	# 玩家显式重拟合 → 手动草案让位给新解。
+	fcc.clear_manual_draft(sel.track_id)
 	fcc.solve_and_store(sel, op, world.sim_time)
 	_present_fit(sel.track_id, true)
 	_dirty = true
@@ -842,6 +863,7 @@ func _on_enter_solution() -> void:
 		)
 		return
 	system_sol = res["solution"]
+	fcc.clear_manual_draft(tid)  # PG-01：草案已采纳为系统解，保护位释放
 	if _weapon_panel != null:
 		_weapon_panel.set_fire_context("建议航线就绪 — %s (src %s)；航线仍需在地图上绘制" % [st, tid])
 	_update_status(UiText.t("evt_submit") + " " + tid + "（" + UiText.fit(st) + "）")
@@ -1026,15 +1048,46 @@ func _on_active_return_selected(i: int) -> void:
 	_on_contact_selected(tid)
 
 
-## 回波命中回调（REQ-02/S109 §5.3/P0-08）：绝不抢玩家当前选中，只刷新面板。
+## 回波命中回调（REQ-02/S109 §5.3/P0-08 + PG-01/T18）：绝不抢玩家当前选中，
+## 只刷新面板与系统估计；**遍历全部命中**，不只更新最高优先者。
 func _on_ping_echo_hits(fed: Array) -> void:
 	if fed.is_empty():
 		return
-	var tr: Track = fed[0].get("track")
-	if tr == null:
-		return
 	_dirty = true
-	_update_status(UiText.t("st_echo_fused") + " " + tr.track_id)
+	var ids: Array = []
+	for f in fed:
+		var t: Track = f.get("track")
+		if t != null:
+			ids.append(t.track_id)
+	_update_status(UiText.t("st_echo_fused") + " " + ",".join(ids))
+	_present_position_estimate()
+
+
+## PG-01/PG-04：自动系统估计（ASSIST/AUTO 条件充分时）。只更新系统估计与
+## 面板，绝不覆盖玩家正在编辑的手动草案（T21），也绝不自动发射/自动 Ping。
+func _on_auto_estimate(track_id: String) -> void:
+	var t: Track = tracker.track_by_id(track_id)
+	if t == null or _ping_ctrl == null:
+		return
+	fcc.solve_and_store(t, op, world.sim_time)
+	if not fcc.has_manual_draft(track_id):
+		# 无手动草案时才让前台试拟解视图跟随（有草案则系统估计另存一份）。
+		if track_id == selected_track_id:
+			_present_fit(track_id, false)
+	elif track_id == selected_track_id:
+		_update_status(UiText.t("pos_only_hint"))
+	_present_position_estimate()
+
+
+## PG-04：把系统位置/运动估计档位显示到状态行（单次观测 = POSITION_ONLY）。
+func _present_position_estimate() -> void:
+	if _ping_ctrl == null or selected_track_id == "":
+		return
+	var txt: String = PosEstimateText.format(
+		_ping_ctrl.position_estimate_for(selected_track_id), world.sim_time
+	)
+	if txt != "":
+		_update_status(txt)
 
 
 ## AUTO/Apply 重拟合（REQ-02/S109 §5.3）：只更新命中航迹 per-Track Fit，不切视图。
@@ -1046,6 +1099,9 @@ func _on_ping_fit_requested(track_id: String) -> void:
 		_ping_ctrl.mark_range_applied(false)
 		_update_status(UiText.t("evt_needs_evidence") + " " + track_id + " ≥4 条证据")
 		return
+	# PG-01/T21：AUTO 自动路径不得覆盖玩家草案；ASSISTED 的 Apply 是显式命令。
+	if _ping_ctrl.fit_mode != ActivePingController.MODE_AUTO:
+		fcc.clear_manual_draft(track_id)
 	var r: Dictionary = fcc.solve_and_store(t, op, world.sim_time)
 	if track_id == selected_track_id:
 		_present_fit(track_id, true)

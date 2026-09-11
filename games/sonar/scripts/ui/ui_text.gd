@@ -545,6 +545,17 @@ const LABELS := {
 	"st_ping_tx": "主动脉冲已发射 — 正在监听回波（我方正在暴露！）",
 	"st_ping_no_return": "脉冲周期结束 — 未收到回波",
 	"st_take_control": "已接管：切换为手动，证据保留，停止自动重拟合",
+	# ---- PG-03 无有效回波的可解释说明（只列本艇/设备已知因素，不泄露目标 Truth）----
+	"no_return_window": "本次未获得有效回波：监听窗时延上限 %.1f 千米（超出即不可接收）",
+	"nr_window": "监听窗时延上限",
+	"nr_own_noise": "本艇航速高、自噪声升高",
+	"nr_ambient": "海况差、环境噪声高",
+	# ---- PG-03 到达即显示的临时位置点 / PG-04 位置估计档位 ----
+	"pending_assoc": "待关联",
+	"est_last_known": "最近估计位置",
+	"est_predicted": "预测位置",
+	"est_pos_fmt": "%s · 距离 %.2f 千米（σ%.0f 米）· 位置 1σ %.0f 米",
+	"pos_only_hint": "单次主动观测仅给出位置（航速航向未知）",
 	# ---- 图例 / 画布标签 ----
 	"legend_launch": "发射瞬态",
 	"legend_noise": "鱼雷噪声",

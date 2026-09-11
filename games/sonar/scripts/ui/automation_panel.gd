@@ -7,6 +7,9 @@ extends VBoxContainer
 ## （auto_fire/auto_decoy）+ 槽位/最近命令状态行。
 ## FULL_AUTO 的 REFIT 动作经 refit_requested 交主 UI 执行；ASSISTED 提案
 ## 仅显示待 Apply（去重：同一证据只提示一次）。
+##
+## PG-01：`ctrl` 是**唯一**模式源，由 main_ui 注入并与主动声呐卡片共享
+## （卡片切模式 / Take Control 也会改这里；本面板只显示，不另存状态）。
 
 signal refit_requested(track_id: String)
 
@@ -104,6 +107,9 @@ func _mk_roe(key: String) -> CheckButton:
 
 
 func _refresh_state() -> void:
+	# PG-01/T21：模式下拉与唯一模式源同步（主动声呐卡片切模式也会反映到这里）。
+	if _mode_opt != null and _mode_opt.selected != ctrl.mode:
+		_mode_opt.select(ctrl.mode)
 	var last: String = "—"
 	if not ctrl.command_log.is_empty():
 		var e: Dictionary = ctrl.command_log[ctrl.command_log.size() - 1]

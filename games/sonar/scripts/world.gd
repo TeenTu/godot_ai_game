@@ -821,6 +821,10 @@ func issue_ping() -> bool:
 		return false
 	var own: TruthEntity = world["own"]
 	var sensor: SensorArray = _ping_sensor()
+	# PG-04：冻结本次 Ping 的观测参考站位（发射瞬间本艇站位/深度/航速/时刻）。
+	# 本次全部回波的几何、SE 与位置解算一律以它为唯一基准，消除"发射时距离 +
+	# 接收时站位"的混合基准；往返 τ 内的本艇位移按运动近似偏差入协方差。
+	var station: OwnStationSnapshot = OwnStationSnapshot.capture(own, sim_time)
 	var echoes: Array = []
 	# REQ-B2-01：统一反射体快照回波登记（排除规则见 collector/静态采集）。
 	for snap in _collect_active_reflectors(sensor):
@@ -866,6 +870,7 @@ func issue_ping() -> bool:
 		"batch": [],
 		"batch_processed": false,
 		"sensor": sensor,
+		"station": station,
 	}
 	_next_ping_id += 1
 	# REQ-05 / §9.1：发射成功记录声学事件（PLATFORM_ACTIVE_PING，含深度）。
@@ -1046,6 +1051,7 @@ func _settle_due_echoes() -> void:
 	var sensor: SensorArray = _ping_session.get("sensor", null)
 	var gen: MeasurementGenerator = world["generator"]
 	var own: TruthEntity = world["own"]
+	var station: OwnStationSnapshot = _ping_session.get("station", null)
 	var ping_id: int = int(_ping_session["ping_id"])
 	for e in echoes:
 		if bool(e["settled"]):
@@ -1066,7 +1072,7 @@ func _settle_due_echoes() -> void:
 		var m: Measurement = (
 			gen
 			. generate_active(
-				own,
+				station if station != null else own,
 				target,
 				ac,
 				sensor,
@@ -1077,6 +1083,14 @@ func _settle_due_echoes() -> void:
 				float(e["range_ref_time_s"]),
 			)
 		)
+		# PG-04：统一参考时刻——参考站位 = 发射瞬间冻结站位（observer_* 即它），
+		# 运动近似偏差 = 半程位移 0.5·v·τ，显式交给位置协方差吸收（不伪装精度）。
+		if station != null:
+			m.reference_east_m = station.position_east_m
+			m.reference_north_m = station.position_north_m
+			m.reference_time_s = station.time_s
+			m.motion_bias_m = station.motion_bias_m(sim_time)
+			m.observer_pos_sigma_m = station.pos_sigma_m
 		var detected: bool = m.detected
 		e["detected"] = detected
 		e["se_db"] = m.signal_excess_db
@@ -1104,7 +1118,7 @@ func _settle_due_echoes() -> void:
 			# （AT-51..54；与回波到达/遍历顺序无关）。
 			_ping_session["batch"].append(
 				threat_tracks.active_return_dto(
-					m, float(own.position_east_m), float(own.position_north_m)
+					m, float(m.observer_east_m), float(m.observer_north_m)
 				)
 			)
 

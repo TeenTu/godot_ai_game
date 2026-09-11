@@ -16,33 +16,75 @@ extends RefCounted
 ##     （默认）提示"Apply range evidence to Trial?"（Apply/Reject）；MANUAL
 ##     只入 Track、Trial 不动并显示 REFIT REQUIRED；Take Control → MANUAL
 ##     但保留证据。任何模式都不自动提交 System Solution（main_ui 控制）。
+##
+## P1-A 变更（PG-01/PG-03/PG-04）：
+##   - 模式不再自持第二份状态：`fit_mode` 是全局 AutomationController 的派生视图
+##     （T21），卡片切模式 = 切全局模式；
+##   - 到达即显示：每个有效回波在到达帧生成稳定的"临时位置点 + 误差区"（待关联），
+##     监听窗关闭后统一归属，替换临时标签而**不新增**重复证据（PG-03）；
+##   - 单次观测立即产出 POSITION_ONLY 系统位置估计（不受"4 条证据"门限约束），
+##     多历元且几何可观测才升为 MOTION_ESTIMATE（PG-04）；
+##   - 无回波时监听结束明确给出"本次未获得有效回波"及已知因素，不保留上次成功摘要。
 
 const MAX_RETURNS: int = 8
 const MODE_AUTO: String = "AUTO"
 const MODE_ASSISTED: String = "ASSISTED"
 const MODE_MANUAL: String = "MANUAL"
+## PG-01：自动 TMA 的最小证据数（"条件充分"）。位置估计（POSITION_ONLY）一律
+## 不受此门限约束——T14 明确禁止用"4 条证据"拦截位置输出。
+const MIN_EVIDENCE_FOR_AUTO_TMA: int = 4
+## PG-03：临时（待关联）位置点上限 / 归属后标签保留秒数。
+const MAX_TEMP_CONTACTS: int = 12
+const RESOLVED_TEMP_HOLD_S: float = 8.0
+## 本艇航速超过该值时，无回波解释里列出"自噪升高"这一已知因素。
+const OWN_NOISE_SPEED_KN: float = 8.0
+## 海况达到该值时，无回波解释里列出"环境噪声高"这一已知因素。
+const HIGH_SEA_STATE: float = 4.0
 
 var world: World = null
 var tracker: Tracker = null
+## PG-01：唯一自动化模式源（main_ui 注入）。非空时 fit_mode 只是派生视图。
+var automation: AutomationController = null
 ## 注入回调：update_status(text)、notify_dirty()。
 var on_status: Callable = Callable()
 var on_dirty: Callable = Callable()
 ## 命中回调：detected 回波已喂 Tracker 后调用，参数 [{measurement, track, summary}]，
 ## 数组已按 REQ-02 优先级排序（当前选中 Track 优先，再按 association_confidence
-## + SE 降序）——主 UI 取 fed[0] 即最高优先命中。
+## + SE 降序）。P1-A/T18：消费方必须遍历**全部**命中（自动更新每个被更新航迹），
+## 不得只取 fed[0]。
 var on_echo_hits: Callable = Callable()
 ## 拟合请求回调：AUTO 命中或 ASSISTED 玩家点 Apply 后触发，参数 track_id。
 ## 由持有拟合状态/UI 的调用方（main_ui）执行 select+refit。
 var on_fit_requested: Callable = Callable()
+## PG-01：自动系统估计回调（ASSIST/AUTO 且条件充分时），参数 track_id。
+## 与 on_fit_requested 分离：这条路径只更新"系统估计"，绝不改动玩家草案。
+var on_auto_estimate: Callable = Callable()
 ## 撤销回调：一次关联被撤销后调用（main_ui 刷新视图/状态）。
 var on_assoc_undone: Callable = Callable()
 
 ## S1-04C-REQ-02：TMA 拟合模式（MANUAL/ASSISTED/AUTO，默认 ASSISTED）。
-var fit_mode: String = MODE_ASSISTED
+## PG-01：派生视图——读写都落到唯一模式源 `automation`（未注入时用本地兼容值）。
+var fit_mode: String:
+	get:
+		return _canon_mode()
+	set(value):
+		_apply_fit_mode(value)
 ## 多回波优先级（REQ-02）：当前选中 Track id；命中该 Track 的回波排最前。
 var preferred_track_id: String = ""
 ## 最近一次回波/发射摘要（面板显示，空串则不显示）。
 var last_summary: String = ""
+## PG-03：本次监听窗结论（"" / "RETURN" / "NO_RETURN"）。
+var last_outcome: String = ""
+## PG-03：无回波时的可解释已知因素（UiText 键：nr_window / nr_own_noise / nr_recharge）。
+var no_return_reasons: Array = []
+## PG-03：到达即显示的临时位置点/误差区（待关联）。监听窗关闭后替换为最终归属标签。
+## [{temp_id, ping_id, measurement, east_m, north_m, sigma_m, major_m, minor_m,
+##   angle_deg, is_sector, bearing_deg, bearing_sigma_deg, range_m, range_sigma_m,
+##   observation_time_s, awaiting, resolved_track_id, resolved_at_s}]
+var pending_contacts: Array = []
+## PG-04：每个被更新航迹的系统位置/运动估计（track_id -> ActivePositionObs.evaluate）。
+## 独立于玩家手动草案；POSITION_ONLY 单次观测即产出。
+var position_estimates: Dictionary = {}
 ## 最近返回行（Latest Returns 数据源）：[{ping_id,time,bearing_deg,range_m,
 ##   range_sigma_m,se_db,track_id}]，最新在尾，保留 ≤MAX_RETURNS。
 var return_rows: Array = []
@@ -50,6 +92,14 @@ var return_rows: Array = []
 ## RANGE_AIDED / REJECTED。由本控制器按模式置位，main_ui 拟合后经
 ## mark_range_applied() 校正。
 var evidence_state: String = ""
+## PG-01：未注入 AutomationController 时的本地兼容模式值（唯一源缺失才用）。
+var _fit_mode_legacy: String = MODE_ASSISTED
+## PG-03：临时位置点序号（只为生成稳定 temp_id，不参与归属判决）。
+var _temp_seq: int = 0
+## PG-03：最近观察到的已关闭监听窗 id（用于识别"本次无回波"）。
+var _last_closed_seen: int = -1
+## PG-01：已请求自动系统估计的 evidence_revision（同一证据不重复请求）。
+var _auto_fit_revision: Dictionary = {}
 ## S109 §5.1 ActiveReturnRecord 台账（P0-07：禁止单份 _last_assoc 承载多回波）：
 ## [{local_return_id, ping_id, measurement, track, track_id, association_score,
 ##   se_db, received_time}]，最新在尾，保留 ≤MAX_RETURNS。
@@ -69,9 +119,40 @@ func refresh_panel(op_panel: OperatorPanel) -> void:
 	if world == null:
 		return
 	_process_arrived_echoes()
+	# PG-01/T18：ASSIST/AUTO 都自动更新全部已关联接触的系统位置估计。
+	_refresh_track_estimates()
 	if op_panel == null:
 		return
 	op_panel.set_active_sonar(_card_data())
+
+
+## PG-01：当前模式（来自唯一模式源；未注入 AutomationController 时用本地兼容值）。
+func _canon_mode() -> String:
+	if automation == null:
+		return _fit_mode_legacy
+	match automation.mode:
+		AutomationController.Mode.MANUAL:
+			return MODE_MANUAL
+		AutomationController.Mode.FULL_AUTO:
+			return MODE_AUTO
+		_:
+			return MODE_ASSISTED
+
+
+## PG-01：设置模式 = 设置全局模式（T21）。未注入时只改本地兼容值。
+func _apply_fit_mode(value: String) -> void:
+	if automation == null:
+		if value in [MODE_AUTO, MODE_ASSISTED, MODE_MANUAL]:
+			_fit_mode_legacy = value
+	else:
+		automation.set_mode(
+			AutomationController.from_canon_name(value), world.sim_time if world != null else 0.0
+		)
+	# 落入 MANUAL：撤下待 Apply 提示但保留证据 → REFIT REQUIRED。
+	if _canon_mode() == MODE_MANUAL and not _pending_apply.is_empty():
+		_pending_apply = {}
+		evidence_state = "REFIT_REQUIRED"
+	notify_dirty()
 
 
 ## Ping 按钮 → 发射一次主动脉冲。UNAVAILABLE（无硬件 REQ-20）只提示；
@@ -102,6 +183,7 @@ func _process_arrived_echoes() -> void:
 	var echoes: Array = world.take_arrived_echoes()
 	if world.auto_measurements:
 		return
+	var closed: int = world.last_closed_ping_id()
 	for e in echoes:
 		if not bool(e["detected"]):
 			continue
@@ -109,9 +191,181 @@ func _process_arrived_echoes() -> void:
 		if not _pending_batch.has(pid):
 			_pending_batch[pid] = []
 		_pending_batch[pid].append(e)
-	var closed: int = world.last_closed_ping_id()
+		# PG-03：到达即显示——同一帧内生成稳定的临时位置点 + 误差区（"待关联"）。
+		# 在途回波绝不提前显示（只有 take_arrived_echoes 交付的到达帧才登记）。
+		_register_temp_contact(e)
 	if _pending_batch.has(closed):
 		_flush_return_batch(closed)
+	elif closed >= 0 and closed != _last_closed_seen:
+		_seal_no_return()
+	_last_closed_seen = closed
+	_prune_temp_contacts()
+
+
+## PG-03：登记一个"待关联"临时位置点（稳定 temp_id，跨刷新不重编号）。
+func _register_temp_contact(e: Dictionary) -> void:
+	var m: Measurement = e.get("measurement")
+	var obs: Dictionary = ActivePositionObs.observation_of(m)
+	if not bool(obs.get("valid", false)):
+		return
+	_temp_seq += 1
+	(
+		pending_contacts
+		. append(
+			{
+				"temp_id": "T%02d" % _temp_seq,
+				"ping_id": int(e.get("ping_id", -1)),
+				"measurement": m,
+				"east_m": float(obs["east_m"]),
+				"north_m": float(obs["north_m"]),
+				"sigma_m": float(obs["major_m"]),
+				"major_m": float(obs["major_m"]),
+				"minor_m": float(obs["minor_m"]),
+				"angle_deg": float(obs["angle_deg"]),
+				"is_sector": bool(obs["is_sector"]),
+				"bearing_deg": float(obs["bearing_deg"]),
+				"bearing_sigma_deg": float(obs["bearing_sigma_deg"]),
+				"range_m": float(obs["range_m"]),
+				"range_sigma_m": float(obs["range_sigma_m"]),
+				"observation_time_s": float(obs["reference_time_s"]),
+				"awaiting": true,
+				"resolved_track_id": "",
+				"resolved_at_s": -1.0,
+			}
+		)
+	)
+	while pending_contacts.size() > MAX_TEMP_CONTACTS:
+		pending_contacts.pop_front()
+
+
+## PG-03：监听窗关闭后统一归属——把临时标签替换为最终航迹 id（同一条证据对象，
+## 不新增重复证据）。归属到既有航迹的临时点保留 RESOLVED_TEMP_HOLD_S 秒后收起。
+func _resolve_temp_contacts(fed: Array) -> void:
+	var owner: Dictionary = {}
+	for f in fed:
+		var t: Track = f.get("track")
+		if t != null:
+			owner[f.get("measurement")] = str(t.track_id)
+	var now: float = world.sim_time
+	for c in pending_contacts:
+		var m: Measurement = c.get("measurement")
+		if not bool(c["awaiting"]) or m == null or not owner.has(m):
+			continue
+		c["awaiting"] = false
+		c["resolved_track_id"] = str(owner[m])
+		c["resolved_at_s"] = now
+
+
+func _prune_temp_contacts() -> void:
+	var now: float = world.sim_time if world != null else 0.0
+	var keep: Array = []
+	for c in pending_contacts:
+		if bool(c["awaiting"]) or now - float(c["resolved_at_s"]) <= RESOLVED_TEMP_HOLD_S:
+			keep.append(c)
+	pending_contacts = keep
+
+
+## PG-03：监听结束无有效回波——明确文案 + 已知因素，并清掉上次成功摘要。
+func _seal_no_return() -> void:
+	last_outcome = "NO_RETURN"
+	no_return_reasons = _no_return_reasons()
+	return_rows.clear()
+	_pending_apply = {}
+	evidence_state = ""
+	last_summary = str(UiText.t("st_ping_no_return")) + " " + no_return_text()
+	_call_status(last_summary)
+	notify_dirty()
+
+
+## PG-03：无回波的已知因素（监听窗时延上限/本艇航速自噪/海况环境噪声）。
+## 只列本艇与设备事实，绝不透露未探测目标的深度等 Truth。
+func _no_return_reasons() -> Array:
+	var out: Array = ["nr_window"]
+	if world == null:
+		return out
+	var own: TruthEntity = world.world.get("own", null)
+	if own != null and float(own.speed_kn) >= OWN_NOISE_SPEED_KN:
+		out.append("nr_own_noise")
+	var env: RefCounted = world.world.get("env", null)
+	if env != null and float(env.sea_state) >= HIGH_SEA_STATE:
+		out.append("nr_ambient")
+	return out
+
+
+func no_return_text() -> String:
+	var parts: Array = []
+	for k in no_return_reasons:
+		parts.append(str(UiText.t(str(k))))
+	var head: String = str(UiText.t("no_return_window")) % (world.ping_max_range_m() / 1000.0)
+	if parts.is_empty():
+		return head
+	return head + "；" + "，".join(parts)
+
+
+## PG-03/测试与面板用只读快照（不含 Measurement 引用与任何身份字段）。
+func temp_contacts_snapshot() -> Array:
+	var out: Array = []
+	for c in pending_contacts:
+		(
+			out
+			. append(
+				{
+					"temp_id": str(c["temp_id"]),
+					"ping_id": int(c["ping_id"]),
+					"east_m": float(c["east_m"]),
+					"north_m": float(c["north_m"]),
+					"sigma_m": float(c["sigma_m"]),
+					"is_sector": bool(c["is_sector"]),
+					"bearing_deg": float(c["bearing_deg"]),
+					"bearing_sigma_deg": float(c["bearing_sigma_deg"]),
+					"range_m": float(c["range_m"]),
+					"range_sigma_m": float(c["range_sigma_m"]),
+					"observation_time_s": float(c["observation_time_s"]),
+					"awaiting": bool(c["awaiting"]),
+					"resolved_track_id": str(c["resolved_track_id"]),
+				}
+			)
+		)
+	return out
+
+
+## PG-01/T18：刷新全部 ACTIVE 航迹的系统位置估计（不限于本次命中/当前选中）。
+func _refresh_track_estimates() -> void:
+	if tracker == null or world == null:
+		return
+	var alive: Dictionary = {}
+	for t in tracker.all_tracks():
+		if t.state != Track.TrackState.ACTIVE:
+			continue
+		alive[t.track_id] = ActivePositionObs.evaluate(t, world.sim_time)
+	position_estimates = alive
+
+
+## PG-04：本次命中航迹的系统估计 + 条件充分时的自动 TMA 请求（ASSIST/AUTO）。
+func _refresh_estimates(fed: Array) -> void:
+	var now: float = world.sim_time
+	for f in fed:
+		var t: Track = f.get("track")
+		if t == null:
+			continue
+		var obs: Dictionary = ActivePositionObs.evaluate(t, now)
+		position_estimates[t.track_id] = obs
+		if not bool(obs.get("has_position", false)) or fit_mode == MODE_MANUAL:
+			continue
+		# PG-01：ASSIST/AUTO 都自动刷新概率分类与系统估计。
+		t.set_classification(TrackClassification.assess(t, now))
+		if t.evidence_count() < MIN_EVIDENCE_FOR_AUTO_TMA:
+			continue
+		if int(_auto_fit_revision.get(t.track_id, -1)) == t.evidence_revision:
+			continue
+		if on_auto_estimate.is_valid():
+			_auto_fit_revision[t.track_id] = t.evidence_revision
+			on_auto_estimate.call(t.track_id)
+
+
+## PG-04：某航迹的系统位置估计（无 → 空字典）。
+func position_estimate_for(track_id: String) -> Dictionary:
+	return position_estimates.get(track_id, {})
 
 
 ## 批次结算：构造 Return×Track 代价矩阵 → 一对一分配 → 应用。
@@ -228,7 +482,12 @@ func _flush_return_batch(ping_id: int) -> void:
 			]
 		)
 		_call_status(str(UiText.t("st_ping_tx")) + " → " + last_summary)
+	# PG-03：监听窗关闭 → 统一归属，把"待关联"临时标签替换为最终航迹 id
+	#（同一条 Measurement 对象，绝不新增重复证据）；再刷新系统估计。
+	last_outcome = "RETURN"
+	_resolve_temp_contacts(fed)
 	_route_fed_by_mode(fed)
+	_refresh_estimates(fed)
 	if on_echo_hits.is_valid() and not fed.is_empty():
 		on_echo_hits.call(fed)
 
@@ -381,19 +640,25 @@ func has_undo() -> bool:
 # ------------------------------------------------------------------
 
 
-## 切换拟合模式（AUTO/ASSISTED/MANUAL）。只影响后续回波裁决；已有证据不动。
+## 切换拟合模式（AUTO/ASSISTED/MANUAL，规范名 ASSIST/FULL_AUTO 亦接受）。
+## PG-01：这就是切**全局**自动化模式（唯一模式源，T21）——卡片与自动化面板
+## 不再各持一份状态；落入 MANUAL 时撤下待 Apply 提示但保留证据 → REFIT
+## REQUIRED（由 _apply_fit_mode 处理）。
 func set_fit_mode(mode: String) -> void:
-	if mode not in [MODE_AUTO, MODE_ASSISTED, MODE_MANUAL]:
+	var norm: String = _legacy_mode_name(mode)
+	if norm == "":
 		return
-	if fit_mode == mode:
-		return
-	fit_mode = mode
-	if mode == MODE_MANUAL:
-		# 落入 MANUAL：撤下待 Apply 提示但保留证据 → REFIT REQUIRED。
-		if not _pending_apply.is_empty():
-			_pending_apply = {}
-			evidence_state = "REFIT_REQUIRED"
-	notify_dirty()
+	fit_mode = norm
+
+
+## PG-01：把规范名/旧名统一成内部词（MANUAL / ASSISTED / AUTO）；未知返回 ""。
+static func _legacy_mode_name(mode: String) -> String:
+	var up: String = mode.strip_edges().to_upper()
+	if up in [MODE_AUTO, MODE_ASSISTED, MODE_MANUAL]:
+		return up
+	if up in AutomationController.CANON_NAMES:
+		return str(AutomationController.MODE_NAMES[AutomationController.from_canon_name(up)])
+	return ""
 
 
 ## Take Control：模式切回 MANUAL，保留已有 range 证据（不再自动/半自动改
@@ -401,10 +666,6 @@ func set_fit_mode(mode: String) -> void:
 ## 撤掉待 Apply 提示（若有）。
 func take_control() -> void:
 	fit_mode = MODE_MANUAL
-	if not _pending_apply.is_empty():
-		_pending_apply = {}
-		evidence_state = "REFIT_REQUIRED"
-	notify_dirty()
 
 
 ## ASSISTED 玩家点 Apply：把待裁决的 range 证据应用到 Trial（请求调用方重
@@ -435,8 +696,9 @@ func mark_range_applied(success: bool) -> void:
 
 
 ## 当前卡片应显示的关联 Track id（最新回波记录；无则 "-"）。
+## PG-03：本次监听窗无有效回波时**不显示**上一次的成功关联（避免误解）。
 func linked_track_id() -> String:
-	if _records.is_empty():
+	if last_outcome == "NO_RETURN" or _records.is_empty():
 		return "-"
 	var t: Track = _records[_records.size() - 1].get("track")
 	if t == null:
@@ -519,7 +781,20 @@ func _card_data() -> Dictionary:
 		"pending_apply": has_pending_apply(),
 		"undo_enabled": has_undo(),
 		"ping_disabled_reason": disabled_reason,
+		# PG-03/PG-04：结论说明行（无回波解释 / 系统位置估计档位）。
+		"outcome": last_outcome,
+		"note": note_text(),
+		"temp_contacts": temp_contacts_snapshot(),
 	}
+
+
+## PG-03/PG-04：卡片说明行文本（公开：面板与回归都读同一入口）。
+func note_text() -> String:
+	if last_outcome == "NO_RETURN":
+		return no_return_text()
+	var tid: String = linked_track_id()
+	var obs: Dictionary = position_estimates.get(tid, {}) if tid != "-" else {}
+	return PosEstimateText.format(obs, world.sim_time if world != null else 0.0)
 
 
 func _call_status(text: String) -> void:

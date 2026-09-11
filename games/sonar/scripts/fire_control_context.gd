@@ -22,7 +22,33 @@ var trial_by_track_id: Dictionary = {}
 var system_solution_by_track_id: Dictionary = {}
 var evidence_revision_by_track_id: Dictionary = {}
 var stale_by_track_id: Dictionary = {}
+## PG-01/T21：手动草案保护位。玩家用数字输入/手动 Trial 编辑过该 Track 后置位；
+## 此后自动（ASSIST/AUTO）重拟合只更新 system_estimate_by_track_id，绝不覆盖
+## 正在编辑的草案（trial_by_track_id）。
+var manual_draft_by_track_id: Dictionary = {}
+## PG-01：系统估计（自动链产出，与玩家草案物理分离）。track_id -> TrialSolution
+var system_estimate_by_track_id: Dictionary = {}
 var _fit_version_counter: int = 0
+
+
+## PG-01：标记该 Track 存在玩家手动草案（数字输入/手动编辑入口调用）。
+func mark_manual_draft(track_id: String) -> void:
+	if track_id != "":
+		manual_draft_by_track_id[track_id] = true
+
+
+func has_manual_draft(track_id: String) -> bool:
+	return bool(manual_draft_by_track_id.get(track_id, false))
+
+
+## 草案被采纳（提交系统解）或显式重置换新时清除保护位。
+func clear_manual_draft(track_id: String) -> void:
+	manual_draft_by_track_id.erase(track_id)
+
+
+## PG-01：系统位置/运动估计的 Trial 视图（可能等于草案之外的另一份解）。
+func system_estimate(track_id: String) -> TrialSolution:
+	return system_estimate_by_track_id.get(track_id, null)
 
 
 func evidence_revision(track_id: String) -> int:
@@ -82,7 +108,11 @@ func store_fit(track: Track, r: Dictionary, sim_time: float) -> int:
 		trial.source_track_id = tid
 		trial.source_fit_version = v
 		trial.source_evidence_revision = track.evidence_revision
-		trial_by_track_id[tid] = trial
+		# PG-01/T21：自动解恒进"系统估计"；只有当该 Track 没有玩家手动草案时，
+		# 草案视图（trial_by_track_id）才跟随自动解——绝不覆盖正在编辑的草案。
+		system_estimate_by_track_id[tid] = trial
+		if not has_manual_draft(tid):
+			trial_by_track_id[tid] = trial
 	return v
 
 
