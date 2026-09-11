@@ -357,7 +357,7 @@ func _mk_attack_scenario(seed_val: int) -> Dictionary:
 	sc["own_ship"]["turn_rate_deg_s"] = 1.5
 	sc["doctrine"] = {
 		"sensor_false_alarm_rate": 0.0,
-		"counterfire_probability": 0.0,
+		"counterfire_rate_per_s": 0.0,
 		"fire_quality_threshold": 99.0,
 		"decoy_launch_probability": 0.0,
 	}
@@ -394,7 +394,7 @@ func _mk_doctrine_world(seed_val: int) -> World:
 		{
 			"sensor_false_alarm_rate": 0.0,
 			"fire_quality_threshold": 0.7,
-			"counterfire_probability": 1.0,
+			"counterfire_rate_per_s": 50.0,
 			"reaction_delay_min_s": 3.0,
 			"reaction_delay_max_s": 15.0,
 			"max_simultaneous_weapons": 2,

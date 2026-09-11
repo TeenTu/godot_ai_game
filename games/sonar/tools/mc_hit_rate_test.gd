@@ -81,7 +81,7 @@ func _attack_seed(seed_val: int, bearing_only: bool) -> Dictionary:
 	sc["own_ship"]["turn_rate_deg_s"] = 1.5
 	sc["doctrine"] = {
 		"sensor_false_alarm_rate": 0.0,
-		"counterfire_probability": 0.0,
+		"counterfire_rate_per_s": 0.0,
 		"fire_quality_threshold": 99.0,
 		"decoy_launch_probability": 0.0,
 	}

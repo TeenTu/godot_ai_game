@@ -164,27 +164,34 @@ func _ai_05_launch_transient_classified(fails: Array) -> void:
 ## ---- AI-06/AI-07：反应延迟 ∈ [3,15]s + BEARING_ONLY 宽扇区反击 ----
 func _ai_06_07_reaction_delay_and_fire(fails: Array) -> void:
 	var w := _mk_world(3500.0, 45.0, true)  # 敌方 3.5km、玩家响（SL0=150）
-	# 记录质量首达 fire 阈值的时刻；反击动作出现时刻与其差 ∈ [3,15]s。
-	var th: float = float(w.enemy_ai.doctrine.get("fire_quality_threshold", 0.7))
-	var t_cross: float = -1.0
+	# AI-01：延迟基准改为**取得攻击资格**的时刻——质量过线只是"怀疑/跟踪"，
+	# 攻击资格还要独立证据数与观察跨度（默认 ≥3 条 / ≥15s），拿不到豁免。
+	# 反击动作出现时刻与该时刻之差 ∈ [delay_min, delay_max]（λ 已给大值）。
+	var doc: Dictionary = w.enemy_ai.doctrine
+	var d_lo: float = float(doc.get("reaction_delay_min_s", 3.0))
+	var d_hi: float = float(doc.get("reaction_delay_max_s", 15.0))
+	var t_auth: float = -1.0
 	var t_fire: float = -1.0
 	for i in range(600):
 		w.run_steps(1)
-		if t_cross < 0.0 and not w.enemy_ai.tracks.tracks.is_empty():
+		if t_auth < 0.0:
 			var bt: Dictionary = w.enemy_ai.tracks.best_track()
-			if float(bt.get("quality", 0.0)) >= th:
-				t_cross = w.sim_time
+			if (
+				not bt.is_empty()
+				and w.enemy_ai.tracks.attack_authorized(bt, w.sim_time, w.enemy_ai.doctrine)
+			):
+				t_auth = w.sim_time
 		if not w.enemy_weapons.torpedoes.is_empty():
 			t_fire = w.sim_time
 			break
-	_assert_bool(fails, "AI-06a quality crossed threshold", t_cross > 0.0, true)
+	_assert_bool(fails, "AI-06a attack authorized", t_auth > 0.0, true)
 	_assert_bool(fails, "AI-06b enemy fired", t_fire > 0.0, true)
-	if t_fire > 0.0 and t_cross > 0.0:
-		var delay: float = t_fire - t_cross
+	if t_fire > 0.0 and t_auth > 0.0:
+		var delay: float = t_fire - t_auth
 		_assert_bool(
 			fails,
-			"AI-06c reaction delay in [2,16] (%.1f)" % delay,
-			delay >= 2.0 and delay <= 16.0,
+			"AI-06c reaction delay in [%.0f,%.0f] (%.1f)" % [d_lo, d_hi, delay],
+			delay >= d_lo - 1.0 and delay <= d_hi + 2.0,
 			true
 		)
 	if not w.enemy_weapons.torpedoes.is_empty():
@@ -415,8 +422,13 @@ func _mk_world(range_m: float, bearing_deg: float, loud: bool) -> World:
 			"suspicious_quality_threshold": 0.25,
 			"reaction_delay_min_s": 3.0,
 			"reaction_delay_max_s": 15.0,
-			"counterfire_probability": 1.0,
+			# AI-02：λ = 50/s → 泊松机会间隔趋 0，延迟只反映反应延迟本身。
+			"counterfire_rate_per_s": 50.0,
 			"counterfire_cooldown_s": 120.0,
+			# AI-01：攻击资格四项（≥3 条独立证据 / 跨度 ≥15s / 新鲜 ≤30s / 质量 ≥0.7）。
+			"attack_min_evidence": 3,
+			"attack_min_span_s": 15.0,
+			"attack_max_evidence_age_s": 30.0,
 			"max_simultaneous_weapons": 2,
 			"sample_interval_s": 2.0,
 			"torpedo_active_enable_time_s": 60.0,

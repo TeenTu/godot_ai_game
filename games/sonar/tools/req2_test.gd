@@ -349,7 +349,7 @@ func _r2_06_world_moving_target_detonation(fails: Array) -> void:
 			"evade_trigger_probability": 0.0,
 			"decoy_launch_probability": 0.0,
 			"layer_change_probability": 0.0,
-			"counterfire_probability": 0.0,
+			"counterfire_rate_per_s": 0.0,
 			"sample_interval_s": 2.0
 		},
 	}

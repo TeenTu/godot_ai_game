@@ -130,3 +130,7 @@ s1_11_batch7_test
 #   mark_lock_test          P0-A：Mark 锁定唯一状态源/锁定优先/去重不夺查看/显式改绑原子可撤销/
 #                           自由落点不查门/待处理点恢复/SUGGEST 纯计算 + PG-02 频谱 DTO 归一化（MK-01..06 / T01..T06）
 mark_lock_test
+
+#   ai5_dt_invariance_test  P0-B AI-05：同一证据流下 dt=0.1/0.5/1.0 的发射时间分布一致/
+#                           固定 dt+seed 可复现/同一 Ping 多回调不重复抬质量（感知概率与 doctrine 分离）
+ai5_dt_invariance_test
