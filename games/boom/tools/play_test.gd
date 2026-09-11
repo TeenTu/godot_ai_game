@@ -112,9 +112,35 @@ func _process(_delta: float) -> bool:
 		_m11_tests.run_all()
 		_m12_tests.run_all()
 		_failures += preload("res://tools/play_test_m13.gd").new().run(self)
+		_test_unlock_test_mode()
 		_test_ui_font()
 		_finish()
 	return false
+
+
+## [test-mode] 本地调试的「开局全解锁」档：独立测试档 + 全武器树全解锁 + 充足金币。
+## 关键不变量：默认必须关闭（线上不得误开）；进入幂等；退出还原真实档路径。
+func _test_unlock_test_mode() -> void:
+	print("[test-mode]")
+	_check(not bool(_main.call("_is_unlock_test_mode")), "无参数时测试模式默认关闭")
+	_check(not BoomSave.test_mode, "默认不开测试模式")
+	BoomSave.enter_test_mode()
+	_check(BoomSave.test_mode, "enter_test_mode 置位 test_mode")
+	var coins_once := BoomSave.coins()
+	_check(coins_once >= BoomSave.TEST_COINS, "注入充足金币（%d）" % coins_once)
+	var missing := ""
+	for weapon: BoomWeaponDef in BoomWeapons.all():
+		for skill_id in weapon.tree.get("skills", []) as Array:
+			if not BoomSave.is_unlocked(weapon.id, String(skill_id)):
+				missing += "%s/%s " % [weapon.id, skill_id]
+	_check(missing == "", "全武器树技能全解锁（缺=%s）" % ("无" if missing == "" else missing))
+	_check(BoomSave._path == BoomSave.TEST_SAVE_PATH, "写入独立测试档，不碰真实玩家档")
+	BoomSave.enter_test_mode()  # 幂等：重复进入不得叠加金币
+	_check(BoomSave.coins() == coins_once, "重复进入幂等（金币不叠加）")
+	BoomSave.test_reset()  # 清测试档（当前 _path 仍指向测试档）
+	BoomSave.exit_test_mode()
+	_check(not BoomSave.test_mode, "exit_test_mode 复位 test_mode")
+	_check(BoomSave._path != BoomSave.TEST_SAVE_PATH, "退出后还原原存档路径")
 
 
 ## [m10-font] Web 无系统 CJK 回退（DESIGN_M10 §9）：内嵌中文字集覆盖全部可见

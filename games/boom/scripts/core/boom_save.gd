@@ -5,8 +5,13 @@ extends RefCounted
 ## 结构：{"coins": int, "unlocked": {"bubble": ["lamp_..."], "greatsword": ["brush_..."]}}
 ## 货币语义：解锁消耗跨局货币（存档 coins）；对局内拾取金币在获得时即时
 ## 累加进存档内存（落盘合并到解锁 / 结算时机，见 save() 调用方）。
+## 测试模式（enter_test_mode）另开 test_mode + 独立档 user://boom_save_test.json。
 
 const SAVE_PATH: String = "user://boom_save.json"
+## 测试模式存档（独立文件）：进入测试模式不改动真实玩家进度，退出即切回。
+const TEST_SAVE_PATH: String = "user://boom_save_test.json"
+## 测试模式注入的跨局货币余额（充足即可，便于走解锁/消费路径不被打断）。
+const TEST_COINS: int = 999999
 
 ## 每把武器的两条派生各开放根节点；旧存档技能保留但不再进入新树。
 const DEFAULT_UNLOCKED: Dictionary = {
@@ -17,6 +22,10 @@ const DEFAULT_UNLOCKED: Dictionary = {
 static var _data: Dictionary = {}
 ## 测试入口可切换到独立 user:// 测试档，不触碰真实玩家存档。
 static var _path: String = SAVE_PATH
+## 测试模式标记（开局全解锁）；由 main.gd 按 URL / 启动参数置位。
+static var test_mode: bool = false
+## 进入测试模式前的存档路径，退出时还原（避免测试档路径泄漏给后续调用方）。
+static var _path_before_test: String = ""
 
 
 ## 取当前存档（懒加载：无文件 / 解析失败回退默认结构）。
@@ -149,3 +158,40 @@ static func test_reset() -> void:
 	_data = {}
 	if FileAccess.file_exists(_path):
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(_path))
+
+
+# ------------------------------------------------------------------ 测试模式（全解锁）
+
+
+## 进入测试模式（本地调试用）：切换到独立测试档，注入「全武器树全解锁 + 充足金币」，
+## 免刷解锁直接验证构筑 / 技能 / 面板。
+## 幂等：重复调用不叠加金币（取 max）、不重复追加已解锁项，可安全多次调用。
+static func enter_test_mode() -> void:
+	test_mode = true
+	if _path != TEST_SAVE_PATH:
+		if _path_before_test.is_empty():
+			_path_before_test = _path
+		_path = TEST_SAVE_PATH
+		_data = {}  # 换档：丢弃上一档缓存，强制按测试档重新加载
+	var d := data()
+	d["coins"] = maxi(int(d["coins"]), TEST_COINS)
+	# 解锁清单按 BoomWeapons 注册表推导（加新武器自动纳入，无需改本函数）。
+	var unlocked: Dictionary = d["unlocked"] as Dictionary
+	for weapon: BoomWeaponDef in BoomWeapons.all():
+		var list: Array = unlocked.get(weapon.id, [])
+		for skill_id in weapon.tree.get("skills", []) as Array:
+			var sid := String(skill_id)
+			if not list.has(sid):
+				list.append(sid)
+		unlocked[weapon.id] = list
+	save()
+
+
+## 退出测试模式：还原进入前的存档路径（测试收尾用）。
+static func exit_test_mode() -> void:
+	test_mode = false
+	if _path_before_test.is_empty():
+		return
+	_path = _path_before_test
+	_path_before_test = ""
+	_data = {}

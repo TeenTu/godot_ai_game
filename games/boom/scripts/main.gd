@@ -109,6 +109,11 @@ func _ready() -> void:
 	# Web 无系统 CJK 回退：经代码 load 引用，保证中文字集字体被打进导出 pck
 	# （project.godot 的 theme/custom 不参与导出依赖扫描）。
 	ThemeDB.fallback_font = load(UI_FONT_PATH)
+	# 测试模式（?testmode=1 / --testmode）：切独立测试档 + 开局全解锁，免刷验证构筑。
+	# 必须在 BoomSkillSystem / BoomEquipmentSystem 读存档之前执行。
+	if _is_unlock_test_mode():
+		BoomSave.enter_test_mode()
+		print("[boom] test mode on: 全解锁 + coins=%d" % BoomSave.coins())
 	if not _is_test_mode():
 		randomize()
 	world = _build_world()
@@ -193,6 +198,8 @@ func _build_weapon_select() -> void:
 	_select = BoomWeaponSelect.new()
 	_select.position = Vector2.ZERO
 	_select.size = Vector2(HUD_W, HUD_H)
+	# 测试模式可见标识：底部提示改为"全解锁"说明（须在 add_child 触发 _ready 前设置）。
+	_select.test_badge = BoomSave.test_mode
 	_hud.add_child(_select)
 	_select.skill_sys = skill_sys  # M7R：技能配置区按当前武器树解锁/装备。
 	_select.confirmed.connect(_on_weapon_confirmed)
@@ -328,6 +335,25 @@ func _is_test_mode() -> bool:
 	return (v as String) == "1"
 
 
+## 本地调试用「测试模式（全解锁）」，与上面的 _is_test_mode()（vision-e2e 的 ?test=1：
+## 固定种子 + 跳过选单）相互独立——本模式保留正常流程（选武器 / 技能树照常可见），
+## 只把存档预置成「全武器树全解锁 + 充足金币」。Web 用 ?testmode=1，桌面/编辑器
+## （编辑器在「项目设置 → 编辑器 → 运行参数」填 --testmode）用启动参数。
+func _is_unlock_test_mode() -> bool:
+	if OS.get_cmdline_args().has("--testmode") or OS.get_cmdline_user_args().has("--testmode"):
+		return true
+	if not OS.has_feature("web"):
+		return false
+	if not Engine.has_singleton("JavaScriptBridge"):
+		return false
+	var v: Variant = Engine.get_singleton("JavaScriptBridge").call(
+		"eval", "new URLSearchParams(location.search).get('testmode')"
+	)
+	if typeof(v) != TYPE_STRING:
+		return false
+	return (v as String) == "1"
+
+
 func _test_hook_get_state() -> Dictionary:
 	var jg: Dictionary = joystick.get_debug_geom()
 	var state: Dictionary = {
@@ -354,6 +380,7 @@ func _test_hook_get_state() -> Dictionary:
 		"joy_kx": jg["knob_x"],
 		"joy_ky": jg["knob_y"],
 		"paused": get_tree().paused,
+		"test_mode": BoomSave.test_mode,
 	}
 	# M8（§13.2）：完整属性快照——面板显示值与战斗结算同源。
 	var snap: Dictionary = sim.stats_snapshot()
