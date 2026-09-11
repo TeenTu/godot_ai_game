@@ -61,9 +61,12 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 		"contact_select":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
 		"contact_mark_group":
-			_ui.mark_flow.active_group_id = str(ctx.get("hit_id", ""))
+			# MK-01：地图菜单与面板共用同一个状态入口（select_group），
+			# 不能只改 MarkFlow 而不刷新面板，也不能各存一份状态。
+			var gid: String = str(ctx.get("hit_id", ""))
+			_ui.mark_flow.select_group(gid)
 			_ui._refresh_mark_panel()
-			_ui._update_status(str(UiText.t("mark_group_set_to")) + str(ctx.get("hit_id", "")))
+			_ui._update_status(str(UiText.t("mark_group_set_to")) + gid)
 		"contact_goto_tma":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
 			_pager.select("tactics")

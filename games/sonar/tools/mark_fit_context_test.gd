@@ -137,8 +137,12 @@ func _initialize() -> void:
 		"explicit group append adds exactly one measurement each, no new track",
 	)
 
+	# MK-06 新语义：SUGGEST 下目的组仍是"手动落点写入组"（落点先归属它），
+	# 建议只是**纯计算**出来的候选；接受前不写任何其他航迹。
 	flow.association_mode = MarkFlow.ASSOC_SUGGEST
 	flow.active_group_id = tb.track_id
+	var ta_before: int = ta.evidence_count()
+	var tb_before: int = tb.evidence_count()
 	var sug_res: Dictionary = flow.handle_mark(31.0, false, _peak_row(31.0), "")
 	var sug_tid: String = flow.pending_suggestion_track_id()
 	_assert(
@@ -146,11 +150,22 @@ func _initialize() -> void:
 		sug_tid == ta.track_id and str(sug_res.get("status", "")).find("Apply") >= 0,
 		"SUGGEST only proposes (%s -> propose %s)" % [tb.track_id, sug_tid],
 	)
-	_assert(fails, tb.evidence_count() == 3, "SUGGEST does not change active track before Apply")
-	var ap_res: Dictionary = flow.apply_suggestion(tb.track_id)
 	_assert(
 		fails,
-		bool(ap_res.get("dirty", false)) and tb.evidence_count() == 4 and ta.evidence_count() == 3,
+		ta.evidence_count() == ta_before,
+		"SUGGEST writes no other track before Apply",
+	)
+	_assert(
+		fails, tb.evidence_count() == tb_before + 1, "SUGGEST mark lands on the locked destination"
+	)
+	var ap_res: Dictionary = flow.apply_suggestion(ta.track_id)
+	_assert(
+		fails,
+		(
+			bool(ap_res.get("dirty", false))
+			and ta.evidence_count() == ta_before + 1
+			and tb.evidence_count() == tb_before
+		),
 		"Apply rebinds keeping same evidence_id (no duplicate observation)",
 	)
 

@@ -473,6 +473,16 @@ const LABELS := {
 	"btn_remove_last": "移除最近的 Mark",
 	"btn_undo": "撤销",
 	"auto_pick": "（自动）",
+	# ---- MK-01：当前查看 / 手动落点写入（两个独立信息，避免看写混淆）----
+	"none_value": "无",
+	"mark_view_fmt": "当前查看：%s",
+	"mark_write_fmt": "手动落点写入：%s",
+	"mark_write_lock_fmt": "手动落点写入：%s（锁定）",
+	"mark_write_auto": "手动落点写入：（自动关联）",
+	"mark_pending_fmt": "有落点待处理（%.0f°）— 目的组不可用：",
+	"btn_move_to_group": "移入当前组",
+	"btn_attach_pending": "归入当前组",
+	"btn_new_group_from_pending": "为待处理点新建组",
 	# ---- 威胁 HUD / 右键菜单动作反馈 ----
 	"torpedo_alert": "鱼雷警报",
 	"btn_view_threat": "查看",
@@ -509,6 +519,9 @@ const LABELS := {
 	"st_assoc_mode": "Mark 关联方式 →",
 	"st_mark_group": "新 Mark 加入组：",
 	"st_mark_group_auto": "新 Mark 加入组：（自动）",
+	# MK-02：Shift 临时目的组必须明示；MK-03：重复点提示可显式改绑。
+	"st_mark_temp": "本次落点临时追加到：",
+	"st_mark_dup_movable": "该点已归属 %s — 未新增证据；可用「移入当前组」改绑",
 	"st_towed_stream": "拖曳阵延伸中…",
 	"st_towed_retract": "拖曳阵回收中…",
 	"st_towed_hold": "拖曳阵保持长度：",
@@ -664,6 +677,26 @@ const _MARK_CN := [
 	["Remove failed on ", "移除失败："],
 	["Nothing to undo", "没有可撤销操作"],
 	["No tracker", "无航迹管理器"],
+	# ---- MK-03/MK-05/MK-06 新增裁决路径（应用顺序敏感：长句在前）----
+	["Mark already exists (owner ", "Mark 已存在（归属 "],
+	[") - no new evidence; use Move-to-current-group to rebind ", "）— 未新增证据；可用「移入当前组」改绑 "],
+	["Mark already exists", "Mark 已存在"],
+	[" - no new evidence", " — 未新增证据"],
+	["Group ", "目的组 "],
+	[" rejected the mark - kept pending", " 拒绝了该落点 — 已保留待处理"],
+	[" rejected the pending mark", " 拒绝了待处理落点"],
+	[" unavailable - mark kept pending (new group / pick another)", " 不可用 — 落点已保留待处理（请新建组或改选）"],
+	[" unavailable", " 不可用"],
+	[" (temp Shift destination)", "（Shift 临时目的组）"],
+	[" - Apply to rebind to ", " — 应用后改绑到 "],
+	["Suggestion rejected", "建议已拒绝（未改动任何组）"],
+	["No target group", "未指定目的组"],
+	["Nothing to move", "没有可移动的证据"],
+	["Evidence not owned by any group", "该证据不属于任何组"],
+	["Move failed (group kept intact)", "改绑失败（证据组保持完整）"],
+	["Moved ", "已移动 "],
+	["No pending mark", "没有待处理落点"],
+	["Pending mark attached to ", "待处理落点已归入 "],
 ]
 
 ## 缺键计数（zh_cn_ui_test AT-35 要求为 0：所有显示键都必须进目录）。

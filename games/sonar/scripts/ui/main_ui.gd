@@ -47,6 +47,7 @@ var _btn_fit: Button = null
 var _btn_enter: Button = null
 var _weapon_panel: WeaponPanelUI = null
 var _lbl_selected: Label = null
+var _lbl_mark_lock: Label = null
 var _lbl_tma: Label = null
 var _sec_fit: VBoxContainer = null
 var _spin_bearing: SpinBox = null
@@ -253,6 +254,12 @@ func _build_sidebar() -> void:
 	_lbl_selected.text = UiText.t("selected_none")
 	_lbl_selected.add_theme_font_size_override("font_size", 16)
 	_pager.selection_slot.add_child(_lbl_selected)
+	# MK-01：锁定目的组常驻显示（切页也看得见，不与"当前查看"混淆）。
+	_lbl_mark_lock = Label.new()
+	_lbl_mark_lock.text = UiText.t("mark_write_auto")
+	_lbl_mark_lock.add_theme_font_size_override("font_size", 12)
+	_lbl_mark_lock.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_pager.selection_slot.add_child(_lbl_mark_lock)
 	_threat_hud = ThreatHud.install(_pager.alert_slot, _chart, true, false)
 	_build_sonar_page(_pager.add_page("sonar", UiText.t("page_sonar")))
 	_build_tactics_page(_pager.add_page("tactics", UiText.t("page_tactics")))
@@ -297,14 +304,17 @@ func _build_tactics_page(pg: VBoxContainer) -> void:
 	_build_contact_list(pg)
 	_threat_list = ThreatHud.install(pg, _chart, false, true)
 	mark_panel = MarkGroupPanel.new()  # REQ-B1-01/05：Mark 组/Remove/Reassign/Undo
-	mark_panel.association_changed.connect(
+	# MK-01：面板不再自持状态，改动机一律回到 MarkFlow（唯一状态源）再刷新。
+	mark_panel.mode_change_requested.connect(
 		func(m: String):
-			mark_flow.association_mode = m
+			mark_flow.set_mode(m)
+			_refresh_mark_panel()
 			_update_status(UiText.t("st_assoc_mode") + " " + UiText.assoc(m))
 	)
-	mark_panel.active_group_changed.connect(
+	mark_panel.group_change_requested.connect(
 		func(g: String):
-			mark_flow.active_group_id = g
+			mark_flow.select_group(g)
+			_refresh_mark_panel()
 			_update_status(UiText.t("st_mark_group") + (g if g != "" else UiText.t("auto_pick")))
 	)
 	mark_panel.flow = mark_flow
@@ -1056,6 +1066,14 @@ func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) ->
 			_ping_ctrl.preferred_track_id = sel_id
 		_lbl_selected.text = UiText.t("selected_prefix") + sel_id
 	_apply_mark_result(res, false)
+	# MK-02/MK-03：点击结果可能改变"移入当前组"可用性或产生待处理落点，
+	# 面板与常驻锁定行都要跟着刷新（不改选中接触）。
+	_refresh_mark_panel()
+	var tmp: String = str(res.get("temp_destination", ""))
+	if tmp != "":
+		_update_status(UiText.t("st_mark_temp") + tmp)
+	elif bool(res.get("can_move_to_lock", false)):
+		_update_status(UiText.t("st_mark_dup_movable") % str(res.get("existing_owner", "")))
 
 
 func _refresh_mark_panel() -> void:
@@ -1067,6 +1085,22 @@ func _refresh_mark_panel() -> void:
 	mark_panel.set_groups(ids)
 	mark_panel.show_suggestion(mark_flow.pending_suggestion_track_id())
 	mark_panel.set_audit(str(mark_flow.audit[-1]) if not mark_flow.audit.is_empty() else "")
+	_refresh_mark_lock_label()
+
+
+## MK-01：锁定状态必须在**任何页面**都看得见（不能藏到战术页才显示）。
+func _refresh_mark_lock_label() -> void:
+	if _lbl_mark_lock == null:
+		return
+	var wid: String = mark_flow.active_group_id
+	if wid == "":
+		_lbl_mark_lock.text = UiText.t("mark_write_auto")
+	else:
+		_lbl_mark_lock.text = (
+			UiText.t("mark_write_lock_fmt") % wid
+			if mark_flow.association_mode == MarkFlow.ASSOC_LOCKED
+			else UiText.t("mark_write_fmt") % wid
+		)
 
 
 ## 统一应用 Mark 操作结果：修订镜像/置脏/刷新/状态行。

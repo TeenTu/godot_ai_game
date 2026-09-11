@@ -502,11 +502,22 @@ func _r2_09_true_mode_mark(fails: Array) -> void:
 	_close(fails, "R2-09c rel mode -> 120", ma.measured_bearing_deg, 120.0, 1e-6)
 	var mb: Measurement = op.create_mark(120.0, 110.0, "", true, row2)
 	_close(fails, "R2-09d true mode -> 120", mb.measured_bearing_deg, 120.0, 1e-6)
-	# 测得频率保留。
+	# 测得频率保留（PG-02：峰上的纯数值 freqs_hz 在 Measurement 边界迁移成
+	# 统一 SpectralFeature DTO——主动回波本来就是字典，两条链在消费侧同型）。
 	_ok(
 		fails,
-		"R2-09e measured frequencies preserved",
-		not mb.detected_frequencies.is_empty() and float(mb.detected_frequencies[0]) == 300.0,
+		"R2-09e measured frequencies migrated to DTO",
+		(
+			not mb.detected_frequencies.is_empty()
+			and float(mb.detected_frequencies[0]["freq_hz"]) == 300.0
+		),
+		true,
+	)
+	# T06：旧数值数组与新字典 DTO 归一化后完全同型。
+	_ok(
+		fails,
+		"R2-09e2 legacy numeric freqs normalize to the same DTO",
+		Measurement.spectral_freqs([300.0]) == Measurement.spectral_freqs(mb.detected_frequencies),
 		true,
 	)
 

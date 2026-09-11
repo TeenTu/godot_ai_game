@@ -36,9 +36,19 @@ var signal_excess_db: float = 0.0
 var snr_db: float = 0.0
 var detection_probability: float = 0.0
 
-var detected_frequencies: Array = []  # [{freq_hz, level_db, snr_db}]
+# PG-02 统一谱线 DTO：规范形式是 [{freq_hz, level_db?, snr_db?}]（SpectralFeature）。
+# 被动操作员 Mark 的谱线历史上是纯数值数组（峰上的 freqs_hz），两种形式都会
+# 出现在 detected_frequencies 里——消费方一律走 spectral_freqs()/spectral_features()
+# 归一化，禁止直接 float(元素)（字典会运行时报错）。
+var detected_frequencies: Array = []
 var classification_features: Dictionary = {}
 
+# MK-03：本次记录是"纯人工假设"（玩家在瀑布数据区自由落点，未命中任何实测峰）。
+# 它仍是一条合法方位证据（进 TMA、可发射），但不得被当成自动探测成功：
+# 不给它虚构高 SE/Pd，也不让它单独推动目标分类升级。
+var manual_hypothesis: bool = false
+
+## 是否属于拖曳阵镜像歧义组（A/B 共享证据）。
 # ---- 拖曳线阵左右舷镜像歧义（S1-03A）----
 # 同一次声学到达产生 A/B 两个候选方位（共享证据），pair_id 相同：
 #   ambiguity_branch: 0=无歧义；+1=A 支；-1=B 支（关于阵轴镜像）
@@ -53,7 +63,6 @@ var array_center_north_m: float = 0.0
 var actual_tow_length_m: float = 0.0
 
 
-## 是否属于拖曳阵镜像歧义组（A/B 共享证据）。
 func has_ambiguity() -> bool:
 	return ambiguous_pair_id != "" and ambiguity_branch != 0
 
@@ -86,6 +95,7 @@ func to_dict() -> Dictionary:
 		"snr_db": snr_db,
 		"pd": detection_probability,
 		"frequencies": detected_frequencies,
+		"manual_hypothesis": manual_hypothesis,
 		"ambiguous_pair_id": ambiguous_pair_id,
 		"ambiguity_branch": ambiguity_branch,
 		"ambiguity_resolved": ambiguity_resolved,
@@ -94,3 +104,37 @@ func to_dict() -> Dictionary:
 		"array_center_n": array_center_north_m,
 		"tow_length_m": actual_tow_length_m,
 	}
+
+
+## PG-02：把一个谱线数组归一化成 SpectralFeature DTO 列表。
+## 输入允许规范字典、纯数值（旧式）或混合；无有效 freq_hz 的条目直接丢弃，
+## 而不是塞 NAN/0 进后续评分。空输入 → 空数组（"无谱线"≠"确定不匹配"）。
+static func spectral_features(list: Array) -> Array:
+	var out: Array = []
+	for f in list:
+		var hz: float = NAN
+		var lvl: float = NAN
+		var snr: float = NAN
+		if f is Dictionary:
+			hz = float(f.get("freq_hz", NAN))
+			lvl = float(f.get("level_db", NAN))
+			snr = float(f.get("snr_db", NAN))
+		elif f is float or f is int:
+			hz = float(f)
+		if not is_finite(hz):
+			continue
+		var dto: Dictionary = {"freq_hz": hz}
+		if is_finite(lvl):
+			dto["level_db"] = lvl
+		if is_finite(snr):
+			dto["snr_db"] = snr
+		out.append(dto)
+	return out
+
+
+## PG-02：评分前提取有限数值 freq_hz（关联器只比较频率，不比较电平）。
+static func spectral_freqs(list: Array) -> Array:
+	var out: Array = []
+	for dto in spectral_features(list):
+		out.append(float((dto as Dictionary)["freq_hz"]))
+	return out

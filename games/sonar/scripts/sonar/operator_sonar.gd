@@ -746,10 +746,14 @@ func create_mark(
 	m.signal_excess_db = se_db
 	m.snr_db = se_db
 	m.detection_probability = AcousticService.detection_probability(se_db)
-	# REQ-10：保留测得频率（峰上回填的本行实测谱线）供关联兼容性判断；
-	# 阵列来源/时间已由 sensor_id/timestamp 固化。
+	# MK-03：未命中任何实测峰（玩家在数据区自由落点）时，这是一条"人工假设"：
+	# 方位证据有效、可进 TMA 与发射链，但不冒充自动探测成功。
+	m.manual_hypothesis = matched.is_empty()
+	# REQ-10/PG-02：保留测得频率（峰上回填的本行实测谱线）供关联兼容性判断。
+	# 峰上的 freqs_hz 是纯数值数组，此处统一迁移成 SpectralFeature DTO，
+	# 让主动回波（本来就是字典）与被动 Mark 在消费侧同型。
 	if not matched.is_empty() and matched.has("freqs_hz"):
-		m.detected_frequencies = matched["freqs_hz"]
+		m.detected_frequencies = Measurement.spectral_features(matched["freqs_hz"])
 	# 拖曳镜像歧义字段随 Measurement 固化（S1-03A）
 	if not matched.is_empty() and str(matched.get("ambiguous_pair_id", "")) != "":
 		m.ambiguous_pair_id = str(matched["ambiguous_pair_id"])
