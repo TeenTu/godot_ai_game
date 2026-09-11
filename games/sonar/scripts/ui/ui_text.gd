@@ -251,6 +251,9 @@ const _ROE := {"auto_fire": "自动发射", "auto_decoy": "自动诱饵"}
 ## 诱饵类型（DecoyProgram.TYPE_*）
 const _DECOY := {"MOBILE_DECOY": "机动诱饵", "JAMMER_CONFUSER": "干扰器"}
 
+## DC-04：诱饵状态（与 Decoy.state() 单一口径一致）。
+const _DECOY_STATE := {"STANDBY": "待激活", "ACTIVE": "工作中", "EXPIRED": "已过期"}
+
 ## 线导状态
 const _WIRE := {
 	"CONNECTED": "已连接",
@@ -674,6 +677,16 @@ const LABELS := {
 	"cm_ready_fmt": "弹药 %d",
 	"cm_spare_fmt": "备用 %d",
 	"cm_reload_fmt": "装填中 %.0fs",
+	"decoy_src_measured": "实测",
+	"decoy_src_estimated": "程序估计",
+	"decoy_offer_mobile": "向此方向投放机动诱饵",
+	"decoy_offer_jammer": "向此方向投放干扰器",
+	"decoy_offer_fmt": "（真方位 %03d°，待发 %d/备用 %d）",
+	"decoy_offer_mission_ended": "任务已结束",
+	"decoy_offer_unsupported": "该类型未装备",
+	"decoy_offer_no_rounds": "无待发弹",
+	"decoy_offer_dir_unclear": "方向不明确（离本艇过近）",
+	"decoy_offer_cooldown_fmt": "冷却中 %.0f 秒",
 	"nb_lofar_title": "窄带 / LOFAR（频率-时间）",
 	"nb_band": "窄带频段",
 	"demon_env_title": "DEMON 包络（叶片谐波）",
@@ -879,6 +892,28 @@ static func exposure(k: String) -> String:
 
 static func decoy(k: String) -> String:
 	return str(_DECOY.get(k, k))
+
+
+static func decoy_state(k: String) -> String:
+	return str(_DECOY_STATE.get(k, k))
+
+
+## DC-05：诱饵投放原因代码 → 中文（含冷却剩余秒数）。空代码 → 空串（可用）。
+static func decoy_offer_reason(code: String, cooldown_s: float = 0.0) -> String:
+	match code:
+		"":
+			return ""
+		"MISSION_ENDED":
+			return str(t("decoy_offer_mission_ended"))
+		"DECOY_TYPE_UNSUPPORTED":
+			return str(t("decoy_offer_unsupported"))
+		"DECOY_NO_ROUNDS":
+			return str(t("decoy_offer_no_rounds"))
+		"DECOY_DIR_UNCLEAR":
+			return str(t("decoy_offer_dir_unclear"))
+		"DECOY_COOLDOWN":
+			return t("decoy_offer_cooldown_fmt") % maxf(cooldown_s, 0.0)
+	return reject(code)
 
 
 static func roe(k: String) -> String:

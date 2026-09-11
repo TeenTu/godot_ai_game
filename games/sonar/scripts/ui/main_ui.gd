@@ -216,6 +216,8 @@ func _build_ui() -> void:
 	_chart.threat_selected.connect(_on_threat_selected)
 	# S1-11 §4.3：地图点击选中鱼雷 → 浮动控制栏。
 	_chart.torpedo_selected.connect(_on_map_torpedo_selected)
+	# P1-C DC-04：地图点击诱饵图标 → 状态栏显示该诱饵（类型/状态/计龄）。
+	_chart.decoy_selected.connect(_on_map_decoy_selected)
 	# S1-11 §5.3/D-01：地图武器交互总控（发射前航线绘制 + 在水鱼雷地图控制）。
 	# 覆盖在海图上，空闲时不挡地图交互（不侵入 ChartView 的 _draw）。
 	_wmc = WeaponMapControl.new()
@@ -870,6 +872,17 @@ func _on_fire_torpedo() -> void:
 func _on_map_torpedo_selected(tid: String) -> void:
 	if _wmc != null:
 		_wmc.set_selected_torpedo(tid)
+
+
+## P1-C DC-04：地图点击诱饵 → 状态栏显示该诱饵（同一条 label_lines，实测/程序估计
+## 与计龄口径与图标一致；空 id = 取消选择，不写状态）。
+func _on_map_decoy_selected(did: String) -> void:
+	if did == "" or _chart == null:
+		return
+	var row: Dictionary = _chart.decoy_layer.row_of(did)
+	if row.is_empty():
+		return
+	_update_status(" ".join(DecoyChartOverlay.label_lines(row, _chart.now_time)))
 
 
 ## 地图右键命令：绘制/清除鱼雷航线入口（Batch 4c 收尾，与 Batch 5 同一套交互）。

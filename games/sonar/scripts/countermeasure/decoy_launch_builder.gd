@@ -9,10 +9,66 @@ extends RefCounted
 
 ## 深度层带（照 own 实际深度选最近层带；hold 深度由 World 解析）。
 const LOWER_FROM_DEPTH_M: float = 120.0
+## DC-05：鼠标世界点离本艇近于此距离 → "方向不明确"，不默认偷偷发射。
+const MIN_DECOY_RANGE_M: float = 200.0
 
 
 static func band_for_depth(depth_m: float) -> String:
 	return "LOWER" if depth_m >= LOWER_FROM_DEPTH_M else "UPPER"
+
+
+## DC-05：地图右键投放可用性（纯函数；菜单只展示，不发射、不消耗库存）。
+## 鼠标位置先转世界点 p，方向 = bearing_to_true(own, p)——**只**用来定义方向；
+## 诱饵仍从本艇当前实际位置出管（World._launch_decoy 从 own 实际位置/深度出发）。
+## reason 是稳定**代码**（"" = 可用），中文文案由 UI 层翻译（本层不依赖 UiText）。
+## 返回 {bearing_deg, range_m, too_close, types: {type: {enabled, reason, ready, spare}}}。
+static func offer(
+	cm: CountermeasureSystem,
+	own: TruthEntity,
+	world_point: Vector2,
+	now: float,
+	mission_running: bool
+) -> Dictionary:
+	var oe: float = float(own.position_east_m) if own != null else 0.0
+	var on: float = float(own.position_north_m) if own != null else 0.0
+	var range_m: float = NavUtils.distance(oe, on, world_point.x, world_point.y)
+	var too_close: bool = range_m < MIN_DECOY_RANGE_M
+	var types: Dictionary = {}
+	for t in [DecoyProgram.TYPE_MOBILE, DecoyProgram.TYPE_JAMMER]:
+		types[t] = _offer_one(cm, str(t), now, mission_running, too_close)
+	return {
+		"bearing_deg": NavUtils.bearing_to_true(oe, on, world_point.x, world_point.y),
+		"range_m": range_m,
+		"too_close": too_close,
+		"types": types,
+	}
+
+
+## 单一类型可用性 + 原因代码（UI 层翻中文；禁用原因不静默）。
+static func _offer_one(
+	cm: CountermeasureSystem, decoy_type: String, now: float, mission_running: bool, too_close: bool
+) -> Dictionary:
+	var ready: int = int(cm.ready_rounds) if cm != null else 0
+	var spare: int = maxi(int(cm.inventory) - ready, 0) if cm != null else 0
+	var cd: float = cm.cooldown_left(now) if cm != null else 0.0
+	var reason: String = ""
+	if not mission_running:
+		reason = "MISSION_ENDED"
+	elif cm == null or not cm.supported_types.has(decoy_type):
+		reason = "DECOY_TYPE_UNSUPPORTED"
+	elif too_close:
+		reason = "DECOY_DIR_UNCLEAR"
+	elif ready <= 0:
+		reason = "DECOY_NO_ROUNDS"
+	elif cd > 0.0:
+		reason = "DECOY_COOLDOWN"
+	return {
+		"enabled": reason == "",
+		"reason": reason,
+		"ready": ready,
+		"spare": spare,
+		"cooldown_left_s": cd,
+	}
 
 
 ## 类型画像：优先场景配置（cm.profiles[type]），否则内建默认。

@@ -16,6 +16,7 @@ extends Control
 signal tick_selected(time: float)
 signal threat_selected(evidence_id: int)  # P0-07：点击威胁 LOB → 联动告警卡
 signal torpedo_selected(torpedo_id: String)  # P1-02：点击鱼雷/空白选择
+signal decoy_selected(decoy_id: String)  # P1-C DC-04：点击诱饵图标选择查看
 signal context_requested(context: Dictionary)  # S109 §9.1：右键命中上下文
 
 const PRED_HORIZON_S: float = 600.0
@@ -106,6 +107,8 @@ var depth_badges: Array = []  # S1-11 §7.4 敌方深度概率徽标（UiChartDa
 #   course_deg, speed_kn}]（UiChartData 装配；未选中只画简洁标记）。
 var contact_markers: Array = []
 var selected_torpedo_id: String = ""  # 地图点击选中（P1-02 命中测试）
+## P1-C DC-04：己方诱饵独立图层（世界坐标轨迹/历史/选中；只吃合法己方遥测 DTO）。
+var decoy_layer := DecoyMapLayer.new()
 var selected_evidence_id: int = -1  # 选中威胁证据（地图/告警交叉联动，P0-07.4）
 var now_time: float = 0.0  # 当前仿真时刻（脉冲动画/龄期衰减）
 var context_menu_open: bool = false  # S109 §9.3：菜单开启时暂停拖曳（不暂停仿真）
@@ -250,8 +253,24 @@ func _on_click(pos: Vector2) -> void:
 			torpedo_selected.emit(selected_torpedo_id)
 			queue_redraw()
 			return
-	if selected_torpedo_id != "":
-		selected_torpedo_id = ""
+	# P1-C DC-04：诱饵图标命中 → 选中查看（再点空白取消）。
+	for d in decoy_click_points():
+		if (d["pos"] as Vector2).distance_to(pos) <= 10.0:
+			var did: String = str(d["decoy_id"])
+			decoy_layer.select(did)
+			if selected_torpedo_id != "":
+				selected_torpedo_id = ""
+				torpedo_selected.emit("")
+			decoy_selected.emit(did)
+			queue_redraw()
+			return
+	if decoy_layer.selected_id != "" or selected_torpedo_id != "":
+		# 点空白：清掉诱饵/鱼雷选中（两者不共存，避免侧栏两套选中打架）。
+		if decoy_layer.selected_id != "":
+			decoy_layer.select("")
+		if selected_torpedo_id != "":
+			selected_torpedo_id = ""
+		decoy_selected.emit("")
 		torpedo_selected.emit("")
 		queue_redraw()
 
@@ -286,6 +305,8 @@ func _draw() -> void:
 	# PG-06：普通接触标记（短 ID + 分类 + 估计点 + 更新时间；选中才展开）。
 	ContactChartOverlay.draw(self, contact_markers, now_time)
 	_draw_torpedoes()
+	# P1-C DC-04：己方诱饵图层（图标/轨迹/历史；与上面共用同一 world_to_screen）。
+	DecoyChartOverlay.draw(self, decoy_layer, now_time)
 	DepthBadgeOverlay.draw(self, depth_badges, now_time)
 	_draw_hover_link()
 	_draw_camera_overlays()
@@ -849,6 +870,11 @@ func threat_click_points() -> Array:
 ## 鱼雷头部屏幕点击点（P1-02 命中测试；实现已抽至 ChartHitTest）。
 func torpedo_click_points() -> Array:
 	return ChartHitTest.torpedo_points(self)
+
+
+## P1-C DC-04：诱饵图标屏幕点击点（与上面同一 world_to_screen；纯函数）。
+func decoy_click_points() -> Array:
+	return decoy_layer.click_points(self)
 
 
 ## 威胁证据 LOB（REQ-B3-01/02）：唯一方向换算（世界点 + 世界方向），有限长度

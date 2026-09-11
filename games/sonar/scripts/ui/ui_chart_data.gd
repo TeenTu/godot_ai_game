@@ -99,6 +99,23 @@ static func camera_info(chart) -> Dictionary:
 	}
 
 
+## P1-C DC-04：己方诱饵图层 DTO。只吃**合法己方资产遥测**
+## （OwnAssetRegistry.decoys()：本艇发射的诱饵，位置/状态/类型/方向/寿命都是
+## 本艇事实），measured=true。绝不用本艇位置顶替诱饵位置，也不用激活事件 LOA
+## 代替实体位置图标；没有遥测的条目必须显式 measured=false（程序估计 + 计龄）。
+static func decoy_markers(ui) -> Array:
+	var rows: Array = []
+	var reg = ui.world.own_assets
+	if reg == null or not reg.has_method("decoys"):
+		return rows
+	for r in reg.decoys():
+		var d: Dictionary = (r as Dictionary).duplicate()
+		d["measured"] = true
+		d["updated_time"] = float(ui.world.sim_time)  # 遥测时刻（计龄基准）
+		rows.append(d)
+	return rows
+
+
 ## 轻刷新：海图注入数据（威胁快照/本艇/试拟/系统解/深度条）+ 方位盘。
 static func update_light(ui) -> void:
 	var own: TruthEntity = ui.world.world["own"]
@@ -136,6 +153,8 @@ static func update_light(ui) -> void:
 	)
 	ui._chart.depth_badges = depth_badges(ui)
 	ui._chart.contact_markers = contact_markers(ui)
+	# P1-C DC-04：诱饵图层（活动条目 + 世界坐标轨迹；注销条目进历史仍可查询）。
+	ui._chart.decoy_layer.sync(decoy_markers(ui), ui.world.sim_time)
 	ui._chart.queue_redraw()
 
 	ui._bearing.own_course_deg = own.course_deg
