@@ -54,16 +54,23 @@ func _build() -> void:
 	_chk_route = CheckButton.new()
 	_chk_route.text = UiText.t("btn_route_draw")
 	_chk_route.add_theme_font_size_override("font_size", 12)
+	# 航线行是**鼠标优先**的地图工具：绝不抓键盘焦点。
+	# 否则玩家点过开关后按 Enter 完成航线，开关会在 keyup 上把刚完成的航线
+	# 关掉又重开一次绘制（真机实测：航线「完成」后消失、状态回到 0 个航路点）。
+	# §7 把 Enter/Esc 明确许给了航线绘制层，这一行不得抢。
+	_chk_route.focus_mode = Control.FOCUS_NONE
 	_chk_route.toggled.connect(func(on: bool): route_draw_toggled.emit(on))
 	rt_row.add_child(_chk_route)
 	var btn_undo := Button.new()
 	btn_undo.text = UiText.t("btn_route_undo")
 	btn_undo.add_theme_font_size_override("font_size", 12)
+	btn_undo.focus_mode = Control.FOCUS_NONE
 	btn_undo.pressed.connect(func(): route_undo_requested.emit())
 	rt_row.add_child(btn_undo)
 	var btn_clear := Button.new()
 	btn_clear.text = UiText.t("btn_route_clear")
 	btn_clear.add_theme_font_size_override("font_size", 12)
+	btn_clear.focus_mode = Control.FOCUS_NONE
 	btn_clear.pressed.connect(func(): route_clear_requested.emit())
 	rt_row.add_child(btn_clear)
 	add_child(rt_row)

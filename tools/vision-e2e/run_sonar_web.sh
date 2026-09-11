@@ -34,4 +34,5 @@ cd "$HERE"
 node scripts/sonar_web_visual.mjs @scenarios/sonar/webshot_1280x720.json
 node scripts/sonar_web_visual.mjs @scenarios/sonar/webshot_1920x1080.json
 node scripts/sonar_web_visual.mjs @scenarios/sonar/webshot_1600x900_flow.json
+node scripts/sonar_web_visual.mjs @scenarios/sonar/webshot_route_panfollow.json
 echo ">> 全部通过（0 console error），证据见 tools/vision-e2e/evidence/sonar/"

@@ -12,7 +12,7 @@
 // plan = { url, out_dir, viewport:[w,h], steps:[ ... ] }
 //   {kind:"wait",ms} {kind:"shot",name} {kind:"click",x,y} {kind:"rclick",x,y}
 //   {kind:"drag",x,y,x2,y2,steps} {kind:"move",x,y} {kind:"viewport",w,h}
-//   {kind:"key",key} {kind:"eval",js}
+//   {kind:"wheel",x,y,delta}（delta 负 = 放大/滚轮上） {kind:"key",key} {kind:"eval",js}
 // x/y 为 canvas 内比例坐标（0..1）。截图与 console.log 落在 out_dir。
 //
 // 环境变量：PW_PLAYWRIGHT（playwright 模块 URL）、PW_CHROME（Chromium 可执行文件）。
@@ -124,6 +124,14 @@ for (const st of plan.steps) {
 		const b = await canvasBox();
 		const p = at(b, st.x, st.y);
 		await page.mouse.move(p.x, p.y, { steps: 6 });
+	} else if (st.kind === "wheel") {
+		// delta 为负 = 滚轮上（Godot 收到 WHEEL_UP）；海图据此缩放。
+		const b = await canvasBox();
+		const p = at(b, st.x, st.y);
+		const delta = st.delta ?? -240;
+		await page.mouse.move(p.x, p.y);
+		await page.mouse.wheel(0, delta);
+		say(`wheel ${st.x},${st.y} ${delta}`);
 	} else if (st.kind === "viewport") {
 		await page.setViewportSize({ width: st.w, height: st.h });
 	} else if (st.kind === "key") {

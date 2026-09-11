@@ -10,6 +10,9 @@ extends Control
 ##     导致「完成航线 / 取消本次绘制」永远不可达。
 ## 注意：绘制态**不抓焦点**。Control 一旦持有 key_focus，Godot 的 GUI 阶段
 ## 会消费键事件，`_unhandled_key_input` 再也收不到 Enter/Esc（已实测）。
+## 重绘跟随：本层是独立 Control（不在 ChartView 的 _draw 里），必须挂
+## ChartView.draw 才能跟着相机（拖动/缩放/居中/自动取景）一起刷新；
+## 且**只挂一次、与 active 无关**（完成的航线也要跟随）。
 ## 起点吸附本艇**实测**位置（发射前）或鱼雷**当前已知**位置（在线重画），
 ## 其后最多 MAX_FUTURE_POINTS 个未来航路点。
 ##
@@ -65,6 +68,13 @@ func _ready() -> void:
 	focus_mode = Control.FOCUS_NONE
 	# 绘制态的 Enter/Esc 是承诺过的退出方式（§5.3），必须真的能收到键事件。
 	set_process_unhandled_key_input(true)
+	# 海图重绘时，同步刷新航线、航路点和主动开机标记。
+	# 拖动/缩放/居中/自动取景只改 ChartView 的相机并重画自己，本层是独立
+	# Control（不在 ChartView 的 _draw 里），收不到通知就会停在旧的屏幕位置。
+	# 只挂 ChartView.draw（信号在 _draw 前发出），不清屏、不循环重绘。
+	# 刻意**不加** active 判断：完成绘制后保留的航线同样必须跟随地图平移。
+	if chart != null and not chart.draw.is_connected(queue_redraw):
+		chart.draw.connect(queue_redraw)
 
 
 ## 进入绘制态：起点吸附给定实测位置（发射前 = 本艇；在线重画 = 鱼雷）。
