@@ -71,6 +71,7 @@ var _m12_tests: RefCounted
 
 func _initialize() -> void:
 	seed(20260902)
+	BoomSave._path = "user://boom_headless_test_save.json"
 	# 主场景构建前先清测试档，避免本机试玩解锁状态污染默认主动槽断言。
 	BoomSave.test_reset()
 	_m7_tests = preload("res://tools/play_test_m7.gd").new(self)
@@ -110,6 +111,7 @@ func _process(_delta: float) -> bool:
 		_m8_tests.run_all()
 		_m11_tests.run_all()
 		_m12_tests.run_all()
+		_failures += preload("res://tools/play_test_m13.gd").new().run(self)
 		_test_ui_font()
 		_finish()
 	return false
@@ -855,10 +857,10 @@ func _test_m5_weapons() -> void:
 	else:
 		_check(sel.visible, "开局停留选单（无头桌面态）")
 		_check(not sim.match_started, "确认前对局未开战")
-		_check(sim.player.max_hp == 50, "选单期机体默认 50HP")
+		_check(sim.player.max_hp == 70, "选单默认装备生命 50+12+8=70HP")
 		_main.call("_on_weapon_confirmed", "greatsword")
 		_check(sim.match_started, "确认【开战】后对局开始")
-		_check(sim.player.max_hp == 70 and sim.player.hp == 70, "选大剑开战 max_hp=70")
+		_check(sim.player.max_hp == 90 and sim.player.hp == 90, "判笔装备开战生命 70+12+8=90HP")
 		_check(sim.player.anim_form == "sword", "确认大剑后形态切换 sword")
 		_check(not sel.visible, "开战后选单隐藏")
 

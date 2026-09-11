@@ -392,7 +392,7 @@ func test_save() -> void:
 	# 6) main 层结算落盘：_on_game_over 触发 BoomSave.save()（文件存在即落盘路径可用）。
 	host._main.call("_on_game_over", 88)
 	host._main.call("_end_slowmo")
-	host._check(FileAccess.file_exists(BoomSave.SAVE_PATH), "结算后存档文件存在（落盘路径可用）")
+	host._check(FileAccess.file_exists(BoomSave._path), "结算后存档文件存在（落盘路径可用）")
 	g.free()
 	g2.free()
 	BoomSave.test_reset()
@@ -401,6 +401,8 @@ func test_save() -> void:
 func test_tree_ui() -> void:
 	print("[m7-tree-ui]")
 	BoomSave.test_reset()
+	# 换装界面只在开战前操作；前序测试已开战，先通过正式重开流程解除锁定。
+	host._main.sim.restart()
 	var sel := host._main.get("_select") as BoomWeaponSelect
 	host._check(sel != null, "选武器面板已构建")
 	if sel == null:

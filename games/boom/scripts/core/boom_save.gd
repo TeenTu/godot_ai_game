@@ -15,6 +15,8 @@ const DEFAULT_UNLOCKED: Dictionary = {
 }
 
 static var _data: Dictionary = {}
+## 测试入口可切换到独立 user:// 测试档，不触碰真实玩家存档。
+static var _path: String = SAVE_PATH
 
 
 ## 取当前存档（懒加载：无文件 / 解析失败回退默认结构）。
@@ -26,15 +28,18 @@ static func data() -> Dictionary:
 
 static func _load_from_disk() -> Dictionary:
 	var loaded: Dictionary = _default_data()
-	if not FileAccess.file_exists(SAVE_PATH):
+	if not FileAccess.file_exists(_path):
 		return loaded
-	var fa := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var fa := FileAccess.open(_path, FileAccess.READ)
 	if fa == null:
 		return loaded
 	var parsed: Variant = JSON.parse_string(fa.get_as_text())
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return loaded
 	var src: Dictionary = parsed
+	loaded["equipment"] = migrate_equipment(src)
+	var builds: Variant = src.get("skill_loadouts", {})
+	loaded["skill_loadouts"] = builds.duplicate(true) if builds is Dictionary else {}
 	loaded["coins"] = int(src.get("coins", 0))
 	var unlocked: Dictionary = loaded["unlocked"] as Dictionary
 	var src_unlocked: Dictionary = src.get("unlocked", {}) as Dictionary
@@ -51,6 +56,8 @@ static func _default_data() -> Dictionary:
 	# 存档键 = BoomWeaponDef.id（"bubble"/"greatsword"；加新武器自动分桶）。
 	return {
 		"coins": 0,
+		"skill_loadouts": {},
+		"equipment": BoomEquipmentRegistry.DEFAULTS.duplicate(),
 		"unlocked":
 		{
 			"bubble": (DEFAULT_UNLOCKED["bubble"] as Array).duplicate(),
@@ -61,11 +68,34 @@ static func _default_data() -> Dictionary:
 
 ## 落盘（JSON 序列化整包覆盖写）。成功返回 true。
 static func save() -> bool:
-	var fa := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	# 懒加载必须在打开 WRITE 之前，否则首次保存会先截断尚未读取的旧档。
+	var payload := JSON.stringify(data(), "  ")
+	var fa := FileAccess.open(_path, FileAccess.WRITE)
 	if fa == null:
 		return false
-	fa.store_string(JSON.stringify(data(), "  "))
+	fa.store_string(payload)
 	return true
+
+
+static func migrate_equipment(source: Dictionary) -> Dictionary:
+	var raw: Variant = source.get("equipment", {})
+	var slots: Dictionary = raw.duplicate(true) if raw is Dictionary else {}
+	if not slots.has("artifact") and source.get("weapon") is String:
+		slots["artifact"] = source["weapon"]
+	return BoomEquipmentRegistry.normalize(slots)
+
+
+static func equipment() -> Dictionary:
+	return (data()["equipment"] as Dictionary).duplicate(true)
+
+
+static func save_equipment(slots: Dictionary) -> bool:
+	var previous := equipment()
+	data()["equipment"] = BoomEquipmentRegistry.normalize(slots)
+	if save():
+		return true
+	data()["equipment"] = previous
+	return false
 
 
 ## 跨局货币只读。
@@ -117,5 +147,5 @@ static func unlock_skill(weapon_id: String, skill_id: String) -> void:
 ## 测试辅助：清内存缓存 + 删除存档文件，回到全新默认态（headless 无残留）。
 static func test_reset() -> void:
 	_data = {}
-	if FileAccess.file_exists(SAVE_PATH):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
+	if FileAccess.file_exists(_path):
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(_path))

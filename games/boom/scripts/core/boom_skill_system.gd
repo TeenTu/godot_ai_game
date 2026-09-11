@@ -125,7 +125,7 @@ func _add_passive(id: String, title: String, color: Color) -> void:
 
 
 ## 切换武器树：按 BoomWeaponDef.tree 过滤可见/可解锁集合。
-## 同武器重复调用保留玩家已勾选装备；换武器则重置为该树已解锁的前 3 个。
+## 同武器保留当前配置；换武器恢复独立存档，无历史配置时取已解锁的前 3 个。
 func set_weapon_tree(p_weapon_id: String) -> void:
 	var def := BoomWeapons.get_def(p_weapon_id)
 	if weapon_id == p_weapon_id and not tree.is_empty():
@@ -136,15 +136,25 @@ func set_weapon_tree(p_weapon_id: String) -> void:
 	var ids: Variant = def.tree.get("skills", [])
 	for id in ids as Array:
 		tree.append(String(id))
-	# 装备重置为该树已解锁技能中树序靠前的 ≤3 个（装备配置不持久化）。
+	# 每法器独立持久配置；无配置时沿用树序默认，空数组表示主动卸空。
 	equipped = []
 	var unlocked := BoomSave.unlocked_for(weapon_id)
-	for sid in tree:
+	var builds: Dictionary = BoomSave.data().get("skill_loadouts", {})
+	var saved: Variant = builds.get(weapon_id, tree)
+	var candidates: Array = saved if saved is Array else tree
+	for sid in candidates:
 		if equipped.size() >= MAX_EQUIPPED:
 			break
-		if unlocked.has(sid):
+		if sid is String and tree.has(sid) and unlocked.has(sid) and not equipped.has(sid):
 			equipped.append(sid)
 	_refresh_passives()
+
+
+func _save_loadout() -> void:
+	var builds: Dictionary = BoomSave.data().get("skill_loadouts", {})
+	builds[weapon_id] = equipped.duplicate()
+	BoomSave.data()["skill_loadouts"] = builds
+	BoomSave.save()
 
 
 ## 当前武器树的 6 槽技能 id 列表（树序）。
@@ -277,6 +287,7 @@ func equip(skill_id: String) -> bool:
 	if equipped.size() >= MAX_EQUIPPED:
 		return false
 	equipped.append(skill_id)
+	_save_loadout()
 	_refresh_passives()
 	return true
 
@@ -285,6 +296,7 @@ func unequip(skill_id: String) -> bool:
 	if not equipped.has(skill_id):
 		return false
 	equipped.erase(skill_id)
+	_save_loadout()
 	_refresh_passives()
 	return true
 

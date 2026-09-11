@@ -5,7 +5,7 @@ extends Control
 ## 武器装备管理、技能树管理或升级选择。
 ## 打开时 main 置 get_tree().paused = true，本面板 PROCESS_MODE_ALWAYS 保证
 ## 暂停期间关闭/返回按钮可用；关闭后恢复战斗。
-## 界面文字用英文（ui_subset.ttf 子集字体不含所需中文字形，与现有 HUD 一致）。
+## 中文字形由 ui_subset.ttf 提供，新增文案需更新子集。
 
 signal closed
 
@@ -33,6 +33,7 @@ var _back_btn: Button
 
 
 func _init() -> void:
+	z_index = 200  # 模态查看层必须盖住战斗技能按钮及其他高 z HUD。
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 	visible = false

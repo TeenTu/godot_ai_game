@@ -150,12 +150,16 @@ func _ready() -> void:
 		_show_announce
 	)
 	_build_weapon_select()
+	var equipment := BoomEquipmentSystem.new()
+	equipment.load_saved()
+	sim.bind_equipment(equipment)
+	_select.bind_equipment(equipment, sim.preview_equipment)
 	_connect_signals()
 	_started = true
 	_hud_refresh()
 	if _is_test_mode():
 		# CI / vision-e2e：跳过选单，直接默认武器开战（design §3.3 测试路径）。
-		_start_match_with(BoomWeapons.default_id())
+		_start_match_with(String(sim.equipment.snapshot()["artifact"]))
 	else:
 		_open_weapon_select()
 
@@ -200,7 +204,7 @@ func _open_weapon_select() -> void:
 	_in_select = true
 	if _select != null:
 		_select.show()
-		_select.set_selected(BoomWeapons.default_id())
+		_select.set_selected(String(sim.equipment.snapshot()["artifact"]))
 
 
 ## 选单【开战】确认回调：注入武器 → 按 max_hp 重建血条 → 开战发波。
@@ -213,6 +217,14 @@ func _on_weapon_confirmed(weapon_id: String) -> void:
 ## 测试路径与选单确认共用：先落武器数值 + 切技能树（M7R 每武器独立树），
 ## 再开战（design §3.3 关键工程点 1/2）。
 func _start_match_with(weapon_id: String) -> void:
+	if sim == null or sim.match_started:
+		return
+	if sim.equipment != null:
+		if not sim.equipment.equip("artifact", weapon_id):
+			return
+		if not sim.equipment.persist():
+			_show_toast("Equipment save failed")
+			return
 	_in_select = false
 	if _select != null:
 		_select.hide()
@@ -360,6 +372,9 @@ func _test_hook_get_state() -> Dictionary:
 		slot_ids.append(equipped[slot] if slot < equipped.size() else "")
 	state["sk_slots"] = slot_ids
 	state["sk_passives"] = skill_sys.passive_equipped()
+	if sim.equipment != null:
+		state["equipment"] = sim.equipment.snapshot()
+		state["equipment_locked"] = sim.equipment.locked
 	state["sk_presentation"] = _skill_presenter.debug_state()
 	var boss_state: Dictionary = _boss_presenter.debug_state()
 	for key in boss_state:
