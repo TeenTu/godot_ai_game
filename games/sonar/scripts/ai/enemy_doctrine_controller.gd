@@ -8,7 +8,14 @@ extends RefCounted
 ## 公平性（§9.8）：
 ##   - AI 只拿净化证据（方位/分类/置信），绝不读玩家 TruthEntity；
 ##   - 未探测到事件时 AI 行为绝不变（sensor 未产出证据即无感知）；
-##   - 每个反应有 3..15s 可配置反应延迟，绝不同 tick 反应；
+##   - 每个反应有可配置反应延迟（普通档建议 10..25s），绝不同 tick 反应；
+##   - AI-01（P0-B）：**攻击资格 = 独立判据**，不是"质量过线"的同义词。
+##     一次高 Pd 的 Ping 截获只给出较可靠的方位，不能换来发射资格；
+##     普通模式还需要多次独立时刻证据 + 观察跨度（默认 ≥3 次 / ≥15s）；
+##   - AI-02：反击机会走**泊松过程抽样**（率 λ = counterfire_rate_per_s），
+##     同一仿真区间内与 dt 无关；不再"每 0.5s 用 2s 的机会概率"；
+##   - AI-04：待执行发射携带 track_id / decision_time / evidence_revision，
+##     到期时**重新审核**（航迹仍有效、证据未过期、战术允许），不复用旧方位；
 ##   - 机动/换层/诱饵/反击按 doctrine 概率（独立派生 RNG），不靠 Truth 加成；
 ##   - 运动/换层全部走 TruthEntity 命令值接口（command_course/speed/depth），
 ##     实际值按速率逼近（AI-09）；
@@ -32,6 +39,8 @@ var hold_depth_for_band: Callable = Callable()
 
 var _rng: RandomNumberGenerator = null
 var _sample_timer_s: float = 0.0
+## AI-02：下一个"反击机会"的仿真时刻（泊松过程抽样，dt 无关）。
+var _next_opportunity_t: float = -1.0
 var _pending: Array = []  # [{at, action}] 待反应（反应延迟，§9.8）
 var _leg_until: float = 0.0
 var _last_fire_t: float = -1e9
@@ -58,6 +67,7 @@ func configure(
 	hold_depth_for_band = hold_depth_cb
 	_spawn_course_deg = float(ent.course_deg) if ent != null else -1.0
 	_sample_timer_s = 0.0
+	_next_opportunity_t = -1.0
 	_pending.clear()
 	_leg_until = -1.0  # <0 = 首腿进行中（保持出生航向，见 _patrol）
 	_last_fire_t = -1e9
@@ -99,18 +109,28 @@ func update(now: float, dt: float, events: Array) -> Array:
 	tracks.update(now)
 
 	# 2) 反鱼雷告警优先：EVADING 态持续规避动作。
+	# AI-01 补充：规避**不冻结攻击链**——听见来袭鱼雷即长期停在 EVADING 的艇，
+	# 若同时把规避当作"禁止反击"，就成了文档 §6 明令避免的"AI 永久不攻击"：
+	# 玩家的第一枚（概略）鱼雷会让敌方从此再也还不了手。因此规避中若仍持有
+	# **具攻击资格**的航迹，照常走同一条反击链（同一资格判据、同一冷却、同一
+	# 泊松机会），只是同时继续规避机动。
 	if state == State.EVADING:
 		_advance_evading(now, dt, actions)
+		var evade_best: Dictionary = tracks.best_track()
+		if not evade_best.is_empty() and tracks.attack_authorized(evade_best, now, doctrine):
+			_try_counterfire(now, evade_best)
 		_due_actions(now, actions)
 		return actions
 
 	# 3) 状态转移（按最高质量航迹；全部经反应延迟调度）。
 	var best: Dictionary = tracks.best_track()
 	var q: float = float(best.get("quality", 0.0)) if not best.is_empty() else 0.0
-	var fire_th: float = float(_d("fire_quality_threshold", 0.7))
 	var track_th: float = float(_d("tracking_quality_threshold", 0.55))
 	var susp_th: float = float(_d("suspicious_quality_threshold", 0.25))
-	if q >= fire_th:
+	# AI-01：进入 ATTACKING 需要**攻击资格**（证据数/跨度/新鲜度/质量四项），
+	# 不是"质量过线"本身。普通敌人首次截获先怀疑/跟踪，不立刻完成攻击链。
+	var authorized: bool = tracks.attack_authorized(best, now, doctrine)
+	if authorized:
 		_transition(State.ATTACKING, now)
 		_try_counterfire(now, best)
 	elif q >= track_th:
@@ -145,6 +165,14 @@ func _due_actions(now: float, actions: Array) -> void:
 			elif str(a.get("action", "")) == "_EVADE_INIT":
 				if state == State.EVADING:
 					_plan_evasion(now)  # 规避动作到时执行（反应延迟已过）
+			elif str(a.get("action", "")) == "FIRE_TORPEDO":
+				# AI-04：到期**重新审核**——航迹仍有效、证据未过期、战术仍允许；
+				# 被打断/过期则撤销并归还预约名额（绝不占死在水武器名额）。
+				var fire: Dictionary = _revalidate_fire(a, now)
+				if fire.is_empty():
+					_torpedo_count = maxi(_torpedo_count - 1, 0)
+				else:
+					actions.append(fire)
 			else:
 				actions.append(a)
 		else:
@@ -283,9 +311,10 @@ func _try_counterfire(now: float, best: Dictionary) -> void:
 		return
 	if now - _last_fire_t < float(_d("counterfire_cooldown_s", 120.0)):
 		return
-	# REQ-AI-02：doctrine 值 = 每秒率 λ，按决策机会换算 p=1-exp(-λ·Δt)
-	# （固定每 tick 抽签会随 dt 改变频度）；λ≥1 时趋近必然反击。
-	if _rng.randf() > _p_opportunity(float(_d("counterfire_probability", 0.5))):
+	# AI-02：机会来自泊松过程（率 λ），不是"每个 tick 抽一次签"。
+	# 旧实现用固定 sample_interval_s 当机会窗口，dt=0.5 时把 2 秒窗口的概率
+	# 每 0.5 秒用一次 → 每秒实际机会数是设计值的 4 倍，AI 反应被 dt 放大。
+	if not _take_opportunity(now, _counterfire_rate_per_s()):
 		return
 	# 只有较可信方位 → BEARING_ONLY 宽扇区（无隐藏距离，AI-07；SOLUTION 需
 	# 敌方自建 range 证据，本版敌方无主动声呐，接口留给后续）。
@@ -294,6 +323,9 @@ func _try_counterfire(now: float, best: Dictionary) -> void:
 	_schedule(
 		{
 			"action": "FIRE_TORPEDO",
+			"track_id": int(best.get("track_id", -1)),
+			"decision_time": now,
+			"evidence_revision": int(best.get("evidence_count", 0)),
 			"bearing_deg": float(best["bearing_est_deg"]),
 			"quality": float(best["quality"]),
 			"speed_kn": float(entity.speed_kn),
@@ -301,6 +333,70 @@ func _try_counterfire(now: float, best: Dictionary) -> void:
 		},
 		now,
 	)
+
+
+## AI-02：率口径的唯一入口。优先读新键 counterfire_rate_per_s（每秒率 λ）；
+## 旧键 counterfire_probability 仍被接受，但解释为"每秒率"而不是"每次机会
+## 概率"——旧场景里的 1.0 因此不再是"必然立刻反击"。
+func _counterfire_rate_per_s() -> float:
+	if doctrine.has("counterfire_rate_per_s"):
+		return maxf(float(_d("counterfire_rate_per_s", 0.03)), 0.0)
+	return maxf(float(_d("counterfire_probability", 0.03)), 0.0)
+
+
+## AI-02：泊松过程抽样——返回本 tick 内是否出现"反击机会"。
+## 维护"下一个候选机会时刻"，与 dt 无关：同一仿真区间内无论 dt 取
+## 0.1/0.5/1.0，机会时刻集合来自同一分布（AI-05）。
+func _take_opportunity(now: float, rate_per_s: float) -> bool:
+	if rate_per_s <= 0.0:
+		return false
+	if _next_opportunity_t < 0.0:
+		_next_opportunity_t = now + _draw_opportunity_gap(rate_per_s)
+		return false
+	var got: bool = false
+	while now >= _next_opportunity_t:
+		got = true
+		_next_opportunity_t += _draw_opportunity_gap(rate_per_s)
+	return got
+
+
+## 指数分布间隔（泊松过程的到达间隔）：-ln(U)/λ。
+func _draw_opportunity_gap(rate_per_s: float) -> float:
+	var u: float = maxf(1.0 - _rng.randf(), 1e-9)
+	return -log(u) / maxf(rate_per_s, 1e-9)
+
+
+## AI-04：待执行发射到期复核。返回可执行的动作（方位取**当前**净化航迹估计，
+## 不复用决策时刻的旧方位），不通过则返回空字典。
+##
+## 「当前战术允许」的判据（AI-01 补充）：平台未沉没，且仍处于**主动交战/规避**
+## （ATTACKING / EVADING）——规避中的艇仍可概略反击（见 update() 第 2 步）；
+## 已转入 PATROL_PASSIVE / REACQUIRE 等脱离交战的战术则视为任务取消，
+## 绝不按悬而未决的旧方位发射。
+func _revalidate_fire(a: Dictionary, now: float) -> Dictionary:
+	var out: Dictionary = {}
+	var engaged: bool = state == State.ATTACKING or state == State.EVADING
+	# 战术仍允许；平台已沉没同样不发。
+	if entity != null and str(entity.damage_state) != "sunk" and engaged:
+		var t: Dictionary = tracks.track_by_id(int(a.get("track_id", -1)))
+		var max_age: float = float(_d("attack_max_evidence_age_s", 30.0))
+		# 航迹已丢失/改类 → 不得继续按旧方位发射。
+		var ok: bool = not t.is_empty()
+		# 证据已过期 → 撤销（合理的失联概略攻击须由 doctrine 显式允许，见注释）。
+		if ok:
+			ok = now - float(t.get("last_t", now)) <= max_age
+		# 证据修订号只增不减：被打断后重取航迹需要重新走资格判据。
+		if ok:
+			ok = int(t.get("evidence_count", 0)) >= int(a.get("evidence_revision", 0))
+		if ok:
+			ok = tracks.attack_authorized(t, now, doctrine)
+		if ok:
+			out = a.duplicate(true)
+			# 方位取**当前**净化航迹估计，不复用决策时刻的旧方位。
+			out["bearing_deg"] = float(t["bearing_est_deg"])
+			out["quality"] = float(t["quality"])
+			out["evidence_revision"] = int(t.get("evidence_count", 0))
+	return out
 
 
 ## World 回调：敌方鱼雷死亡/耗尽后归还并发余量。
@@ -312,12 +408,6 @@ func notify_torpedo_resolved() -> void:
 ## 余量——拒发绝不占死在水武器名额。
 func notify_fire_rejected() -> void:
 	_torpedo_count = maxi(_torpedo_count - 1, 0)
-
-
-## REQ-AI-02：每秒率 λ → 单次决策机会概率 p = 1 - exp(-λ·Δt)。
-func _p_opportunity(rate_per_s: float) -> float:
-	var dt_opp: float = maxf(float(_d("sample_interval_s", 2.0)), 0.1)
-	return 1.0 - exp(-maxf(rate_per_s, 0.0) * dt_opp)
 
 
 ## REQ-AI-02 事件来源过滤：emitter_internal_ref ∈ own_refs 的事件不进截获——

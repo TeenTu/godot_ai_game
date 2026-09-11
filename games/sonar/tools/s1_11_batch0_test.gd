@@ -251,10 +251,15 @@ func _b0_51_53_54(fails: Array) -> void:
 
 
 # ---------------- 接线：控制器/威胁链走批次路径 ----------------
+## PG-05 起归属是**全局一次**：World 把 TT 候选与普通接触候选放进同一个代价矩阵
+## （ActiveReturnAttribution.attribute，经 ActiveReturnAttributionBridge 接线），
+## UI 侧只消费归属结果，不再自己另跑一份。
 func _b0_batch_wiring(fails: Array) -> void:
 	var ctrl: String = (load("res://scripts/ui/active_ping_controller.gd") as Script).source_code
 	_assert(
-		fails, ctrl.find("ActiveReturnBatch.assign") >= 0, "B0-51 controller uses batch assignment"
+		fails,
+		ctrl.find("world.take_attribution(") >= 0,
+		"B0-51 controller consumes the world-wide attribution"
 	)
 	_assert(fails, ctrl.find("_pending_batch") >= 0, "B0-51 controller buffers by ping_id")
 	_assert(
@@ -264,7 +269,20 @@ func _b0_batch_wiring(fails: Array) -> void:
 	)
 	var wsrc: String = (load("res://scripts/world.gd") as Script).source_code
 	_assert(
-		fails, wsrc.find("_process_active_return_batch") >= 0, "B0-52 world settles the batch once"
+		fails, wsrc.find("_attribute_active_returns") >= 0, "B0-52 world settles the batch once"
+	)
+	_assert(
+		fails,
+		wsrc.find("ActiveReturnAttributionBridge.resolve") >= 0,
+		"B0-52 world delegates to one global attribution"
+	)
+	var bsrc: String = (
+		(load("res://scripts/acoustic/active_return_attribution_bridge.gd") as Script).source_code
+	)
+	_assert(
+		fails,
+		bsrc.find("ActiveReturnAttribution.attribute") >= 0,
+		"B0-52 TT + contacts share one matrix"
 	)
 	_assert(
 		fails,

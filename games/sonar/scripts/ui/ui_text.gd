@@ -63,6 +63,15 @@ const _TOWED := {
 	"UNKNOWN": "未知",
 }
 
+## AC-03：拖曳阵性能状态中文名（BEST/DEGRADED/UNSTABLE/STOWED）。
+const _TOWED_PERF := {
+	"BEST": "最佳",
+	"DEGRADED": "可用（性能下降）",
+	"UNSTABLE": "不稳定",
+	"STOWED": "无有效孔径",
+	"UNKNOWN": "未知",
+}
+
 ## 武器事件 / 证据种类 / 告警分级（alert_panel、weapon_panel、in_water 面板共用）
 const _EVENT := {
 	"POSSIBLE_TORPEDO": "疑似鱼雷",
@@ -241,6 +250,9 @@ const _ROE := {"auto_fire": "自动发射", "auto_decoy": "自动诱饵"}
 
 ## 诱饵类型（DecoyProgram.TYPE_*）
 const _DECOY := {"MOBILE_DECOY": "机动诱饵", "JAMMER_CONFUSER": "干扰器"}
+
+## DC-04：诱饵状态（与 Decoy.state() 单一口径一致）。
+const _DECOY_STATE := {"STANDBY": "待激活", "ACTIVE": "工作中", "EXPIRED": "已过期"}
 
 ## 线导状态
 const _WIRE := {
@@ -473,6 +485,16 @@ const LABELS := {
 	"btn_remove_last": "移除最近的 Mark",
 	"btn_undo": "撤销",
 	"auto_pick": "（自动）",
+	# ---- MK-01：当前查看 / 手动落点写入（两个独立信息，避免看写混淆）----
+	"none_value": "无",
+	"mark_view_fmt": "当前查看：%s",
+	"mark_write_fmt": "手动落点写入：%s",
+	"mark_write_lock_fmt": "手动落点写入：%s（锁定）",
+	"mark_write_auto": "手动落点写入：（自动关联）",
+	"mark_pending_fmt": "有落点待处理（%.0f°）— 目的组不可用：",
+	"btn_move_to_group": "移入当前组",
+	"btn_attach_pending": "归入当前组",
+	"btn_new_group_from_pending": "为待处理点新建组",
 	# ---- 威胁 HUD / 右键菜单动作反馈 ----
 	"torpedo_alert": "鱼雷警报",
 	"btn_view_threat": "查看",
@@ -509,6 +531,9 @@ const LABELS := {
 	"st_assoc_mode": "Mark 关联方式 →",
 	"st_mark_group": "新 Mark 加入组：",
 	"st_mark_group_auto": "新 Mark 加入组：（自动）",
+	# MK-02：Shift 临时目的组必须明示；MK-03：重复点提示可显式改绑。
+	"st_mark_temp": "本次落点临时追加到：",
+	"st_mark_dup_movable": "该点已归属 %s — 未新增证据；可用「移入当前组」改绑",
 	"st_towed_stream": "拖曳阵延伸中…",
 	"st_towed_retract": "拖曳阵回收中…",
 	"st_towed_hold": "拖曳阵保持长度：",
@@ -523,11 +548,24 @@ const LABELS := {
 	"st_ping_tx": "主动脉冲已发射 — 正在监听回波（我方正在暴露！）",
 	"st_ping_no_return": "脉冲周期结束 — 未收到回波",
 	"st_take_control": "已接管：切换为手动，证据保留，停止自动重拟合",
+	# ---- PG-03 无有效回波的可解释说明（只列本艇/设备已知因素，不泄露目标 Truth）----
+	"no_return_window": "本次未获得有效回波：监听窗时延上限 %.1f 千米（超出即不可接收）",
+	"nr_window": "监听窗时延上限",
+	"nr_own_noise": "本艇航速高、自噪声升高",
+	"nr_ambient": "海况差、环境噪声高",
+	# ---- PG-03 到达即显示的临时位置点 / PG-04 位置估计档位 ----
+	"pending_assoc": "待关联",
+	"est_last_known": "最近估计位置",
+	"est_predicted": "预测位置",
+	"est_pos_fmt": "%s · 距离 %.2f 千米（σ%.0f 米）· 位置 1σ %.0f 米",
+	"pos_only_hint": "单次主动观测仅给出位置（航速航向未知）",
 	# ---- 图例 / 画布标签 ----
 	"legend_launch": "发射瞬态",
 	"legend_noise": "鱼雷噪声",
 	"legend_ping": "主动脉冲",
 	"legend_return": "主动回波",
+	"legend_contact": "接触（未选中）",
+	"legend_contact_sel": "接触（选中/展开）",
 	"legend_best": "最优拟合",
 	"legend_alt": "备选解 A/B/C",
 	"legend_trial": "试拟解",
@@ -552,8 +590,27 @@ const LABELS := {
 	"own_cmd_speed_fmt": " → 命令 %.1f 节（约 %.0f 秒）",
 	"own_depth_fmt": " | 深度 %.0f 米",
 	"own_depth_cmd_fmt": " → %.0f 米（约 %.0f 秒）",
+	# ---- P1-B UI-02/UI-03：图形操纵（罗盘外圈 / 深度条）文案 ----
+	# 图形与数字双向同步：命令完成后保留"最后设定"显示，避免回落到内部 -1 哨兵。
+	"own_course_actual_fmt": "实际 %.0f°",
+	"own_course_cmd_fmt": "命令 %.0f°",
+	"own_course_cmd_eta_fmt": "命令 %.0f° ±%.0f 秒",
+	"own_course_preview_fmt": "预览 %.0f°",
+	"own_graphic_hint": "外圈拖动转向 · 松开提交 · 右键/Esc 取消",
+	"own_last_cmd_fmt": " | 最后设定 航向 %.0f° 深度 %.0f 米",
+	"depth_tag_actual": "实际",
+	"depth_tag_cmd": "命令",
+	"depth_tag_preview": "预览",
+	"depth_preview_fmt": "预览 %.0f 米（松开提交）",
+	"depth_preview_idle_fmt": "拖动深度条设定深度（当前 %.0f 米）",
 	"towed_none": "拖曳阵：未布放",
 	"towed_line_fmt": "拖曳阵：%s | 实长 %.0f 米 / 命令 %.0f 米 | 阵位 %.0f° | 可用 %d%%",
+	# AC-03：阵列名称旁持续标注线阵的两项固有特性（高灵敏 + 左右歧义）。
+	"towed_flags": "拖曳阵：高灵敏度／左右歧义",
+	# AC-03：性能状态 + 四项独立损失（dB 估计），让退化原因可解释。
+	"towed_perf_fmt": "性能 %s | 损失 孔径%.1f 沉降%.1f 弯曲%.1f 流噪%.1f dB",
+	"towed_perf_reason_bend": "刚过死区/严重弯曲",
+	"towed_perf_reason_speed": "超出正常拖速",
 	"residual_hint": "点击切换：度/米/σ",
 	"truth_watermark": "开发真值 — 非玩家情报",
 	"coast_tag": "外推",
@@ -617,6 +674,19 @@ const LABELS := {
 	"decoy_reject": "诱饵发射被拒：%s",
 	"decoy_launch": "诱饵已投放 %s @%.0f°",
 	"decoy_unknown": "未知",
+	"cm_ready_fmt": "弹药 %d",
+	"cm_spare_fmt": "备用 %d",
+	"cm_reload_fmt": "装填中 %.0fs",
+	"decoy_src_measured": "实测",
+	"decoy_src_estimated": "程序估计",
+	"decoy_offer_mobile": "向此方向投放机动诱饵",
+	"decoy_offer_jammer": "向此方向投放干扰器",
+	"decoy_offer_fmt": "（真方位 %03d°，待发 %d/备用 %d）",
+	"decoy_offer_mission_ended": "任务已结束",
+	"decoy_offer_unsupported": "该类型未装备",
+	"decoy_offer_no_rounds": "无待发弹",
+	"decoy_offer_dir_unclear": "方向不明确（离本艇过近）",
+	"decoy_offer_cooldown_fmt": "冷却中 %.0f 秒",
 	"nb_lofar_title": "窄带 / LOFAR（频率-时间）",
 	"nb_band": "窄带频段",
 	"demon_env_title": "DEMON 包络（叶片谐波）",
@@ -664,6 +734,26 @@ const _MARK_CN := [
 	["Remove failed on ", "移除失败："],
 	["Nothing to undo", "没有可撤销操作"],
 	["No tracker", "无航迹管理器"],
+	# ---- MK-03/MK-05/MK-06 新增裁决路径（应用顺序敏感：长句在前）----
+	["Mark already exists (owner ", "Mark 已存在（归属 "],
+	[") - no new evidence; use Move-to-current-group to rebind ", "）— 未新增证据；可用「移入当前组」改绑 "],
+	["Mark already exists", "Mark 已存在"],
+	[" - no new evidence", " — 未新增证据"],
+	["Group ", "目的组 "],
+	[" rejected the mark - kept pending", " 拒绝了该落点 — 已保留待处理"],
+	[" rejected the pending mark", " 拒绝了待处理落点"],
+	[" unavailable - mark kept pending (new group / pick another)", " 不可用 — 落点已保留待处理（请新建组或改选）"],
+	[" unavailable", " 不可用"],
+	[" (temp Shift destination)", "（Shift 临时目的组）"],
+	[" - Apply to rebind to ", " — 应用后改绑到 "],
+	["Suggestion rejected", "建议已拒绝（未改动任何组）"],
+	["No target group", "未指定目的组"],
+	["Nothing to move", "没有可移动的证据"],
+	["Evidence not owned by any group", "该证据不属于任何组"],
+	["Move failed (group kept intact)", "改绑失败（证据组保持完整）"],
+	["Moved ", "已移动 "],
+	["No pending mark", "没有待处理落点"],
+	["Pending mark attached to ", "待处理落点已归入 "],
 ]
 
 ## 缺键计数（zh_cn_ui_test AT-35 要求为 0：所有显示键都必须进目录）。
@@ -804,6 +894,28 @@ static func decoy(k: String) -> String:
 	return str(_DECOY.get(k, k))
 
 
+static func decoy_state(k: String) -> String:
+	return str(_DECOY_STATE.get(k, k))
+
+
+## DC-05：诱饵投放原因代码 → 中文（含冷却剩余秒数）。空代码 → 空串（可用）。
+static func decoy_offer_reason(code: String, cooldown_s: float = 0.0) -> String:
+	match code:
+		"":
+			return ""
+		"MISSION_ENDED":
+			return str(t("decoy_offer_mission_ended"))
+		"DECOY_TYPE_UNSUPPORTED":
+			return str(t("decoy_offer_unsupported"))
+		"DECOY_NO_ROUNDS":
+			return str(t("decoy_offer_no_rounds"))
+		"DECOY_DIR_UNCLEAR":
+			return str(t("decoy_offer_dir_unclear"))
+		"DECOY_COOLDOWN":
+			return t("decoy_offer_cooldown_fmt") % maxf(cooldown_s, 0.0)
+	return reject(code)
+
+
 static func roe(k: String) -> String:
 	return str(_ROE.get(k, k))
 
@@ -839,6 +951,10 @@ static func agc(k: String) -> String:
 
 static func towed_state(k: String) -> String:
 	return str(_TOWED.get(k, k))
+
+
+static func towed_perf(k: String) -> String:
+	return str(_TOWED_PERF.get(k, k))
 
 
 static func event(k: String) -> String:

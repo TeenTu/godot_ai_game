@@ -199,7 +199,7 @@ func _mk_kill_world() -> World:
 			"evade_trigger_probability": 0.0,
 			"decoy_launch_probability": 0.0,
 			"layer_change_probability": 0.0,
-			"counterfire_probability": 0.0,
+			"counterfire_rate_per_s": 0.0,
 			"sample_interval_s": 2.0
 		},
 	}
@@ -237,7 +237,7 @@ func _mk_threat_world() -> World:
 		"doctrine":
 		{
 			"sensor_false_alarm_rate": 0.0,
-			"counterfire_probability": 1.0,
+			"counterfire_rate_per_s": 50.0,
 			"reaction_delay_min_s": 3.0,
 			"reaction_delay_max_s": 15.0,
 			"max_simultaneous_weapons": 2,

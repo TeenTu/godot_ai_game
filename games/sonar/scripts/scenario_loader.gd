@@ -46,11 +46,13 @@ static func build(scenario: Dictionary) -> Dictionary:
 		ac.from_dict(td.get("acoustic", {}))
 		target_acs[t.id] = ac
 
-	# 传感器
+	# 传感器（AC-01）：显式配置，或引用名为 profile 的统一阵列口径
+	# （SensorAcousticProfile）——同一份 profile 同时供自动船员链与操作员链使用，
+	# 不再各写 0/4/8/20 之类不明口径常量。
 	var sensors: Array = []
 	for sd in scenario.get("sensors", []):
 		var s := SensorArray.new()
-		s.from_dict(sd)
+		s.from_dict(_resolve_sensor_dict(sd))
 		s.set_rng(rng)
 		sensors.append(s)
 
@@ -68,7 +70,20 @@ static func build(scenario: Dictionary) -> Dictionary:
 		"target_acs": target_acs,
 		"sensors": sensors,
 		"generator": gen,
+		"sonar_arrays": scenario.get("sonar_arrays", {}),
 		"dt": float(scenario.get("dt", 0.1)),
 		"duration": float(scenario.get("duration", 60.0)),
 		"name": str(scenario.get("name", "unnamed")),
 	}
+
+
+## 把 {profile: "BOW", ...override} 展平成 SensorArray 可消费的字典。
+static func _resolve_sensor_dict(sd: Dictionary) -> Dictionary:
+	var pid: String = str(sd.get("profile", ""))
+	if pid == "":
+		return sd
+	var base: Dictionary = SensorAcousticProfile.builtin_profile(pid).to_sensor_dict()
+	for k in sd:
+		if k != "profile":
+			base[k] = sd[k]
+	return base

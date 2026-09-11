@@ -271,7 +271,7 @@ func _mk_enemy_world() -> World:
 		{
 			"sensor_false_alarm_rate": 0.0,
 			"fire_quality_threshold": 0.7,
-			"counterfire_probability": 1.0,
+			"counterfire_rate_per_s": 50.0,
 			"reaction_delay_min_s": 3.0,
 			"reaction_delay_max_s": 15.0,
 			"max_simultaneous_weapons": 2,

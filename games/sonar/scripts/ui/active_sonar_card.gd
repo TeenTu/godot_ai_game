@@ -59,6 +59,7 @@ var _lbl_tma_fit: Label = null
 var _opt_fit_mode: OptionButton = null  # REQ-02：AUTO/ASSISTED/MANUAL
 var _prompt_box: HBoxContainer = null  # REQ-02：Apply range to Trial? 提示行
 var _btn_undo: Button = null
+var _lbl_note: Label = null  # PG-03/PG-04：无回波解释 / 系统位置估计档位
 var _ping_cd: float = 0.0  # 冷却剩余（本艇事实，可显示）
 
 
@@ -102,6 +103,8 @@ func _init() -> void:
 	var ret_title := Label.new()
 	ret_title.text = str(UiText.t("latest_returns")) + "（脉冲·时刻·方位·距离·±σ·SE·关联）"
 	ret_title.add_theme_font_size_override("font_size", 14)
+	# UI-01：表头说明长文案只换行，不撑宽侧栏（280px @ 320 档曾顶到窗口边缘）。
+	ret_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(ret_title)
 	var head := Label.new()
 	head.visible = false
@@ -135,7 +138,7 @@ func _init() -> void:
 	mode_lbl.custom_minimum_size = Vector2(96, 0)
 	mode_lbl.add_theme_color_override("font_color", Color(0.7, 0.8, 0.85))
 	mode_row.add_child(mode_lbl)
-	_opt_fit_mode = OptionButton.new()
+	_opt_fit_mode = UiContract.tame_option_button(OptionButton.new())
 	for fm in FIT_MODES:
 		_opt_fit_mode.add_item(UiText.mode(fm as String))
 	_opt_fit_mode.add_theme_font_size_override("font_size", 12)
@@ -175,6 +178,14 @@ func _init() -> void:
 	_btn_undo.flat = true
 	_btn_undo.pressed.connect(func(): undo_requested.emit())
 	add_child(_btn_undo)
+	# PG-03/PG-04：说明行（无回波解释 / 系统位置估计档位）。默认隐藏。
+	_lbl_note = Label.new()
+	_lbl_note.text = ""
+	_lbl_note.visible = false
+	_lbl_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_lbl_note.add_theme_font_size_override("font_size", 11)
+	_lbl_note.add_theme_color_override("font_color", Color(0.75, 0.85, 0.9))
+	add_child(_lbl_note)
 
 
 func _on_fit_mode_selected(index: int) -> void:
@@ -193,6 +204,8 @@ func _add_param_row(grid: GridContainer, key: String) -> Label:
 	v.text = "-"
 	v.add_theme_font_size_override("font_size", 12)
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# UI-01：动态值（测程/监听窗等）只换行，不参与侧栏宽度竞争（最小宽不再顶到 271px）。
+	v.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	grid.add_child(v)
 	return v
 
@@ -204,7 +217,8 @@ func _add_param_row(grid: GridContainer, key: String) -> Label:
 ##   returns: [{ping_id:int, time:float, bearing_deg:float, range_m:float,
 ##              range_sigma_m:float, se_db:float, track_id:String, detected:bool}],
 ##   tma: {track:String, evidence:String, fit:String},
-##   undo_enabled: bool, ping_disabled_reason: String
+##   undo_enabled: bool, ping_disabled_reason: String,
+##   outcome: String, note: String（PG-03/PG-04 说明行：无回波解释 / 位置估计档位）
 ## }
 func set_data(d: Dictionary) -> void:
 	var state: String = str(d.get("state", "UNAVAILABLE"))
@@ -231,10 +245,12 @@ func set_data(d: Dictionary) -> void:
 	_lbl_mode.text = UiText.ping_mode(str(params.get("mode", "-")))
 	_lbl_freq.text = "%.1f kHz" % float(params.get("freq_khz", 0.0))
 	_lbl_sl.text = "%.0f dB" % float(params.get("sl_db", 0.0))
+	# AC-04：明确这是"监听窗决定的时延上限"，不得被当成保证探测距离承诺。
 	_lbl_listen.text = (
-		"%.0f 秒 / 最远 %.1f 千米"
+		"%.0f 秒 / 窗口最大测程 %.1f 千米"
 		% [float(params.get("listen_s", 0.0)), float(params.get("max_range_km", 0.0))]
 	)
+	_lbl_listen.tooltip_text = "由监听窗与声速决定的时延上限，不是保证探测距离"
 	_lbl_exposure.text = UiText.exposure(str(params.get("exposure", "-")))
 	_lbl_exposure.add_theme_color_override(
 		"font_color",
@@ -280,6 +296,10 @@ func set_data(d: Dictionary) -> void:
 	var pending: bool = bool(d.get("pending_apply", false))
 	_prompt_box.visible = pending and fm == "ASSISTED"
 	_btn_undo.disabled = not bool(d.get("undo_enabled", false))
+	# PG-03/PG-04：说明行（无回波解释 / 系统位置估计档位）。
+	var note: String = str(d.get("note", ""))
+	_lbl_note.text = note
+	_lbl_note.visible = note != ""
 
 
 func _badge_tooltip(state: String) -> String:

@@ -77,8 +77,30 @@ func refresh_status() -> void:
 			int(t.usable_fraction() * 100.0),
 		]
 	)
+	line += "\n" + _perf_line(t)
 	op_panel.set_towed_status(line, true)
 	op_panel.update_towed_controls(t)
+
+
+## AC-03：性能状态 + 四项独立损失 + 可解释原因（UI 必须说明为什么退化）。
+func _perf_line(t: TowedArray) -> String:
+	var b: Dictionary = t.performance_loss_breakdown()
+	var line: String = (
+		UiText.t("towed_perf_fmt")
+		% [
+			UiText.towed_perf(t.performance_state_name()),
+			float(b["aperture_db"]),
+			float(b["settle_db"]),
+			float(b["bend_db"]),
+			float(b["speed_db"]),
+		]
+	)
+	if t.performance_state() == TowedArray.Perf.UNSTABLE:
+		if float(b["speed_db"]) < 0.0:
+			line += "（%s）" % UiText.t("towed_perf_reason_speed")
+		elif float(b["bend_db"]) < 0.0:
+			line += "（%s）" % UiText.t("towed_perf_reason_bend")
+	return line
 
 
 func _notify(msg: String) -> void:

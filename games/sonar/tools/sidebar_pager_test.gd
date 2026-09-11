@@ -155,11 +155,11 @@ func _at31_resolutions(fails: Array) -> void:
 		var ui: Control = await _mk_ui(int(res[0]), int(res[1]))
 		ui._process(0.1)  # 触发 P1-03.1 宽度钳制
 		var pager = ui._pager
-		# 实际宽 = max(契约鈐制下限, 页面内容固有宽)；横向滚动始终禁用。
+		# UI-01：宽度 = 外壳档位（只随窗口），不是 max(钳制, 内容固有宽)。
 		_assert_bool(
 			fails,
 			"AT-31 %s sidebar width" % tag,
-			pager.size.x >= UiContract.SIDEBAR_MIN_W - 0.5 and pager.size.x <= 520.0,
+			is_equal_approx(pager.size.x, UiContract.sidebar_width_for(float(res[0]))),
 			true
 		)
 		for pid in pager.page_ids():
@@ -197,7 +197,7 @@ func _at31_resolutions(fails: Array) -> void:
 		_assert_bool(
 			fails, "AT-31 %s grid fits" % tag, pager._btn_grid.size.x <= pager.size.x + 1.0, true
 		)
-		var want_cols: int = 4 if pager.size.x >= 440.0 else 2
+		var want_cols: int = 3 if pager.size.x >= 340.0 else 2
 		_assert_bool(
 			fails, "AT-31 %s adaptive columns" % tag, pager._btn_grid.columns == want_cols, true
 		)

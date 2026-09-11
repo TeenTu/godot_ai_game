@@ -80,11 +80,15 @@ func sync() -> void:
 			continue
 		if d.activated:
 			var life_left: float = maxf(float(d.lifetime_s) - float(d.age_s), 0.0)
+			# P1-C DC-03：分离阶段显式标注（出管后仍有真实位移，不是零速漂浮）。
+			var phase: String = ""
+			if float(d.age_s) < float(d.separation_duration_s):
+				phase = " 出管分离中 %.0fs" % maxf(float(d.separation_duration_s) - float(d.age_s), 0.0)
 			(
 				lines
 				. append(
 					(
-						"%s %s 速度 %.1f/%.1f 节 深度 %.0f/%.0f 米 寿命 %.0f 秒"
+						"%s %s 速度 %.1f/%.1f 节 深度 %.0f/%.0f 米 寿命 %.0f 秒%s"
 						% [
 							str(d.id),
 							"干扰" if d.decoy_type == DecoyProgram.TYPE_JAMMER else "诱饵",
@@ -93,6 +97,7 @@ func sync() -> void:
 							float(d.depth_m),
 							float(d.commanded_depth_m),
 							life_left,
+							phase,
 						]
 					)
 				)
@@ -104,9 +109,21 @@ func sync() -> void:
 					% [str(d.id), maxf(float(d.activation_delay_s) - float(d.age_s), 0.0)]
 				)
 			)
+	# DC-07：待发 / 备用 / 装填剩余时间（与 CountermeasureSystem.ammo_summary 同源）。
+	var ammo: Dictionary = cm.ammo_summary()
+	var reload_txt: String = ""
+	if bool(ammo["reloading"]):
+		reload_txt = " | " + (UiText.t("cm_reload_fmt") % float(ammo["reload_left_s"]))
 	var state: String = (
-		"弹药 %d | 库存 %d | 冷却 %.0fs | 己方诱饵 %d" % [cm.ready_rounds, cm.inventory, cd, lines.size()]
+		"%s | %s | 冷却 %.0fs | 己方诱饵 %d"
+		% [
+			UiText.t("cm_ready_fmt") % int(ammo["ready"]),
+			UiText.t("cm_spare_fmt") % int(ammo["spare"]),
+			cd,
+			lines.size(),
+		]
 	)
+	state += reload_txt
 	# REQ-UI-03 频带提示：JAMMER 配置的干扰频带（发射前即可见，本艇事实）。
 	var jam: Dictionary = cm.profile_for(DecoyProgram.TYPE_JAMMER)
 	if not jam.is_empty() and float(jam.get("band_max_hz", 0.0)) > 0.0:
@@ -122,40 +139,15 @@ func sync() -> void:
 	_lbl_state.text = state
 
 
+## P1-C DC-02/DC-05：程序构建统一走 DecoyLaunchBuilder（与地图右键菜单同一处），
+## 本面板只提供"投放方向（真方位）"这一个主要方向设置。
 func _launch(decoy_type: String) -> void:
 	if _world == null:
 		return
-	var prog := DecoyProgram.new()
-	prog.decoy_type = decoy_type
-	prog.launch_bearing_deg = clampf(_spin_brg.value, 0.0, 359.9)
-	prog.course_deg = prog.launch_bearing_deg
-	prog.speed_kn = 8.0 if decoy_type == DecoyProgram.TYPE_MOBILE else 0.5
-	prog.activation_delay_s = 2.0
-	prog.lifetime_s = 120.0
-	prog.initial_depth_band = _band_for_own()
-	prog.commanded_depth_band = prog.initial_depth_band
-	# REQ-CM-04：画像从配置读取（scenario own_ship.countermeasures.profiles），
-	# UI 不再回调构造物理参数；无配置时用下列默认。
-	var sig := AcousticProfile.new()
-	var cfg: Dictionary = {}
-	if _world.countermeasures != null:
-		cfg = _world.countermeasures.profile_for(decoy_type)
-	if not cfg.is_empty():
-		sig.from_dict(cfg)
-	else:
-		sig.broadband_base_level_db = 165.0
-		sig.tonal_lines = [
-			{"freq_hz": 240.0, "level_db": 128.0},
-			{"freq_hz": 480.0, "level_db": 122.0},
-		]
-		if decoy_type == DecoyProgram.TYPE_JAMMER:
-			# REQ-AC-03：宽带干扰主体（固定总功率 185 dB / 800–1200 Hz）+
-			# 900 Hz 附加假峰（抖动谱线保留，但不作为宽带全部表示）。
-			sig.broadband_base_level_db = 185.0
-			sig.band_min_hz = 800.0
-			sig.band_max_hz = 1200.0
-			sig.tonal_lines = [{"freq_hz": 900.0, "level_db": 150.0}]
-	prog.signature = sig
+	var own: TruthEntity = _world.world.get("own", null)
+	var prog: DecoyProgram = DecoyLaunchBuilder.build(
+		_world.countermeasures, decoy_type, clampf(_spin_brg.value, 0.0, 359.9), own
+	)
 	var ok: bool = _world._launch_decoy(prog)
 	if not ok:
 		var reason: String = _world.last_decoy_reject_reason
@@ -164,8 +156,3 @@ func _launch(decoy_type: String) -> void:
 		status.emit(UiText.t("decoy_reject") % UiText.reject(reason))
 	else:
 		status.emit(UiText.t("decoy_launch") % [UiText.decoy(decoy_type), prog.launch_bearing_deg])
-
-
-func _band_for_own() -> String:
-	var own: TruthEntity = _world.world["own"]
-	return "LOWER" if own.depth_m >= 120.0 else "UPPER"

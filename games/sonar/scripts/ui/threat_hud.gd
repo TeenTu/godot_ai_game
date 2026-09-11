@@ -103,6 +103,10 @@ func _row(s: Dictionary, sim_now: float) -> Control:
 	var hb := HBoxContainer.new()
 	var lb := Label.new()
 	lb.text = _line(s, sim_now)
+	# UI-01：威胁行是整套侧栏里最长的动态文案（TT/状态/方位/距离/椭圆/概率），
+	# 必须换行——否则它会把页面最小宽顶到 475px 并撑宽侧栏（T22）。
+	lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(lb)
 	var b := Button.new()
 	b.text = UiText.t("btn_view_threat")
