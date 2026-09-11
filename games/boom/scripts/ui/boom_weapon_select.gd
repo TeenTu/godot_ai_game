@@ -36,6 +36,8 @@ const SKILL_COL_X: Dictionary = {"basic": 50.0, "skill": 370.0}
 
 var skill_sys: BoomSkillSystem = null  # main.gd 注入；空时技能区只读隐藏
 var equipment_page: BoomEquipmentPanel
+## 测试模式标识（main.gd 在 add_child 前注入）：底部提示改为全解锁说明。
+var test_badge: bool = false
 var _weapons: Array = []
 var _selected_id: String = ""
 var _cards: Dictionary = {}
@@ -108,7 +110,13 @@ func _build_panel() -> void:
 
 	_fight_btn = _build_fight_button()
 	_build_skill_panel()
-	var note := _make_label("最多装备 3 个节点 · 每分支按前置逐阶解锁", 17, Color(1.0, 1.0, 1.0, 0.55))
+	# 测试模式下这条提示失真（无金币/前置门槛），换成模式标识兼作可见证据。
+	var note_text := "最多装备 3 个节点 · 每分支按前置逐阶解锁"
+	var note_color := Color(1.0, 1.0, 1.0, 0.55)
+	if test_badge:
+		note_text = "测试模式 · 全解锁（跳过金币与前置）"
+		note_color = Color(1.0, 0.85, 0.35, 0.92)
+	var note := _make_label(note_text, 17, note_color)
 	note.position = Vector2(0.0, 1056.0)
 	note.size = Vector2(720.0, 30.0)
 	note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

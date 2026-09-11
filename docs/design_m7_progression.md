@@ -11,6 +11,9 @@
 >
 > **M12 触发修订（2026-09-10）**：`equipped` 是最多 3 个主动/被动混排的构筑槽；
 > tap / 左滑 / 右滑与战斗 HUD 改为读取 `active_equipped()`，被动只常驻生效，不再占用触发位。
+>
+> **2026-09-12 增补 §6.3 测试模式**：`?testmode=1` / `--testmode` 开局全解锁（独立测试档），
+> 供本地免刷解锁验证构筑；与 vision-e2e 的 `?test=1` 相互独立。
 
 ---
 
@@ -218,6 +221,50 @@ BoomStats
 - **测试无残留**：play_test 各存档相关节前后 `BoomSave.test_reset()`（清缓存 + 删文件），
   `_finish()` 收尾再清一次；CI 的 user:// 与玩家数据隔离。
 
+### 6.3 测试模式（开局全解锁）
+
+本地调试入口，用于免刷解锁直接验证构筑 / 技能 / 面板：
+
+| 触发方式 | 用法 |
+|---|---|
+| Web | URL 追加 `?testmode=1`（与 vision-e2e 的 `?test=1` 是**两回事**，见下） |
+| 桌面 / 编辑器 | 启动参数 `--testmode`；编辑器在「项目设置 → 编辑器 → 运行参数」填 `--testmode` |
+
+进入后 `BoomSave.enter_test_mode()` 做三件事：
+
+1. **切独立测试档** `user://boom_save_test.json`——不读写真实玩家档 `boom_save.json`，
+   测试怎么折腾都不影响正常进度；`exit_test_mode()` 还原进入前的路径。
+2. **全武器树全解锁**：解锁清单从 `BoomWeapons.all()` × `tree.skills` 推导，加新武器
+   自动纳入，本函数不用改。
+3. **注入充足金币**（`TEST_COINS = 999999`），余额不打断解锁/消费路径。
+
+幂等：重复进入金币取 `max`、解锁去重追加，可安全多次调用。
+
+**可见标识**（拒绝隐藏变更）：选武器面板底部提示由「最多装备 3 个节点 · 每分支按前置
+逐阶解锁」换成金色「测试模式 · 全解锁（跳过金币与前置）」；技能树每节点显示
+「已装备 / 可用」而非「N 金币 / 未解锁 / 需前置」。test_hook state 增补
+`test_mode` 字段供 e2e 断言。
+
+**与 `?test=1` 的分工**（两者独立，可同时用）：
+
+- `?test=1`（`_is_test_mode()`）：vision-e2e 通道——固定随机种子 + **跳过选单直接开战**。
+  它跳过选武器界面，因此不适合"看技能树"的调试。
+- `?testmode=1`（`_is_unlock_test_mode()`）：保留完整正常流程（选武器 / 技能树照常可见），
+  只预置存档。
+
+**默认必须关闭**：无参数时 `_is_unlock_test_mode()` 恒为 false，play_test 有对应断言
+（`[test-mode]` 断言组）守住这条不变量——线上不得误开全解锁。
+
+**真实渲染验收**（带对照，肉眼可判）：
+
+```bash
+GODOT="E:/Program/Godot/Godot_v4.5-stable_win64.exe"
+"$GODOT" --path games/boom --script res://tools/visual_review.gd \
+  -- --capture-dir=<目录> --ui --testmode   # 期望：金色「测试模式 · 全解锁」且节点无价格
+"$GODOT" --path games/boom --script res://tools/visual_review.gd \
+  -- --capture-dir=<目录> --ui              # 对照：原始提示 + 「120 金币 / 未解锁」
+```
+
 ---
 
 ## 7. 表现层接线（main.gd，最小增量）
@@ -243,6 +290,7 @@ BoomStats
 | `[m7-passive]` | rapid 装备/卸落 `skill_fire_cd_mult`；被动不进施放管线（无 skill_fired、无 CD）；titan 弧斩 +1 与 whirl 伤害 4；whirl 命中数与 8 敌封顶 |
 | `[m7-save]` | 新档默认结构；货币入账/消费/余额不足；roundtrip（写盘→清内存→重读一致，金币+解锁）；对局拾取金币即时入档；restart 后局内币清零、跨局币与解锁保留；精英雨 40 即时入档；结算落盘文件存在 |
 | `[m7-tree-ui]` | 选单技能区 6 行按当前武器切换；bubble 区不含 sword 专属；未解锁行显示价格；根节点行显示 已装备；行点击勾选/取消 |
+| `[test-mode]` | 无参数时默认关闭（线上不得误开）；`enter_test_mode` 全武器树全解锁 + 充足金币 + 写独立测试档；重复进入幂等（金币不叠加）；`exit_test_mode` 还原原存档路径 |
 
 - lint：`gdlint games/boom/ shared/` 全绿；改动文件过 `gdformat`。
 - 结果：`PLAY_TEST result=PASS`（基线 228 → 250+）。
