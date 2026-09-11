@@ -1,6 +1,6 @@
 # M13 人物装备系统
 
-状态：实施中。用户确认的范围为七部位完整装备系统。
+状态：已交付。用户确认的七部位完整装备系统已进入 main 并部署。
 
 ## 部位与首发内容
 
@@ -46,7 +46,7 @@ equipment 保存七个部位；旧 weapon 字段迁移到 artifact，无字段�
 - 真实 Web 界面换装与开战回归、图标加载与截图检查。
 - Godot import/play_test、全目录 lint/format、Web export 和 CI 成功。
 
-## 验证进度（2026-09-11，尚未交付）
+## 验证证据（2026-09-11）
 
 - M13 测试分册由 `tools/play_test.gd` 调用，随现有 CI 导出前冒烟执行；
   失败计入主入口退出码，不依赖独立脚本中的 assert。
@@ -59,5 +59,7 @@ equipment 保存七个部位；旧 weapon 字段迁移到 artifact，无字段�
   判笔切换、开战、属性面板及刷新后的法器存档恢复。
 - 判笔默认全装备实机属性：生命90、攻击38（含握持被动）、防御15、暴击3%、暴伤165%、闪避3%。
 - Web 检查发现的缺字已通过重新生成字体子集修复；属性面板层级遮挡已修复并复验。
-- 尚待：提交集成与远端 CI。
+- `boom-dev` 提交 `3f0d327`，main 非快进集成提交 `a9007ff`。
+- GitHub Actions run `34550171258`：lint、headless test、Web export、Pages deploy 全部 success。
+- 线上 `https://teentu.github.io/godot_ai_game/boom/` 返回 HTTP 200，标题为 B-Boom。
 - 主冒烟退出时仍有资源泄漏警告；PASS 不代表这些警告已解决。
