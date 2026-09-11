@@ -8,7 +8,7 @@ extends VBoxContainer
 ##
 ## 输入只允许 ThreatTrackManager.ui_snapshots() 净化 DTO；本类零玩法写入，
 ## "View" 只居中相机到该威胁估计中心（§5.3 不得改普通选择）。
-## 文案暂英文（Batch 7 统一中文 + 字体 cmap 校验）。
+## 文案中文化见 UiText（S1-11 Batch 7 / AT-42）。
 
 const STATE_RANK := {"RANGE_AIDED": 0, "TRACKING": 1, "TENTATIVE": 2, "COASTING": 3, "LOST": 4}
 const FLASH_S: float = 6.0
@@ -77,8 +77,26 @@ func refresh(snaps: Array, sim_now: float) -> void:
 		for c in _rows.get_children():
 			_rows.remove_child(c)
 			c.queue_free()
-		for s in snaps:
-			_rows.add_child(_row(s, sim_now))
+		# S1-11 D-16/AT-61：多个鱼雷告警只详展最高威胁，其余合并为数量+方位摘要。
+		if snaps.size() <= 1:
+			for s in snaps:
+				_rows.add_child(_row(s, sim_now))
+		elif not top.is_empty():
+			_rows.add_child(_row(top, sim_now))
+			_rows.add_child(_summary_row(snaps, top))
+
+
+## 其余威胁的合并摘要行（数量 + 方位）。
+func _summary_row(snaps: Array, top: Dictionary) -> Control:
+	var brgs: Array = []
+	for s in snaps:
+		if str(s.get("track_id", "")) == str(top.get("track_id", "")):
+			continue
+		brgs.append("%.0f°" % float(s.get("bearing_est_deg", 0.0)))
+	var lb := Label.new()
+	lb.text = str(UiText.t("threat_extra_fmt")) % [brgs.size(), "、".join(brgs)]
+	lb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	return lb
 
 
 func _row(s: Dictionary, sim_now: float) -> Control:
@@ -115,17 +133,17 @@ func _line(s: Dictionary, sim_now: float) -> String:
 	]
 	if s.get("range_est_m") != null:
 		parts.append(
-			"距离 %.0f±%.0fm" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
+			"距离 %.0f±%.0f 米" % [float(s["range_est_m"]), float(s.get("range_sigma_m", 0.0))]
 		)
 	if s.get("ellipse_a_m") != null:
 		parts.append(
-			"95%% 椭圆 %.0fx%.0fm" % [float(s["ellipse_a_m"]), float(s.get("ellipse_b_m", 0.0))]
+			"95%% 椭圆 %.0f×%.0f 米" % [float(s["ellipse_a_m"]), float(s.get("ellipse_b_m", 0.0))]
 		)
 	(
 		parts
 		. append(
 			(
-				"p=%.2f ev=%d %ds"
+				"概率 %.2f 证据 %d 距今 %d 秒"
 				% [
 					float(s["p_torpedo"]),
 					int(s["evidence_count"]),

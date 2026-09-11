@@ -33,6 +33,20 @@ func is_stale(track_id: String) -> bool:
 	return bool(stale_by_track_id.get(track_id, false))
 
 
+## S1-11 §3.6/AT-57：Fit 缓存是否需要重算 —— 仅当无缓存或 evidence_revision 变化。
+## 切换目标/切页/折叠详情不改变 revision，故不会触发重抽样或重建 Mark。
+func needs_refit(track: Track) -> bool:
+	var cached: Dictionary = fit_by_track_id.get(track.track_id, {})
+	if cached.is_empty():
+		return true
+	return int(cached.get("source_evidence_revision", -1)) != track.evidence_revision
+
+
+## 返回缓存的 Fit（不重算、不重抽样）。无缓存返回空字典。
+func cached_fit(track_id: String) -> Dictionary:
+	return fit_by_track_id.get(track_id, {})
+
+
 ## 证据结构变化后调用：镜像 Track.evidence_revision，变化即置 stale。
 func sync_revision(track: Track) -> void:
 	var tid: String = track.track_id

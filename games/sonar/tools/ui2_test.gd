@@ -110,8 +110,8 @@ func _ui2_3_alert_groups_bda(fails: Array) -> void:
 	var txt: String = p._lbl.text
 	_assert_bool(fails, "UI2-3a BDA summary line", txt.contains("战果汇总：1×可能击沉"), true)
 	_assert_bool(fails, "UI2-3b threat group tagged", txt.contains("威胁"), true)
-	_assert_bool(fails, "UI2-3c countermeasure group tagged", txt.contains("反制 T+20s"), true)
-	_assert_bool(fails, "UI2-3d kill graded on row", txt.contains("战果 T+30s 可能击沉"), true)
+	_assert_bool(fails, "UI2-3c countermeasure group tagged", txt.contains("反制 T+20 秒"), true)
+	_assert_bool(fails, "UI2-3d kill graded on row", txt.contains("战果 T+30 秒 可能击沉"), true)
 	_assert_bool(
 		fails, "UI2-3e no truth leak", not txt.contains("target") and not txt.contains("ET-"), true
 	)
@@ -136,7 +136,8 @@ func _ui2_4_start_menu_tutorial(fails: Array) -> void:
 		fails.append("UI2-4a tutorial briefing label not found")
 	else:
 		var t: String = found.text
-		for token in ["Mark", "TMA", "Solution", "反制措施", "seed", "辅助/全自动"]:
+		# S1-11 Batch 7 / D-09：教程文案全中文（Solution→系统解、seed→随机种子）。
+		for token in ["Mark", "TMA", "系统解", "反制措施", "随机种子", "辅助/全自动"]:
 			if not t.contains(token):
 				fails.append("UI2-4a tutorial missing %s" % token)
 		_assert_bool(fails, "UI2-4a tutorial content checked", true, true)

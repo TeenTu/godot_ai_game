@@ -204,7 +204,7 @@ func _r2_03_steering_integration(fails: Array) -> void:
 	for dt in [0.1, 0.5, 1.0]:
 		var tp := Torpedo.new()
 		tp.launch("S3", _mk_program(), 0.0, 0.0, 50.0, 0.0)
-		tp.mission_state = Torpedo.MissionState.WIRE_RUN
+		tp.mission_state = Torpedo.MissionState.TRANSIT
 		var steps: int = int(round(10.0 / dt))
 		var total := 0.0
 		var sim_t := 0.0
@@ -219,7 +219,7 @@ func _r2_03_steering_integration(fails: Array) -> void:
 	# 饱和诊断：20°/s 命令 → SAT，实际=omega_max。
 	var tp2 := Torpedo.new()
 	tp2.launch("S3b", _mk_program(), 0.0, 0.0, 50.0, 0.0)
-	tp2.mission_state = Torpedo.MissionState.WIRE_RUN
+	tp2.mission_state = Torpedo.MissionState.TRANSIT
 	tp2._guidance_mode = Torpedo.GuidanceMode.RATE
 	tp2._guidance_turn_rate_cmd = 20.0
 	tp2._apply_steering(0.5, 0.0)
@@ -474,8 +474,14 @@ func _r2_09_true_mode_mark(fails: Array) -> void:
 		],
 	}
 	var m_rel: Measurement = op.create_mark(31.0, 100.0, "", false, row)
+	# S1-11 §3.3/AT-49：记录光标原始方位（31 → 真方位 121），不再吸附 6° 内
+	# 最近峰（峰只用于回填 SE/谱线等元数据）。
 	_close(
-		fails, "R2-09a rel: nearest peak 33 -> true 123", m_rel.measured_bearing_deg, 123.0, 1e-6
+		fails,
+		"R2-09a rel: cursor bearing kept (no peak snap) -> true 121",
+		m_rel.measured_bearing_deg,
+		121.0,
+		1e-6
 	)
 	var m_true: Measurement = op.create_mark(123.0, 100.0, "", true, row)
 	_close(
@@ -509,7 +515,7 @@ func _r2_09_true_mode_mark(fails: Array) -> void:
 func _r2_10_steering_source(fails: Array) -> void:
 	var tp := Torpedo.new()
 	tp.launch("SS", _mk_program(), 0.0, 0.0, 50.0, 0.0)
-	tp.mission_state = Torpedo.MissionState.ATTACK
+	tp.mission_state = Torpedo.MissionState.LOCKED_ATTACK
 	tp._guidance_mode = Torpedo.GuidanceMode.NONE
 	var st: SeekerBeamState = SeekerBeamState.new_from(tp)
 	_ok(

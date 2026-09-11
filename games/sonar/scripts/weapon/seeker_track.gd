@@ -50,6 +50,8 @@ var depth_relation: String = ""
 var depth_band_hint: String = ""  # P1-08 配套：最新回波层带提示（垂直机动）
 var classification_match: float = 0.0  # 谱一致性 EMA（1=与首次捕获谱稳定一致）
 var source_history: Array = []  # SeekerReturn.return_id 时间线（封顶）
+## S1-11 §7.5：本航迹自己的深度概率估计（只吃带噪层带提示，无 Truth 深度）。
+var depth_estimator: DepthEstimator = null
 
 var _spectral_ref: Array = []  # 首次捕获的谱线频率基准（分类锚点）
 var _range_meas_epoch: float = -1.0  # REQ-03：距离滤波用测量历元（回波=Ping 发射时刻）
@@ -70,6 +72,7 @@ static func create() -> SeekerTrack:
 func update_with_return(r: SeekerReturn, now: float, cfg: Dictionary) -> void:
 	if str(r.depth_band_hint) != "":
 		depth_band_hint = str(r.depth_band_hint)
+		ingest_depth_hint(_band_likelihoods(str(r.depth_band_hint)), r.return_id, now)
 	var smoothing: float = float(cfg.get("bearing_smoothing", 0.45))
 	var rate_smoothing: float = float(cfg.get("rate_smoothing", 0.30))
 	var alpha: float = float(cfg.get("alpha_hit", 0.22))
@@ -284,3 +287,40 @@ func to_summary() -> Dictionary:
 		"hits": total_hits,
 		"misses": total_misses,
 	}
+
+
+## ---- S1-11 §7.5：本 SeekerTrack 自己的深度概率估计（供鱼雷 AUTO 深度/武器页）----
+## 只消费带噪层带提示（DepthEvidence.SRC_SEEKER），绝不接收 Truth 深度。
+func ingest_depth_hint(likelihoods: Dictionary, return_id: int, now: float) -> bool:
+	if likelihoods.is_empty():
+		return false
+	if depth_estimator == null:
+		depth_estimator = DepthEstimator.new()
+	var ev := (
+		DepthEvidence
+		. make(
+			"SEEK:%d:%d" % [seeker_track_id, return_id],
+			now,
+			DepthEvidence.SRC_SEEKER,
+			"seeker",
+			likelihoods,
+			str(depth_band_hint),
+		)
+	)
+	return depth_estimator.update(ev, now)
+
+
+## 冻结/不存在的估计 → 空 dict（UI 一律显示"深度未知"，AT-27）。
+func depth_estimate_summary(now: float = -1.0) -> Dictionary:
+	if depth_estimator == null:
+		return {}
+	return depth_estimator.result(now)
+
+
+static func _band_likelihoods(band: String) -> Dictionary:
+	match band:
+		"UPPER":
+			return {DepthEstimator.UPPER: 1.0}
+		"LOWER":
+			return {DepthEstimator.LOWER: 1.0}
+	return {}

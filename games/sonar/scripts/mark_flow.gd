@@ -37,7 +37,10 @@ func _log(msg: String) -> void:
 
 ## 点击瀑布裁决。返回供 main_ui 应用视图效果：
 ## {select: String, status: String, dirty: bool, track: Track}
-func handle_mark(x_brg: float, as_true: bool, row: Dictionary, selected_id: String) -> Dictionary:
+## explicit_append=true（Shift＋点击）表示玩家显式把该点追加到 selected_id 接触。
+func handle_mark(
+	x_brg: float, as_true: bool, row: Dictionary, selected_id: String, explicit_append: bool = false
+) -> Dictionary:
 	var out: Dictionary = {"select": "", "status": "", "dirty": false, "track": null}
 	if tracker == null or op == null or world == null:
 		return out
@@ -55,14 +58,20 @@ func handle_mark(x_brg: float, as_true: bool, row: Dictionary, selected_id: Stri
 		return out
 
 	var t: Track = null
-	var lock_target: String = active_group_id
-	if association_mode == ASSOC_LOCKED and lock_target == "" and selected_id != "":
-		lock_target = selected_id  # LOCKED 未选组时锁定到当前选中 Contact
-	if association_mode == ASSOC_LOCKED and lock_target != "":
-		# LOCKED：只向 active 组追加；门不一致明确拒绝，不污染、不切换。
-		t = tracker.feed_evidence_group(group, lock_target, 8.0)
+	# S1-11 §3.3/D-13：手动 Mark 是"修正命令"，不是探测判决。
+	# ① Shift＋点击（explicit_append）→ 直接追加到当前查看的接触；
+	# ② 明确选组（active_group_id）→ 直接追加，空组首点同样成立；
+	# ③ 未指定组 → 自动关联评分；失败则新建接触，绝不吞掉点击。
+	# 任何显式路径都不检查声强/Pd/8° 方位门，8° 只留给①以外的自动关联。
+	var explicit_target: String = ""
+	if explicit_append and selected_id != "":
+		explicit_target = selected_id
+	elif association_mode == ASSOC_LOCKED and active_group_id != "":
+		explicit_target = active_group_id
+	if explicit_target != "":
+		t = tracker.append_group_direct(tracker.track_by_id(explicit_target), group)
 		if t == null:
-			out["status"] = "Mark ignored: bearing inconsistent with %s (LOCKED)" % lock_target
+			out["status"] = "Mark ignored: %s unavailable" % explicit_target
 			return out
 	else:
 		t = tracker.feed_evidence_group(group, "", 8.0)
@@ -90,8 +99,8 @@ func handle_mark(x_brg: float, as_true: bool, row: Dictionary, selected_id: Stri
 		world.measurements.append(gm)
 	_log("MARK %.1f deg -> %s%s" % [x_brg, t.track_id, " (LR pair)" if group.size() > 1 else ""])
 	_undo = {}
-	# LOCKED 显式组：加 Mark 不抢选中（看与加分离）。
-	if not (association_mode == ASSOC_LOCKED and active_group_id != ""):
+	# 显式组 / Shift＋追加：加 Mark 不抢选中（看与加分离，AT-48）。
+	if not (association_mode == ASSOC_LOCKED and active_group_id != "") and not explicit_append:
 		out["select"] = t.track_id
 	out["dirty"] = true
 	out["track"] = t
@@ -141,6 +150,8 @@ func remove_last_mark(track_id: String) -> Dictionary:
 		out["status"] = "Remove failed on %s" % track_id
 		return out
 	_undo = {"track": t, "meas": m}
+	if op != null and op.has_method("drop_mark_cache"):
+		op.drop_mark_cache(m)
 	_log("REMOVE last mark on %s (%s)" % [t.track_id, m.evidence_id])
 	out["dirty"] = true
 	out["track"] = t

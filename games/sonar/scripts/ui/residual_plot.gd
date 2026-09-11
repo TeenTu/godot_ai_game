@@ -216,7 +216,7 @@ func _draw_stats(pr: Rect2) -> void:
 		var rej: int = _visible_rows().size() - used.size()
 		var suf: String = _unit_suffix()
 		msg = (
-			"RMS %s%s  bias %s%s  max %s%s  used %d  rej %d  [track %s]  %s"
+			"均方根 %s%s  偏差 %s%s  最大 %s%s  采用 %d  剔除 %d  [航迹 %s]  %s"
 			% [
 				_fmt(rms),
 				suf,

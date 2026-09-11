@@ -8,8 +8,7 @@ extends RefCounted
 ##     图元（AT-27）；
 ##   - 绘制结果不产生信号、不回流玩法层（AT-26 隔离由测试强制）。
 ##
-## 文案暂为英文：Batch 7 全中文 + 字体 cmap CI 校验时统一翻译（避免先引入
-## 未入子集字形导致 Web 豆腐块）。
+## 文案已中文化（S1-11 Batch 7 / AT-42）。
 
 const COL_SUB := Color(1.0, 0.25, 0.25, 0.9)
 const COL_TORP_ENEMY := Color(1.0, 0.45, 0.1, 0.95)
@@ -33,7 +32,7 @@ static func draw(chart: ChartView, entries: Array, own_pos: Vector2, font: Font)
 				. _draw_label(
 					s + Vector2(9, -4),
 					(
-						"%s %s 真方位 %.0f° / %.1f km"
+						"%s %s 真方位 %.0f° / %.1f 千米"
 						% [
 							str(e.get("debug_id", "?")),
 							UiText.tp_state(str(e.get("state", ""))),

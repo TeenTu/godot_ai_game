@@ -84,7 +84,7 @@ func sync() -> void:
 				lines
 				. append(
 					(
-						"%s %s 速度 %.1f/%.1f节 深度 %.0f/%.0fm 寿命 %.0fs"
+						"%s %s 速度 %.1f/%.1f 节 深度 %.0f/%.0f 米 寿命 %.0f 秒"
 						% [
 							str(d.id),
 							"干扰" if d.decoy_type == DecoyProgram.TYPE_JAMMER else "诱饵",

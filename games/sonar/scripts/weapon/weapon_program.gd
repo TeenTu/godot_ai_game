@@ -15,10 +15,14 @@ extends RefCounted
 ## 战斗部解保是四件独立的事，各自有独立开关/触发模式，禁止一个 ENABLE_RANGE
 ## 同时代表全部。
 
-enum FireMode { SOLUTION, BEARING_ONLY, MANUAL }
+## S1-11 D-01：玩家侧只保留 MAP_ROUTE（地图航线）。SOLUTION/BEARING_ONLY/
+## MANUAL 仅作为敌方 AI 与内部构造使用，不再出现在玩家 UI。
+enum FireMode { SOLUTION, BEARING_ONLY, MANUAL, MAP_ROUTE }
 enum SpeedMode { QUIET, CRUISE, HIGH }
 enum SearchPattern { SNAKE, CIRCLE }
 enum GuidanceAuthority { WIRE_ONLY, ASSISTED, AUTONOMOUS }
+## S1-11 §6.4/AT-24：WAYPOINT 保留为数据模型（敌方 AI/内部构造），玩家 UI 不再
+## 暴露任何"可选但不生效"的下拉项——地图航线与开机点由地图直接表达。
 enum ActiveEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT, IMMEDIATE }
 enum AutonomyEnableMode { MANUAL, DISTANCE, TIME, WAYPOINT }
 ## REQ-DEP-02：搜索深度预设——SURFACE=浅水攻击（配置化深度）；UPPER/LOWER=
@@ -35,6 +39,9 @@ var source_solution_version: int = 0
 var source_solution_time: float = 0.0  # REQ-B4-01：来源解提交时刻（审计用）
 
 var initial_course_deg: float = 0.0
+## S1-11 §8.3：MAP_ROUTE 地图航线（Array[Vector2] 世界 east/north 空间位置
+## 命令；首点为发射点）。绝不含 target_id / TruthEntity / 真实目标位置。
+var route_points: Array = []
 var speed_mode: int = SpeedMode.CRUISE
 var initial_depth_band: String = DEPTH_BAND_UPPER
 var search_depth_band: String = DEPTH_BAND_UPPER
@@ -82,6 +89,7 @@ func snapshot() -> WeaponProgram:
 	p.source_solution_version = source_solution_version
 	p.source_solution_time = source_solution_time
 	p.initial_course_deg = initial_course_deg
+	p.route_points = route_points.duplicate()
 	p.speed_mode = speed_mode
 	p.initial_depth_band = initial_depth_band
 	p.search_depth_band = search_depth_band
@@ -231,6 +239,33 @@ static func make_bearing_only(bearing_deg: float) -> WeaponProgram:
 	return p
 
 
+## S1-11 §4.1/§5.1：地图航线程序（唯一玩家发射方式）。航线点为首点=发射点、
+## 之后为未来航路点（最多 TorpedoRouteState.MAX_FUTURE_POINTS 个）。初始航向
+## = 首段方位；无解也可发射（AT-02/AT-03）。
+static func make_route(route_points_world: Array, time_s: float) -> WeaponProgram:
+	var p := WeaponProgram.new()
+	p.fire_mode = FireMode.MAP_ROUTE
+	p.program_id = "ROUTE_%d" % int(round(time_s))
+	p.route_points = route_points_world.duplicate()
+	var course: float = 0.0
+	if route_points_world.size() >= 2:
+		var a: Vector2 = route_points_world[0]
+		var b: Vector2 = route_points_world[1]
+		course = NavUtils.wrap360(rad_to_deg(atan2(b.x - a.x, b.y - a.y)))
+	p.initial_course_deg = course
+	p.search_center_deg = course
+	p.search_half_angle_deg = 45.0
+	p.search_pattern = SearchPattern.SNAKE
+	p.speed_mode = SpeedMode.CRUISE
+	p.guidance_authority = GuidanceAuthority.AUTONOMOUS
+	p.wire_guidance_enabled = true
+	p.active_enable_mode = ActiveEnableMode.MANUAL
+	p.autonomy_enable_mode = AutonomyEnableMode.MANUAL
+	p.warhead_arm_distance_m = 300.0
+	p.fallback_program = p.make_default_fallback()
+	return p
+
+
 ## UI/日志用：speed_mode / fire_mode / 深度带等转可读字符串。
 static func fire_mode_name(m: int) -> String:
 	match m:
@@ -238,6 +273,8 @@ static func fire_mode_name(m: int) -> String:
 			return "BEARING_ONLY"
 		FireMode.MANUAL:
 			return "MANUAL"
+		FireMode.MAP_ROUTE:
+			return "MAP_ROUTE"
 	return "SOLUTION"
 
 

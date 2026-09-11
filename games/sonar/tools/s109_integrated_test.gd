@@ -146,7 +146,7 @@ func _run_integrated(seed_val: int) -> Dictionary:
 			if tr.get("est") == null:
 				continue
 			var el2: Dictionary = (tr["est"] as TorpedoThreatEstimator).ellipse_95()
-			out["area_pre"] = float(areas_pre[aided_id])
+			out["area_pre"] = float(areas_pre.get(aided_id, 0.0))
 			out["area_post"] = float(el2["axis_a_m"]) * float(el2["axis_b_m"])
 	var ev_clean := true
 	for e2 in w.player_evidence:
@@ -294,15 +294,17 @@ func _ui_endgame(fails: Array) -> void:
 	_assert(fails, tp != null, "IT-2b incoming torpedo launched in UI world")
 	# 隐藏航迹页，跑仿真：告警/红点仍更新。
 	ui._pager.select("weapons")
-	var badge_at_start: int = int(ui._pager.badge("tracks"))
+	var badge_at_start: int = int(ui._pager.badge("tactics"))
 	# 隐藏航迹页，用 UI 帧驱动仿真（红点/告警条是显示层，只在 _process
 	# 重建链更新；纯 world.run_steps 不经过 UI）。1× 每帧 1s = 2 tick。
 	for i in range(120):
 		ui._process(1.0)
-		if int(ui._pager.badge("tracks")) > badge_at_start:
+		if int(ui._pager.badge("tactics")) > badge_at_start:
 			break
-	_assert(fails, str(ui._pager.current_page()) == "weapons", "IT-2c tracks page stayed hidden")
-	_assert(fails, int(ui._pager.badge("tracks")) > badge_at_start, "IT-2d badge grew while hidden")
+	_assert(fails, str(ui._pager.current_page()) == "weapons", "IT-2c tactics page stayed hidden")
+	_assert(
+		fails, int(ui._pager.badge("tactics")) > badge_at_start, "IT-2d badge grew while hidden"
+	)
 	_assert(
 		fails,
 		ui._pager.top_bar.is_ancestor_of(ui._threat_hud),

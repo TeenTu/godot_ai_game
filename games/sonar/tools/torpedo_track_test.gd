@@ -15,7 +15,7 @@ extends SceneTree
 ##            无 target_id/Truth 字段。
 ##   SEEK-13  转向受 max_turn_rate 限制（无瞬时指向）。
 ##   WIRE     WIRE_ONLY 下即使持续听到目标也不擅自转向。
-##   SWEEP    SEARCH 无目标时按程序扇区 SNAKE 扫掠（限速率、不出扇区+容差）。
+##   SWEEP    LOST_REACQUIRE 无目标时按程序扇区 SNAKE 扫掠（限速率、不出扇区+容差）。
 ##
 ## 全部确定性（合成 return 固定序列 + 固定 seed RNG），可无头运行：
 ##   godot --headless --path games/sonar --script res://tools/torpedo_track_test.gd
@@ -299,7 +299,7 @@ func _sweep_search_sector(fails: Array) -> void:
 	for i in range(6):
 		tp.step(DT, sim_t, ctx)
 		sim_t += DT
-	tp.cut_wire()  # → fallback → SEARCH + 预设扇区扫掠
+	tp.cut_wire()  # → fallback → LOST_REACQUIRE + 预设扇区扫掠
 	var entered_search: bool = false
 	var max_dev: float = 0.0
 	var max_delta: float = 0.0
@@ -309,7 +309,7 @@ func _sweep_search_sector(fails: Array) -> void:
 	for i in range(360):
 		tp.step(DT, sim_t, ctx)
 		sim_t += DT
-		if tp.mission_state_name() == "SEARCH":
+		if tp.mission_state_name() == "LOST_REACQUIRE":
 			entered_search = true
 		var err: float = NavUtils.wrap180(tp.course_deg - prog.search_center_deg)
 		max_dev = maxf(max_dev, absf(err))
@@ -319,8 +319,9 @@ func _sweep_search_sector(fails: Array) -> void:
 		if absf(err) > 1.0:
 			prev_err = err
 		prev_course = tp.course_deg
-	_assert_bool(fails, "SWEEP-a entered SEARCH", entered_search, true)
-	_assert_bool(fails, "SWEEP-b stays in sector (%.1f)" % max_dev, max_dev <= 45.0 + 15.0, true)
+	_assert_bool(fails, "SWEEP-a entered LOST_REACQUIRE", entered_search, true)
+	# §7.6：LOST_REACQUIRE 围绕最后估计方位**扩大**扇区（reacquire_sector 取 2×half，上限 150°）。
+	_assert_bool(fails, "SWEEP-b stays in sector (%.1f)" % max_dev, max_dev <= 90.0 + 15.0, true)
 	_assert_bool(
 		fails,
 		"SWEEP-c rate limited (%.2f/step)" % max_delta,

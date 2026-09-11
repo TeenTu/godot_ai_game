@@ -2,9 +2,9 @@ extends SceneTree
 ## req_overhaul_test.gd — REQ 制导重构批无头验收（RO-01..13）。
 ##
 ## 覆盖评审验收项：
-##   RO-01  TRACKING + WIRE_ONLY：绝不自动转向/进 ATTACK（TRACK AVAILABLE）。
+##   RO-01  TRACKING + WIRE_ONLY：绝不自动转向/进 LOCKED_ATTACK（TRACK AVAILABLE）。
 ##   RO-02  Accept Track → ASSISTED，下一物理 tick 即开始有限速率转向。
-##   RO-03  AUTONOMOUS 有航迹立即接管；无航迹进 SEARCH。
+##   RO-03  AUTONOMOUS 有航迹立即接管；无航迹不改变任务态（D-03）。
 ##   RO-04  恒定 1°/s 带噪方位：滤波方位率收敛、跨 359°/0° 无跳变。
 ##   RO-05  仅 8 秒一次主动回波也能跨 Ping 保持航迹（两次 Ping 间不按 tick 扣分）。
 ##   RO-06  1500m、10kn 横向目标 vs 40kn 鱼雷（固定无噪声）稳定拦截。
@@ -146,7 +146,7 @@ func _ro_01_wire_only_no_steer(fails: Array) -> void:
 	for i in range(6):
 		tp.step(DT, sim_t, ctx)
 		sim_t += DT
-	_assert_bool(fails, "RO-01a in water", tp.mission_state_name() == "WIRE_RUN", true)
+	_assert_bool(fails, "RO-01a in water", tp.mission_state_name() == "TRANSIT", true)
 	var course0: float = tp.course_deg
 	# 持续推进（声源在 ±60° FOV 内强探测）→ seeker 应达 TRACKING。
 	var reached_tracking := false
@@ -160,7 +160,9 @@ func _ro_01_wire_only_no_steer(fails: Array) -> void:
 	_assert_bool(
 		fails, "RO-01c authority stays WIRE_ONLY", tp.guidance_authority_name() == "WIRE_ONLY", true
 	)
-	_assert_bool(fails, "RO-01d no ATTACK mission", tp.mission_state_name() != "ATTACK", true)
+	_assert_bool(
+		fails, "RO-01d no LOCKED_ATTACK mission", tp.mission_state_name() != "LOCKED_ATTACK", true
+	)
 	var drifted: float = absf(NavUtils.wrap180(tp.course_deg - course0))
 	_assert_bool(fails, "RO-01e no steering under WIRE_ONLY", drifted < 1.0, true)
 
@@ -207,7 +209,7 @@ func _ro_02_accept_then_steer(fails: Array) -> void:
 
 ## ---- RO-03：AUTONOMOUS 有航迹立即接管；无航迹进 SEARCH ----
 func _ro_03_autonomy_takeover(fails: Array) -> void:
-	# 无航迹：授权自主 → SEARCH。
+	# 无航迹：授权自主不改变任务态——D-03 禁止「授权/超时/到点」自行进入转弯重搜。
 	var ctx0 := _mk_ctx([], {}, SEED + 3)
 	var tp0 := Torpedo.new()
 	tp0.launch("R3a", _mk_program(), 0.0, 0.0, 50.0, 100.0)
@@ -217,7 +219,9 @@ func _ro_03_autonomy_takeover(fails: Array) -> void:
 		sim_t += DT
 	var ok: bool = tp0.authorize_autonomy()
 	_assert_bool(fails, "RO-03a authorize ok", ok, true)
-	_assert_bool(fails, "RO-03b no track -> SEARCH", tp0.mission_state_name() == "SEARCH", true)
+	_assert_bool(
+		fails, "RO-03b no track stays TRANSIT", tp0.mission_state_name() == "TRANSIT", true
+	)
 	# 有航迹：授权自主 → 立即接管转向。
 	var c := _contact("TG3", 0.0, 900.0, 50.0, 6.0, 200.0)
 	var ctx := _mk_ctx([c["entity"]], {c["id"]: c["ac"]}, SEED + 4)
@@ -530,7 +534,7 @@ func _ro_13_miss_reasons(fails: Array) -> void:
 	var prog2 := _mk_program()
 	prog2.autonomy_enable_mode = WeaponProgram.AutonomyEnableMode.MANUAL
 	tp2.launch("R13b", prog2, 0.0, 0.0, 50.0, 100.0)
-	tp2.authorize_autonomy()  # 无航迹 → SEARCH，但制导从未实际操舵
+	tp2.authorize_autonomy()  # 无航迹：任务态不变，但制导从未实际操舵
 	var reason: String = TorpedoMissReason.compute(true, false, [])
 	_assert_bool(fails, "RO-13c never engaged reason", reason == "NO_GUIDANCE_AUTHORITY", true)
 	# c) 优先级链：曾操舵且饱和 → TURN_RATE_SATURATED。

@@ -37,7 +37,8 @@ const SLOT_FIT_READY: String = "FIT_READY"
 const SLOT_FITTED: String = "FITTED"
 const SLOT_STALE: String = "STALE"
 
-var mode: int = Mode.MANUAL
+## S1-11 D-11：默认 ASSISTED——新任务开箱即自动 Mark/关联/分类/增量 Fit。
+var mode: int = Mode.ASSISTED
 ## REQ-AU-01 交战规则：FULL_AUTO 的动作边界（缺省只允许自动重拟合）。
 var roe: Dictionary = {"auto_refit": true, "auto_fire": false, "auto_decoy": false}
 ## REQ-AU-02 槽位簿记与计龄。

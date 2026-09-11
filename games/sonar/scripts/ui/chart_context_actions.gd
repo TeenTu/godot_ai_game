@@ -6,8 +6,9 @@ extends RefCounted
 ## Ping → ActivePingController.request_ping()（UNAVAILABLE/冷却/在途检查）
 ## → world.issue_ping()（MISSION_ENDED 命令门）；切断导线 → Torpedo
 ## .cut_wire()（内部门控 + last_cmd_reject_reason）。菜单关闭不改视图与
-## 选择；任何动作不绕过终局/联锁。"开始测距尺/查看证据历史"为占位条目
-## （S109 未定义交互细则，本批仅提示）。
+## 选择；任何动作不绕过终局/联锁。S1-11 §4.3：空白地图菜单新增「绘制/清除
+## 鱼雷航线」真实入口，原未实现的「开始测距尺」占位已删除（AT-24 无可选但
+## 无效的按钮）；「查看证据历史」仍为占位条目（S109 未定义交互细则，仅提示）。
 
 var _ui = null
 var _chart: ChartView = null
@@ -33,6 +34,10 @@ func run_action(action: String, ctx: Dictionary) -> void:
 
 
 func _on_context(ctx: Dictionary) -> void:
+	# S1-11 §4.3：把选中鱼雷 / 绘制态注入上下文（菜单据此动态生成条目）。
+	ctx["selected_torpedo_id"] = _chart.selected_torpedo_id
+	var wmc = _ui.map_control() if _ui.has_method("map_control") else null
+	ctx["route_drawing"] = bool(wmc != null and wmc.is_drawing())
 	var gp: Vector2 = _chart.get_screen_transform() * (ctx["screen_position"] as Vector2)
 	_menu.open_at(gp, ctx)
 
@@ -40,7 +45,7 @@ func _on_context(ctx: Dictionary) -> void:
 func _on_action(action: String, ctx: Dictionary) -> void:
 	match action:
 		"threat_view", "threat_set_active", "threat_evidence":
-			_pager.select("tracks")
+			_pager.select("tactics")
 			_ui._update_status(UiText.t("threat_detail_hint"))
 		"threat_center":
 			_center_threat(str(ctx.get("hit_id", "")))
@@ -56,7 +61,7 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 			_ui._update_status(str(UiText.t("mark_group_set_to")) + str(ctx.get("hit_id", "")))
 		"contact_goto_tma":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
-			_pager.select("tracks")
+			_pager.select("tactics")
 		"contact_fit":
 			_ui._on_contact_selected(str(ctx.get("hit_id", "")))
 			_ui._on_fit_tma()
@@ -66,26 +71,57 @@ func _on_action(action: String, ctx: Dictionary) -> void:
 			_chart.cam_center = ctx["world_position"]
 			_chart.queue_redraw()
 		"torpedo_select":
-			_chart.selected_torpedo_id = str(ctx.get("hit_id", ""))
-			_chart.torpedo_selected.emit(_chart.selected_torpedo_id)
-			_chart.queue_redraw()
-		"torpedo_wire":
-			_pager.select("weapons")
+			_map_select_torpedo(str(ctx.get("hit_id", "")))
+		"torpedo_active_toggle":
+			_map().toggle_active(str(ctx.get("hit_id", "")))
+		"torpedo_reroute":
+			_map().begin_reroute(str(ctx.get("hit_id", "")))
 		"torpedo_center":
 			_center_torpedo(str(ctx.get("hit_id", "")))
 		"torpedo_cut":
 			_cut_wire(str(ctx.get("hit_id", "")))
+		"empty_route_draw":
+			if _ui.has_method("begin_route_draw"):
+				_ui.begin_route_draw()
+		"empty_route_clear":
+			if _ui.has_method("clear_route_draw"):
+				_ui.clear_route_draw()
+		"empty_route_done":
+			var m = _map()
+			if m != null:
+				m.finish_draw()
+		"empty_torpedo_goto":
+			_map().map_goto_point(ctx["world_position"])
+		"empty_torpedo_waypoint":
+			_map().map_append_waypoint(ctx["world_position"])
+		"empty_torpedo_active":
+			_map().map_active_at(ctx["world_position"])
+		"empty_torpedo_clear_route":
+			_map().map_clear_remaining_route()
 		"empty_center":
 			_chart.cam_center = ctx["world_position"]
 			_chart.queue_redraw()
-		"empty_ruler":
-			_ui._update_status(UiText.t("ruler_placeholder"))
 		"empty_frame":
 			_chart.auto_frame()
 		"empty_clear":
 			_clear_selection()
 		"empty_layers":
-			_pager.select("own")
+			_pager.select("tactics")
+
+
+## 地图武器总控（发射航线 + 在水鱼雷地图命令）。
+func _map():
+	return _ui.map_control() if _ui.has_method("map_control") else null
+
+
+## §4.3：选中鱼雷（写图表选择 + 弹出浮动栏）。
+func _map_select_torpedo(tid: String) -> void:
+	_chart.selected_torpedo_id = tid
+	_chart.torpedo_selected.emit(tid)
+	_chart.queue_redraw()
+	var m = _map()
+	if m != null:
+		m.set_selected_torpedo(tid)
 
 
 func _center_threat(tid: String) -> void:

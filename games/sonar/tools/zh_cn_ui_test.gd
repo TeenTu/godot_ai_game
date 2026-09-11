@@ -119,7 +119,7 @@ func _at36_display_layer_only(ui: Control) -> void:
 	_assert(
 		fails,
 		"AT-36a internal enum name stays EN",
-		tp.mission_state_name() == "WIRE_RUN",
+		tp.mission_state_name() == "TRANSIT",
 		tp.mission_state_name()
 	)
 	_assert(

@@ -215,6 +215,10 @@ func _step_torpedo(
 			_w.end_mission(_w.MissionState.PLAYER_DEFEATED, "TORPEDO_HIT")
 	else:
 		contact.damage_state = "sunk"
+		# S1-11 D-10/AT-40：玩家鱼雷有效命中任务敌方目标 → 立即胜利，且只需一次。
+		# 命中诱饵/非任务目标绝不触发（is_mission_target 只认场景敌对实体）。
+		if _w.is_mission_target(contact):
+			_w.end_mission(_w.MissionState.PLAYER_VICTORY, "TARGET_DESTROYED")
 	(
 		_w
 		. _detonations

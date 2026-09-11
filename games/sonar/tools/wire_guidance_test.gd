@@ -76,7 +76,7 @@ func _wpn_wire_01_commands(fails: Array, sim_t0: float) -> void:
 	for i in range(3):
 		tp.step(DT, sim_t, null)
 		sim_t += DT
-	_assert_eq(fails, "WIRE-01a in wire run", tp.mission_state, Torpedo.MissionState.WIRE_RUN)
+	_assert_eq(fails, "WIRE-01a in wire run", tp.mission_state, Torpedo.MissionState.TRANSIT)
 	_assert_bool(fails, "WIRE-01b course cmd", tp.command_course(90.0), true)
 	_assert_bool(
 		fails, "WIRE-01c depth cmd", tp.command_depth_band(WeaponProgram.DEPTH_BAND_LOWER), true
@@ -244,15 +244,15 @@ func _wpn_wire_04_fallback(fails: Array, sim_t0: float) -> void:
 	for i in range(3):
 		tp.step(DT, sim_t, null)
 		sim_t += DT
-	if tp.mission_state != Torpedo.MissionState.WIRE_RUN:
+	if tp.mission_state != Torpedo.MissionState.TRANSIT:
 		fails.append("WIRE-04a not wire run before cut")
 	# 玩家切断 → fallback
 	_assert_bool(fails, "WIRE-04b cut ok", tp.cut_wire(), true)
 	_assert_eq(fails, "WIRE-04c state cut", tp.wire_link.state, WireLink.State.CUT)
 	if not kinds.has("FALLBACK"):
 		fails.append("WIRE-04d no FALLBACK event")
-	if tp.mission_state != Torpedo.MissionState.SEARCH:
-		fails.append("WIRE-04e mission not SEARCH after fallback")
+	if tp.mission_state != Torpedo.MissionState.LOST_REACQUIRE:
+		fails.append("WIRE-04e mission not LOST_REACQUIRE after fallback")
 	# 预设搜索深度带命令已下发（LOWER → 180m hold）
 	if tp.commanded_depth_band != WeaponProgram.DEPTH_BAND_LOWER:
 		fails.append("WIRE-04f depth band not LOWER")

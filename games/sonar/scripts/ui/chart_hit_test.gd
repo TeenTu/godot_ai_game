@@ -4,11 +4,14 @@ extends RefCounted
 ##
 ## 优先级：威胁估计符号 > 己方在水鱼雷 > 普通 Contact/Fit/System 符号 >
 ## 威胁 LOB > 空白。禁止读取 Truth：坐标全部来自 ChartView 注入的绘制数据。
+## S1-11 Batch 7 / AT-44：touch=true 时切换到放大触摸命中半径（UiContract）。
 
 const HIT_PX: float = 14.0
 
 
-static func pick(chart: Control, screen_pos: Vector2) -> Dictionary:
+## touch=true 时使用 AT-44 的放大触摸命中半径（航线点/鱼雷图标好按）。
+static func pick(chart: Control, screen_pos: Vector2, touch: bool = false) -> Dictionary:
+	var r: float = UiContract.TOUCH_HIT_PX if touch else HIT_PX
 	var ctx: Dictionary = {
 		"screen_position": screen_pos,
 		"world_position": chart.screen_to_world(screen_pos),
@@ -16,22 +19,22 @@ static func pick(chart: Control, screen_pos: Vector2) -> Dictionary:
 		"hit_id": "",
 	}
 	for h in threat_points(chart):
-		if (h["pos"] as Vector2).distance_to(screen_pos) <= HIT_PX:
+		if (h["pos"] as Vector2).distance_to(screen_pos) <= r:
 			ctx["hit_kind"] = "THREAT"
 			ctx["hit_id"] = str(h["track_id"])
 			return ctx
 	for tp in torpedo_points(chart):
-		if (tp["pos"] as Vector2).distance_to(screen_pos) <= HIT_PX:
+		if (tp["pos"] as Vector2).distance_to(screen_pos) <= r:
 			ctx["hit_kind"] = "OWN_TORPEDO"
 			ctx["hit_id"] = str(tp["torpedo_id"])
 			return ctx
 	for c in contact_points(chart):
-		if (c["pos"] as Vector2).distance_to(screen_pos) <= HIT_PX:
+		if (c["pos"] as Vector2).distance_to(screen_pos) <= r:
 			ctx["hit_kind"] = "CONTACT"
 			ctx["hit_id"] = str(c["track_id"])
 			return ctx
 	for t in threat_lob_points(chart):
-		if (t["pos"] as Vector2).distance_to(screen_pos) <= HIT_PX:
+		if (t["pos"] as Vector2).distance_to(screen_pos) <= r:
 			ctx["hit_kind"] = "THREAT_LOB"
 			ctx["hit_id"] = str(int(t["evidence_id"]))
 			return ctx

@@ -52,10 +52,10 @@ func _build() -> void:
 	row_turn.add_theme_constant_override("separation", 4)
 	add_child(row_turn)
 	for cfg in [
-		["Left 5°", _on_turn_left],
-		["Right 5°", _on_turn_right],
-		["+2kn", _on_speed_up],
-		["-2kn", _on_slow_down]
+		[UiText.t("btn_turn_left"), _on_turn_left],
+		[UiText.t("btn_turn_right"), _on_turn_right],
+		[UiText.t("btn_speed_up"), _on_speed_up],
+		[UiText.t("btn_speed_down"), _on_slow_down]
 	]:
 		var b := Button.new()
 		b.text = cfg[0] as String
@@ -100,26 +100,26 @@ func sync() -> void:
 		_spin_depth.set_value_no_signal(own.depth_m)
 	if _lbl_cmd == null:
 		return
-	var txt: String = "ACT %.0f° %.1fkn" % [own.course_deg, own.speed_kn]
+	var txt: String = UiText.t("own_act_fmt") % [own.course_deg, own.speed_kn]
 	if own.has_course_command():
 		var err: float = absf(NavUtils.wrap180(own.commanded_course_deg - own.course_deg))
 		var rate: float = maxf(own.turn_rate_deg_s, TruthEntity.DEFAULT_TURN_RATE_DEG_S)
-		txt += " → CMD %.0f° (%.0fs)" % [own.commanded_course_deg, err / rate]
+		txt += UiText.t("own_cmd_course_fmt") % [own.commanded_course_deg, err / rate]
 	if own.has_speed_command():
 		var dv: float = absf(own.commanded_speed_kn - own.speed_kn)
 		var acc: float = maxf(own.acceleration_kn_s, TruthEntity.DEFAULT_ACCEL_KN_S)
-		txt += " → CMD %.1fkn (%.0fs)" % [own.commanded_speed_kn, dv / acc]
+		txt += UiText.t("own_cmd_speed_fmt") % [own.commanded_speed_kn, dv / acc]
 	# S1-07A：深度 ACT→CMD + 换层 ETA + 层带（模型未启用则纯数值）。
-	txt += " | D %.0fm" % own.depth_m
+	txt += UiText.t("own_depth_fmt") % own.depth_m
 	if own.has_depth_command():
 		var dz: float = absf(own.commanded_depth_m - own.depth_m)
 		txt += (
-			"→%.0fm (ETA %.0fs)"
+			UiText.t("own_depth_cmd_fmt")
 			% [own.commanded_depth_m, dz / maxf(own.max_vertical_speed_m_s, 0.5)]
 		)
 	var dm: RefCounted = _depth_model()
 	if dm != null:
-		txt += " %s" % (dm as DepthLayerModel).band_name(own.depth_m)
+		txt += " %s" % UiText.depth_preset((dm as DepthLayerModel).band_name(own.depth_m))
 	_lbl_cmd.text = txt
 
 

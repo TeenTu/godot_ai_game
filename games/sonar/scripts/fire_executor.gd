@@ -3,9 +3,10 @@ extends RefCounted
 ## fire_executor.gd — REQ-0908 Batch 1：发射执行与联锁（REQ-B1-04）。
 ##
 ## main_ui 只传"模式 + 选中 Contact"，判定与发射都在此控制器：
+##   - MAP_ROUTE：S1-11 D-01 玩家唯一发射方式——消费编程器携带的地图航线；
 ##   - SOLUTION：只读选中 Contact 自己的解（fcc 门：其他 Track/stale/超龄拒绝）；
 ##   - BEARING_ONLY：只用选中 Contact 的最新测量方位（无距离/无提前量）；
-##   - MANUAL：玩家显式航向，不读任何解。
+##   - MANUAL：玩家显式航向，不读任何解（敌方 AI 内部路径）。
 ## 返回 {ok, tp, mode, reason}；ok=false 表示被联锁拒绝。
 
 var fcc: FireControlContext = null
@@ -20,6 +21,11 @@ func execute(ws: WeaponSystem, world: World, mode: String, selected_id: String) 
 	var mission_gate: String = world.command_reject_reason()
 	if mission_gate != "":
 		out["reason"] = mission_gate
+		return out
+	# S1-11 D-01：MAP_ROUTE 必须携带地图航线程序——无编程器时拒绝，
+	# 绝不静默退化为 MANUAL（玩家唯一发射方式必须可追溯）。
+	if mode == "MAP_ROUTE" and programmer == null:
+		out["reason"] = "MAP_ROUTE requires a route program"
 		return out
 	# REQ-B4-01：编程控制器路径——程序由面板编辑项 + 推荐默认构建，
 	# SOLUTION 解绑定/stale 联锁在 build_program 内经 fcc 把关。

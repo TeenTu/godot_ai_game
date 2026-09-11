@@ -2,7 +2,7 @@ class_name GameOverOverlay
 extends Control
 ## game_over_overlay.gd — REQ-B5-04：任务终局覆盖层。
 ##
-## world.mission_ended 后显示 MISSION FAILED / 原因 / 任务时间，并提供
+## world.mission_ended 后显示任务胜利/任务失败 / 原因 / 任务时间，并提供
 ## 「Restart Same Seed」（经 UiContract 启动覆写重建同局面）与
 ## 「Main Menu」。全屏 STOP 鼠标过滤锁定底层面板；命令层另有统一
 ## 命令门（world.command_reject_reason）双保险。
@@ -10,6 +10,7 @@ extends Control
 signal restart_requested
 signal menu_requested
 
+var _lbl_title: Label = null
 var _lbl_reason: Label = null
 var _lbl_time: Label = null
 var _scenario: String = ""
@@ -39,6 +40,7 @@ func _init() -> void:
 	title.add_theme_color_override("font_color", Color(0.95, 0.25, 0.2))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(title)
+	_lbl_title = title
 	_lbl_reason = Label.new()
 	_lbl_reason.add_theme_font_size_override("font_size", 20)
 	_lbl_reason.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -56,6 +58,12 @@ func show_result(result: Dictionary, scenario: String, seed_val: int) -> void:
 	_scenario = scenario
 	_seed_val = seed_val
 	var reason: String = str(result.get("reason", ""))
+	# S1-11 D-10：按终局状态切换标题（胜利/失败），原因行同源映射。
+	var victory: bool = int(result.get("state", 1)) == 2
+	_lbl_title.text = UiText.t("mission_victory") if victory else UiText.t("mission_failed")
+	_lbl_title.add_theme_color_override(
+		"font_color", Color(0.3, 0.85, 0.45) if victory else Color(0.95, 0.25, 0.2)
+	)
 	_lbl_reason.text = UiText.mission(reason) if reason != "" else ""
 	var t: float = float(result.get("time", 0.0))
 	_lbl_time.text = "%s %02d:%02d" % [UiText.t("mission_time"), int(t) / 60, int(t) % 60]

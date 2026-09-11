@@ -68,11 +68,14 @@ var _processed_meas: int = 0
 var _track_colors: Dictionary = {}  # track_id -> Color
 var _dirty: bool = true
 var _last_meas_count: int = -1
-var _fire_mode: String = "SOLUTION"
 var _lowq_confirmed: bool = false
 var _own_track_pts: Array = []
 var _scenario_name: String = ""  # P0-08 实际加载的场景名
 var _game_over: GameOverOverlay = null  # REQ-B5-04 终局覆盖层
+var _towed := TowedUi.new()  # S1-03 拖曳阵操作胶水（拆出控行数）
+var _route_overlay: MapRouteOverlay = null  # S1-11 D-01 地图航线绘制层（由 _wmc 持有）
+var _wmc: WeaponMapControl = null  # S1-11 Batch 5：地图武器交互总控
+var _wire_depth: WireDepthRelay = WireDepthRelay.new()  # S1-11 §7.5 导线深度回传中继
 
 
 func _ready() -> void:
@@ -120,6 +123,11 @@ func _ready() -> void:
 	fire_exec.tracker = tracker
 	if _op_panel != null:
 		_op_panel.set_towed_available(op.towed_available())
+	# S1-03：拖曳阵操作胶水（信号 → 世界命令 + 状态行），从本文件拆出控行数。
+	_towed.world = world
+	_towed.op = op
+	_towed.op_panel = _op_panel
+	_towed.status = _update_status
 
 	trial = TrialSolution.new()
 	system_sol = null
@@ -127,7 +135,12 @@ func _ready() -> void:
 
 	if _weapon_panel != null and world.weapons != null:
 		_weapon_panel.bind(world.weapons, _chart, func(): _dirty = true)
-		_weapon_panel.set_fire_context("No FC solution — MANUAL / BEARING_ONLY allowed")
+		_weapon_panel.set_fire_context("")  # 初值：航线状态行已给"未绘制"，不重复一行
+	# S1-11 Batch 5：地图武器总控注入 world / fire_exec（发射链与地图命令）。
+	if _wmc != null:
+		_wmc.setup(self, world, _chart, fire_exec)
+	# S1-11 §7.5：导线深度回传台账按任务复位。
+	_wire_depth.reset()
 
 	if _own_panel != null:
 		_own_panel.bind_world(world)
@@ -138,7 +151,7 @@ func _ready() -> void:
 	if _alert_panel != null:
 		_alert_panel.bind(world, Callable(self, "_alert_track_bearings"))
 	if _depth_bar != null:
-		_depth_bar.bind(world)
+		_depth_bar.bind(world, tracker)
 
 	# REQ-B5-04：Game Over 覆盖层（终局锁定 + 同 seed 重玩 / 回主菜单）。
 	_game_over = GameOverOverlay.new()
@@ -186,6 +199,16 @@ func _build_ui() -> void:
 	_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_chart.tick_selected.connect(_on_tick_selected)
 	_chart.threat_selected.connect(_on_threat_selected)
+	# S1-11 §4.3：地图点击选中鱼雷 → 浮动控制栏。
+	_chart.torpedo_selected.connect(_on_map_torpedo_selected)
+	# S1-11 §5.3/D-01：地图武器交互总控（发射前航线绘制 + 在水鱼雷地图控制）。
+	# 覆盖在海图上，空闲时不挡地图交互（不侵入 ChartView 的 _draw）。
+	_wmc = WeaponMapControl.new()
+	_wmc.setup(self, null, _chart, fire_exec)
+	_wmc.status.connect(_update_status)
+	_wmc.route_state_changed.connect(_on_route_changed)
+	_route_overlay = _wmc.route_overlay
+	_chart.add_child(_wmc)
 	main_row.add_child(_chart)
 	_depth_bar = DepthBandDisplay.new()
 	main_row.add_child(_depth_bar)
@@ -232,9 +255,8 @@ func _build_sidebar() -> void:
 	_pager.selection_slot.add_child(_lbl_selected)
 	_threat_hud = ThreatHud.install(_pager.alert_slot, _chart, true, false)
 	_build_sonar_page(_pager.add_page("sonar", UiText.t("page_sonar")))
-	_build_tracks_page(_pager.add_page("tracks", UiText.t("page_tracks")))
+	_build_tactics_page(_pager.add_page("tactics", UiText.t("page_tactics")))
 	_build_weapons_page(_pager.add_page("weapons", UiText.t("page_weapons")))
-	_build_own_page(_pager.add_page("own", UiText.t("page_own")))
 	_pager.select("sonar")
 
 
@@ -253,10 +275,10 @@ func _build_sonar_page(pg: VBoxContainer) -> void:
 		func(on: bool):
 			_update_status(UiText.t("st_autocrew_on") if on else UiText.t("st_autocrew_off"))
 	)
-	_op_panel.towed_deploy_requested.connect(_on_towed_deploy)
-	_op_panel.towed_retract_requested.connect(_on_towed_retract)
-	_op_panel.towed_hold_requested.connect(_on_towed_hold)
-	_op_panel.towed_length_commanded.connect(_on_towed_length_commanded)
+	_op_panel.towed_deploy_requested.connect(_towed.on_deploy)
+	_op_panel.towed_retract_requested.connect(_towed.on_retract)
+	_op_panel.towed_hold_requested.connect(_towed.on_hold)
+	_op_panel.towed_length_commanded.connect(_towed.on_length_commanded)
 	_op_panel.ping_requested.connect(_on_ping_requested)
 	_op_panel.active_undo_requested.connect(_on_active_undo)
 	_op_panel.active_return_selected.connect(_on_active_return_selected)
@@ -266,8 +288,8 @@ func _build_sonar_page(pg: VBoxContainer) -> void:
 	pg.add_child(op_sec)
 
 
-## 页面二航迹：接触/威胁列表 + Mark 组 + Fit/Trial（S109 §8.2）。
-func _build_tracks_page(pg: VBoxContainer) -> void:
+## 页面二战术：接触卡/威胁列表 + Mark 组 + Fit/Trial + 本艇机动与图层（S109 §8.2 / S1-11 D-18）。
+func _build_tactics_page(pg: VBoxContainer) -> void:
 	_btn_mark = Button.new()
 	_btn_mark.text = UiText.t("btn_mark")
 	_btn_mark.pressed.connect(_on_mark)
@@ -318,6 +340,7 @@ func _build_tracks_page(pg: VBoxContainer) -> void:
 	_spin_range.value_changed.connect(func(v): trial.set_range(v))
 	_spin_course.value_changed.connect(func(v): trial.set_course(v))
 	_spin_speed.value_changed.connect(func(v): trial.set_speed(v))
+	_build_own_page(pg)  # S1-11 D-18：本艇页并入战术页，不再有第四个顶级页
 
 
 ## 页面三武器：发射管/编程、在水武器、诱饵、战果评估（S109 §8.2）。
@@ -325,10 +348,15 @@ func _build_weapons_page(pg: VBoxContainer) -> void:
 	_weapon_panel = WeaponPanelUI.new()
 	pg.add_child(_weapon_panel)
 	_weapon_panel.fire_requested.connect(_on_fire_torpedo)
-	_weapon_panel.fire_mode_changed.connect(func(m: String): _fire_mode = m)
+	_weapon_panel.route_draw_toggled.connect(_on_route_draw_toggled)
+	_weapon_panel.route_undo_requested.connect(_on_route_undo)
+	_weapon_panel.route_clear_requested.connect(_on_route_clear)
+	# S1-11 §9.3/AT-26：摘要行点击 → 地图选中并居中该鱼雷（武器页只读摘要）。
+	_weapon_panel.summary_row_clicked.connect(_on_summary_row_clicked)
 	fire_exec.programmer = _weapon_panel.programmer  # REQ-B4-01 发射前编程
 	_in_water_panel = InWaterWeaponPanel.new()
 	pg.add_child(_in_water_panel)
+	_in_water_panel.row_clicked.connect(_on_summary_row_clicked)
 	_cm_panel = CountermeasurePanel.new()
 	_cm_panel.status.connect(func(m: String): _update_status(m))
 	pg.add_child(_cm_panel)
@@ -346,7 +374,7 @@ func _build_own_page(pg: VBoxContainer) -> void:
 	UiSection.body(sec_status).add_child(_lbl_status)
 	pg.add_child(sec_status)
 	var auto_panel := AutomationPanelUI.new()
-	auto_panel.bind(tracker, _auto_refit_track)
+	auto_panel.bind(tracker, _auto_refit_track, world)
 	var auto_sec := UiSection.make(UiText.t("sec_automation"))
 	UiSection.body(auto_sec).add_child(auto_panel)
 	pg.add_child(auto_sec)
@@ -391,6 +419,7 @@ func _build_contact_list(pg: Control) -> void:
 	pg.add_child(ct_title)
 	_contact_rows_box = VBoxContainer.new()
 	pg.add_child(_contact_rows_box)
+	ContactCard.install(pg, self)  # S1-11 D-17：接触卡仅四个直接动作 + 详情折叠
 
 
 func _build_layer_toggles(pg: Control) -> void:
@@ -503,6 +532,10 @@ func _process(delta: float) -> void:
 		_weapon_panel.refresh()
 	if _in_water_panel != null:
 		_in_water_panel.sync()
+	if _wmc != null:
+		_wmc.refresh()
+	# S1-11 §7.5/AT-32：鱼雷导线回传 → 所关联接触的深度概率（断线自动停）。
+	_wire_depth.advance(world, tracker, world.sim_time)
 	if _cm_panel != null:
 		_cm_panel.sync()
 	if _alert_panel != null:
@@ -532,82 +565,9 @@ func _feed_new_measurements() -> void:
 		_processed_meas += 1
 
 
-## 重建 LOB / meas_index / BT 点列 / 残差数组。
+## 重建 LOB / meas_index / BT 点列 / 残差数组（装配逻辑见 UiChartData）。
 func _rebuild_display_data() -> void:
-	_dirty = false
-	var now: float = world.sim_time
-	var sel: Track = _selected_track()
-	var outlier_times: Dictionary = TmaUiData.outlier_times(last_fit, selected_track_id)
-	var all_lobs: Array = []
-	var meas_index: Array = []
-	var leg_bounds: Array = TmaUiData.leg_boundary_times(world.measurements)
-	for t in tracker.all_tracks():
-		if t.state != Track.TrackState.ACTIVE:
-			continue
-		var col: Color = _color_for_track(t.track_id)
-		var is_sel: bool = t.track_id == selected_track_id
-		all_lobs.append_array(TmaUiData.lob_entries(t, col, is_sel, outlier_times))
-		if is_sel:
-			meas_index.append_array(TmaUiData.meas_index_entries(t, outlier_times))
-	_chart.lobs = all_lobs
-	_chart.meas_index = meas_index
-	_chart.leg_boundary_times = leg_bounds
-	_chart.fit_now_time = now
-	_chart.fit_track_id = selected_track_id
-	_chart.fit_status = (
-		str(last_fit.get("status", "NO_FIT")) if not last_fit.is_empty() else "NO_FIT"
-	)
-	if last_fit.is_empty() or str(last_fit.get("track_id", "")) != selected_track_id:
-		_chart.fit_status = "NO_FIT"
-	_chart.fit_hypotheses = TmaUiData.chart_hypotheses(last_fit, selected_track_id)
-	_chart.fit_ticks = TmaUiData.fit_tick_times(
-		last_fit, selected_track_id, TmaUiData.leg_boundary_times(world.measurements)
-	)
-	_chart.fit_cov_pos = TmaUiData.propagated_cov(last_fit, now)
-	if sel != null:
-		_chart.range_ring = TmaUiData.range_ring_data(sel, now, _color_for_track(sel.track_id))
-	else:
-		_chart.range_ring = {}
-
-	var points: Array = []
-	var t_min: float = INF
-	var t_max: float = -INF
-	if sel != null:
-		var col2: Color = _color_for_track(sel.track_id)
-		for m in sel.measurement_history:
-			(
-				points
-				. append(
-					{
-						"time": m.timestamp,
-						"bearing_deg": m.measured_bearing_deg,
-						"sigma_deg": maxf(m.bearing_sigma_deg, 0.5),
-						"color": col2,
-						"inlier": not outlier_times.has(m.timestamp),
-						"track_id": sel.track_id,
-					}
-				)
-			)
-			t_min = minf(t_min, m.timestamp)
-			t_max = maxf(t_max, m.timestamp)
-	_bt_plot.meas_points = points
-	_bt_plot.model_curves = TmaUiData.bt_curves(last_fit, selected_track_id)
-	_bt_plot.turn_times = TmaUiData.own_turn_times(world.measurements)
-	_bt_plot.track_id = selected_track_id
-	_bt_plot.set_time_window(
-		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
-	)
-
-	var res: Array = []
-	if not last_fit.is_empty() and str(last_fit.get("track_id", "")) == selected_track_id:
-		res = last_fit.get("residuals", [])
-	_res_plot.residuals = res
-	_res_plot.track_id = selected_track_id
-	_res_plot.sigma_ref_deg = TmaUiData.mean_sigma(res)
-	_res_plot.sigma_ref_m = TmaUiData.mean_sigma_range(res)
-	_res_plot.set_time_window(
-		t_min if t_min != INF else 0.0, maxf(t_max, now) if t_max != -INF else 1.0
-	)
+	UiChartData.rebuild(self)
 
 
 func _selected_track() -> Track:
@@ -620,48 +580,7 @@ func _selected_track() -> Track:
 
 
 func _update_displays_light() -> void:
-	var own: TruthEntity = world.world["own"]
-	_chart.now_time = world.sim_time
-	_chart.set_threat_evidence(world.player_evidence, world.sim_time)
-	_chart.threat_snapshots = world.threat_tracks.ui_snapshots()
-	_threat_hud.refresh(_chart.threat_snapshots, world.sim_time)
-	_threat_list.refresh(_chart.threat_snapshots, world.sim_time)
-	_pager.set_badge("tracks", _active_threat_count())  # §8.3 红点（隐页也更新）
-	_chart.own_pos = Vector2(own.position_east_m, own.position_north_m)
-	_chart.own_course_deg = own.course_deg  # S1-01.4：本艇符号随实际艏向旋转
-	_chart.own_track = _own_track_cache()
-	_chart.trial_pos = Vector2(trial.estimated_position_east_m, trial.estimated_position_north_m)
-	_chart.trial_active = trial.range_m > 0.0
-	if _chart.trial_active:
-		var v_ms: float = NavUtils.kn_to_ms(trial.speed_kn)
-		_chart.trial_velocity = Vector2(
-			v_ms * sin(deg_to_rad(trial.course_deg)), v_ms * cos(deg_to_rad(trial.course_deg))
-		)
-	else:
-		_chart.trial_velocity = Vector2.ZERO
-	if system_sol != null:
-		_chart.system_pos = Vector2(
-			system_sol.estimated_position_east_m, system_sol.estimated_position_north_m
-		)
-		_chart.system_active = true
-	else:
-		_chart.system_active = false
-	_chart.truth_positions = TmaUiData.truth_snapshot(
-		world, _chart.show_truth or bool(_chart.layers.get("truth", false))
-	)
-	_chart.queue_redraw()
-
-	_bearing.own_course_deg = own.course_deg
-	_bearing.lobs = TmaUiData.latest_lobs_for_dial(_chart.lobs)
-	var latest: Measurement = TmaUiData.latest_measurement(world)
-	if latest != null:
-		_bearing.latest_bearing_deg = latest.measured_bearing_deg
-		_bearing.latest_color = _color_for_track("LATEST")
-	else:
-		_bearing.latest_bearing_deg = -1.0
-	_bearing.queue_redraw()
-	_bt_plot.queue_redraw()
-	_res_plot.queue_redraw()
+	UiChartData.update_light(self)
 
 
 ## 非 LOST 威胁数：航迹页按钮徽标计数（S109 §8.3，AT-30）。
@@ -671,27 +590,6 @@ func _active_threat_count() -> int:
 		if str(s["state"]) != "LOST":
 			n += 1
 	return n
-
-
-func _own_track_cache() -> Array:
-	if _own_track_pts.is_empty() or _last_meas_count > _own_track_pts.size() - 1:
-		_own_track_pts = TmaUiData.sample_own_track(world)
-	return _own_track_pts
-
-
-func _color_for_track(id: String) -> Color:
-	if _track_colors.has(id):
-		return _track_colors[id]
-	var palette: Array = [
-		Color(1.0, 0.85, 0.3),
-		Color(0.4, 1.0, 0.6),
-		Color(0.5, 0.7, 1.0),
-		Color(1.0, 0.5, 0.9),
-		Color(0.9, 0.6, 0.4),
-	]
-	var c: Color = palette[_track_colors.size() % palette.size()]
-	_track_colors[id] = c
-	return c
 
 
 func _update_panel() -> void:
@@ -706,7 +604,7 @@ func _update_panel() -> void:
 	var brcs: String = ""
 	if trial.range_m > 0.0:
 		brcs = (
-			"  方位%.0f° 距离%.0fm 航向%.0f° 航速%.1fkn"
+			"  方位%.0f° 距离%.0f 米 航向%.0f° 航速%.1f 节"
 			% [trial.bearing_deg, trial.range_m, trial.course_deg, trial.speed_kn]
 		)
 	_lbl_selected.text = (
@@ -888,7 +786,7 @@ func _present_fit(tid: String, announce: bool) -> void:
 		if bool(r.get("success", false)):
 			_update_status(
 				(
-					"TMA %s %s | 方位%.0f° 距离%.0fm 航向%.0f° 航速%.1fkn"
+					"TMA %s %s | 方位%.0f° 距离%.0f 米 航向%.0f° 航速%.1f 节"
 					% [
 						tid,
 						st_txt,
@@ -933,39 +831,101 @@ func _on_enter_solution() -> void:
 		return
 	system_sol = res["solution"]
 	if _weapon_panel != null:
-		_weapon_panel.set_fire_context("SOLUTION ready — %s (src %s)" % [st, tid])
+		_weapon_panel.set_fire_context("建议航线就绪 — %s (src %s)；航线仍需在地图上绘制" % [st, tid])
 	_update_status(UiText.t("evt_submit") + " " + tid + "（" + UiText.fit(st) + "）")
 
 
-## REQ-B1-04：发射模式玩家显式选择（FIRE MODE），执行/联锁在 FireExecutor。
-func _on_fire_torpedo() -> void:
-	if world == null or world.weapons == null:
+## ---- S1-11 §5.3 / D-01：地图航线（玩家唯一发射方式，逻辑见 WeaponMapControl）----
+func _on_route_draw_toggled(on: bool) -> void:
+	if _wmc == null:
 		return
-	var res: Dictionary = fire_exec.execute(world.weapons, world, _fire_mode, selected_track_id)
-	if not bool(res.get("ok", false)):
-		_update_status(
-			(
-				"%s [%s]：%s"
-				% [
-					UiText.t("evt_fire_reject"),
-					UiText.fire_mode(_fire_mode),
-					UiText.reject(str(res.get("reason", "?")))
-				]
-			)
-		)
-		return
-	var tp: Torpedo = res["tp"]
-	var mode: String = str(res["mode"])
-	if tp != null:
-		_update_status(
-			"%s（%s / %s）" % [UiText.t("evt_torpedo_away"), tp.torpedo_id, UiText.fire_mode(mode)]
-		)
-		_dirty = true
-		if _weapon_panel != null:
-			_weapon_panel.set_fire_context("In-water: %s (%s)" % [tp.torpedo_id, mode])
-			_weapon_panel.refresh()
+	if on:
+		_wmc.begin_draw()
 	else:
-		_update_status("%s — 无已装管或参数非法（%s）" % [UiText.t("evt_fire_reject"), UiText.fire_mode(mode)])
+		_wmc.cancel_draw()
+		_dirty = true
+
+
+func _on_route_undo() -> void:
+	if _wmc != null:
+		_wmc.undo_point()
+		_dirty = true
+
+
+func _on_route_clear() -> void:
+	if _wmc == null:
+		return
+	_wmc.cancel_draw()
+	if _weapon_panel != null:
+		_weapon_panel.set_route_drawing(false)
+		_weapon_panel.set_route_status(UiText.t("route_none"))
+	_dirty = true
+
+
+## 航线层任何变化（加点/撤销/取消/开机点）→ 刷新面板状态行 + 地图重绘。
+func _on_route_changed() -> void:
+	_dirty = true
+	if _weapon_panel == null or _route_overlay == null:
+		return
+	var n: int = _route_overlay.future_point_count()
+	if _route_overlay.active:
+		_weapon_panel.set_route_status(
+			UiText.t("route_drawing_fmt") % [n, MapRouteOverlay.MAX_FUTURE_POINTS]
+		)
+	elif _route_overlay.can_commit():
+		_weapon_panel.set_route_status(UiText.t("route_ready_fmt") % n)
+	else:
+		_weapon_panel.set_route_status(UiText.t("route_none"))
+
+
+## S1-11 D-01：发射 = 沿地图航线（唯一方式），执行/联锁仍在 FireExecutor。
+func _on_fire_torpedo() -> void:
+	if _wmc == null:
+		return
+	var res: Dictionary = _wmc.try_fire()
+	if bool(res.get("ok", false)) and _weapon_panel != null:
+		var tp: Torpedo = res.get("tp", null)
+		_weapon_panel.set_route_drawing(false)
+		if tp != null:
+			_weapon_panel.set_fire_context(UiText.t("route_in_water") % str(tp.torpedo_id))
+		_weapon_panel.refresh()
+	_dirty = true
+
+
+## §4.3：地图点击鱼雷 → 浮动控制栏（真实 torpedo_id，数组删减后不重排）。
+func _on_map_torpedo_selected(tid: String) -> void:
+	if _wmc != null:
+		_wmc.set_selected_torpedo(tid)
+
+
+## 地图右键命令：绘制/清除鱼雷航线入口（Batch 4c 收尾，与 Batch 5 同一套交互）。
+func begin_route_draw() -> void:
+	_on_route_draw_toggled(true)
+
+
+func clear_route_draw() -> void:
+	_on_route_clear()
+
+
+func map_control() -> WeaponMapControl:
+	return _wmc
+
+
+func _set_map_torpedo(tid: String) -> void:
+	if _chart != null:
+		_chart.selected_torpedo_id = tid
+		_chart.queue_redraw()
+	if _wmc != null:
+		_wmc.set_selected_torpedo(tid)
+
+
+## AT-26：武器页摘要行点击 → 地图选中并居中该鱼雷（id 原样，绝不重排）。
+func _on_summary_row_clicked(tid: String) -> void:
+	if tid == "":
+		return
+	_set_map_torpedo(tid)
+	if _wmc != null:
+		_wmc.center(tid)
 
 
 func _update_status(msg: String) -> void:
@@ -990,7 +950,7 @@ func _op_step() -> void:
 	# REQ-B1-03：镜像证据修订（autocrew/主动回波等改动证据时自动置 stale）。
 	for t in tracker.all_tracks():
 		fcc.sync_revision(t)
-	_refresh_towed_status()
+	_towed.refresh_status()
 	_refresh_ping_status()
 	if _op_panel.autocrew_on():
 		# autocrew 可能返回 A/B 镜像组（共享 evidence）——整组作为一个 证据原子走 feed_evidence_group，一次物理到达 = 一个 Track，不跨时刻分裂。
@@ -1018,68 +978,6 @@ func _op_step() -> void:
 			_dirty = true
 			_update_status(UiText.t("st_autocrew_mark"))
 	_op_panel.refresh(op)
-
-
-func _towed_ref() -> TowedArray:
-	if world == null:
-		return null
-	return world.world.get("own", null).get("towed")
-
-
-func _on_towed_deploy() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.stream()
-	_update_status(UiText.t("st_towed_stream") + " %.0f m" % t.commanded_tow_length_m)
-
-
-func _on_towed_retract() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.retrieve()
-	_update_status(UiText.t("st_towed_retract"))
-
-
-func _on_towed_hold() -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.hold()
-	_update_status(UiText.t("st_towed_hold") + " %.0f m" % t.actual_tow_length_m)
-
-
-## S1-03：缆长命令（frac ∈ 0..1 × max_tow_length_m，来自滑条/预设按钮）。
-func _on_towed_length_commanded(frac: float) -> void:
-	var t: TowedArray = _towed_ref()
-	if t == null:
-		return
-	t.set_length_command(frac * t.max_tow_length_m)
-	_update_status(UiText.t("st_towed_cmd") + " %.0f m" % t.commanded_tow_length_m)
-
-
-## 刷新 TOWED 状态行 + 控件可用性（S1-03；ACT/CMD 分离显示）。
-func _refresh_towed_status() -> void:
-	if _op_panel == null:
-		return
-	var t: TowedArray = _towed_ref()
-	var on_towed: bool = op != null and op.active_array_id == "TOWED"
-	if t == null or not on_towed:
-		_op_panel.set_towed_status("Towed: n/a", false)
-		return
-	var line: String = (
-		"Towed: %s | ACT %.0fm / CMD %.0fm | arr %.0f° | usable %d%%"
-		% [
-			t.state_name(),
-			t.actual_tow_length_m,
-			t.commanded_tow_length_m,
-			t.array_heading_deg,
-			int(t.usable_fraction() * 100.0),
-		]
-	)
-	_op_panel.set_towed_status(line, true)
-	_op_panel.update_towed_controls(t)
 
 
 func _on_ping_requested() -> void:
@@ -1140,8 +1038,13 @@ func _on_ping_fit_requested(track_id: String) -> void:
 
 
 ## REQ-B1-01/02：Mark 关联流移入 MarkFlow（LOCKED/SUGGEST/AUTO + 同峰去重）。
+## S1-11 §3.3/AT-48：仅查看/切换 Contact 不隐式改变 Mark 归属；Shift＋点击才
+## 显式把该点追加到当前查看的接触（显式命令，不过 8° 自动关联门）。
 func _on_op_mark(x_value: float, as_true: bool = false, row: Dictionary = {}) -> void:
-	var res: Dictionary = mark_flow.handle_mark(x_value, as_true, row, selected_track_id)
+	var explicit_append: bool = Input.is_key_pressed(KEY_SHIFT) and selected_track_id != ""
+	var res: Dictionary = mark_flow.handle_mark(
+		x_value, as_true, row, selected_track_id, explicit_append
+	)
 	var sel_id: String = str(res.get("select", ""))
 	if sel_id != "":
 		selected_track_id = sel_id

@@ -97,6 +97,7 @@ var torpedoes: Array = []
 #   sigma_deg, kind, time, length_m}]（observer = 接收时刻本艇位置快照）。
 var threat_lobs: Array = []
 var threat_snapshots: Array = []  # ThreatTrackManager.ui_snapshots() 输出（§4.5）
+var depth_badges: Array = []  # S1-11 §7.4 敌方深度概率徽标（UiChartData 装配）
 var selected_torpedo_id: String = ""  # 地图点击选中（P1-02 命中测试）
 var selected_evidence_id: int = -1  # 选中威胁证据（地图/告警交叉联动，P0-07.4）
 var now_time: float = 0.0  # 当前仿真时刻（脉冲动画/龄期衰减）
@@ -204,7 +205,7 @@ func _gui_input(event: InputEvent) -> void:
 			# S109 §9.1：右键→命中测试（ChartHitTest）→发上下文；菜单由
 			# ChartContextActions 弹出，菜单动作复用现有命令门。
 			_dragging = false
-			context_requested.emit(ChartHitTest.pick(self, mb.position))
+			context_requested.emit(ChartHitTest.pick(self, mb.position, UiContract.touch_mode()))
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		_mouse_pos = mm.position
@@ -276,6 +277,7 @@ func _draw() -> void:
 		_draw_threat_lobs()
 		ThreatChartOverlay.draw(self, threat_snapshots, now_time)
 	_draw_torpedoes()
+	DepthBadgeOverlay.draw(self, depth_badges, now_time)
 	_draw_hover_link()
 	_draw_camera_overlays()
 
@@ -317,7 +319,7 @@ func _nice_step(radius_m: float) -> float:
 
 
 func _dist_label(m: float) -> String:
-	return "%.0f km" % [m / 1000.0] if m >= 1000.0 else "%.0f m" % m
+	return "%.0f 千米" % [m / 1000.0] if m >= 1000.0 else "%.0f 米" % m
 
 
 ## 本艇符号：随实际艏向旋转的三角 + 艏向线（S1-01.4：不再固定朝上）。
@@ -337,7 +339,7 @@ func _draw_own_track() -> void:
 	# 艏向线（明显伸出三角之外）+ 艉部缺口（三角尾部不闭合）
 	draw_line(s, s + fwd * 22.0, Color(COL_OWN.r, COL_OWN.g, COL_OWN.b, 0.9), 1.5)
 	draw_colored_polygon(PackedVector2Array([tip, right, s - fwd * 3.0, left]), COL_OWN)
-	_draw_label(s + Vector2(10, -10), "OWN", COL_OWN)
+	_draw_label(s + Vector2(10, -10), "本艇", COL_OWN)
 
 
 ## 主动测距证据环（REQ-03/06）：以测量时刻观测位置为心、measured_range 为
@@ -360,7 +362,7 @@ func _draw_range_ring() -> void:
 	var dirv := NavUtils.bearing_to_screen_dir(float(range_ring.get("bearing_deg", 0.0)))
 	draw_line(cs, cs + dirv * r_px, Color(col.r, col.g, col.b, 0.9), 1.0)
 	var lp: Vector2 = cs + dirv * r_px
-	var lab: String = "R %.1fkm ±%.0fm" % [r_m / 1000.0, s_m]
+	var lab: String = "距 %.1f 千米 ±%.0f 米" % [r_m / 1000.0, s_m]
 	_draw_label(lp + Vector2(6, -4), lab, Color(col.r, col.g, col.b, 0.95), 12)
 
 
@@ -484,7 +486,7 @@ func _draw_lobs() -> void:
 				if bool(lob.get("candidate", false)):
 					var dir2 := NavUtils.bearing_to_screen_dir(float(lob["bearing_deg"]))
 					var lp2: Vector2 = world_to_screen(lob["origin"]) + dir2 * ray_len_px * 0.3
-					_draw_label(lp2 + Vector2(6, 0), "LR AMBIGUOUS", Color(1.0, 0.9, 0.5, 0.9), 11)
+					_draw_label(lp2 + Vector2(6, 0), "左右舷歧义", Color(1.0, 0.9, 0.5, 0.9), 11)
 	_draw_lob_hover_info(reps)
 
 
@@ -523,7 +525,7 @@ func _draw_lob_hover_info(reps: Array) -> void:
 		return
 	var age_s: float = maxf(fit_now_time - float(best.get("time", 0.0)), 0.0)
 	var txt := (
-		"%s  %s\nt=%s age=%.0fs  B=%.1f° ±%.1f°"
+		"%s  %s\n时刻=%s 龄期=%.0f 秒 方位=%.1f° ±%.1f°"
 		% [
 			str(best.get("track_id", "?")),
 			str(best.get("sensor_id", "?")),
@@ -641,7 +643,7 @@ func _draw_best_end(p_ref: Vector2, v: Vector2, t_ref: float) -> void:
 	# 外推预测虚线
 	var pred_s := world_to_screen(now_pos + v * PRED_HORIZON_S)
 	_draw_dashed(now_s, pred_s, Color(COL_BEST.r, COL_BEST.g, COL_BEST.b, 0.4), 1.5)
-	var lbl := "FIT %s" % _dist_label(own_pos.distance_to(now_pos))
+	var lbl := "拟合 %s" % _dist_label(own_pos.distance_to(now_pos))
 	_draw_label(now_s + Vector2(9, 4), lbl, COL_BEST, 16)
 
 
@@ -695,7 +697,7 @@ func _draw_alt_track(hyp: Dictionary, t_ref: float, idx: int) -> void:
 		_draw_dashed_pattern(pts[i], pts[i + 1], Color(col.r, col.g, col.b, 0.7), 1.5, pat)
 	var alt_pos := world_to_screen(_hyp_now_pos(hyp))
 	var lbl: String = (
-		"%s w=%.2f %.0fkn"
+		"%s 权重 %.2f %.0f 节"
 		% [
 			str(hyp.get("label", "?")),
 			float(hyp.get("weight", 0.0)),
@@ -723,7 +725,7 @@ func _draw_trial() -> void:
 	if trial_velocity.length() > 0.01:
 		var end_s := world_to_screen(trial_pos + trial_velocity * 60.0)
 		draw_line(s, end_s, Color(COL_TRIAL.r, COL_TRIAL.g, COL_TRIAL.b, 0.7), 2.0)
-	_draw_label(s + Vector2(10, 4), "TRIAL", COL_TRIAL, 16)
+	_draw_label(s + Vector2(10, 4), "试拟", COL_TRIAL, 16)
 
 
 func _draw_system() -> void:
@@ -733,7 +735,7 @@ func _draw_system() -> void:
 	# 紫色双环
 	draw_arc(s, 8.0, 0, TAU, 24, COL_SYSTEM, 2.0)
 	draw_arc(s, 13.0, 0, TAU, 24, COL_SYSTEM, 2.0)
-	_draw_label(s + Vector2(15, 4), "SYSTEM", COL_SYSTEM, 16)
+	_draw_label(s + Vector2(15, 4), "系统解", COL_SYSTEM, 16)
 
 
 func _draw_truth() -> void:
@@ -769,7 +771,7 @@ func _draw_hover_link() -> void:
 	var th: float = rad_to_deg(atan2(dp.x, dp.y))
 	var e: float = NavUtils.wrap180(z - th)
 	var txt := (
-		"t=%s  z=%.1f  pred=%.1f\ne=%.2f°  e/sig=%.1f"
+		"时刻=%s  测量=%.1f  预测=%.1f\n残差=%.2f°  残差/σ=%.1f"
 		% [
 			_mmss(t),
 			z,
@@ -915,7 +917,7 @@ func _draw_threat_lobs() -> void:
 		# REQ-B3-02：标注 kind / age / confidence（最新 + 选中，防铺满）。
 		if is_newest or is_sel:
 			var lbl: String = (
-				"%s %s c=%.2f" % [kind, _mmss(float(e["time"])), float(e.get("confidence", 0.0))]
+				"%s %s 置信 %.2f" % [kind, _mmss(float(e["time"])), float(e.get("confidence", 0.0))]
 			)
 			_draw_label(s0 + Vector2(8, -8), lbl, Color(col.r, col.g, col.b, 0.95), 11)
 
@@ -946,7 +948,7 @@ func _draw_active_return(e: Dictionary, col: Color, alpha: float) -> void:
 		]
 	)
 	draw_colored_polygon(wedge, Color(col.r, col.g, col.b, alpha * 0.14))
-	var lbl: String = "ACTIVE_RETURN est %.1fkm ±%.0fm" % [r_m / 1000.0, rsig]
+	var lbl: String = "主动回波 %.1f 千米 ±%.0f 米" % [r_m / 1000.0, rsig]
 	_draw_label(cs + Vector2(8, -6), lbl, Color(col.r, col.g, col.b, 0.95), 11)
 
 
@@ -1100,7 +1102,8 @@ func _draw_torpedoes() -> void:
 				_draw_track_sigma_wedge(head, tb, sig_d)
 		draw_circle(head, 3.5, col)
 		var tid: String = str(tp.get("torpedo_id", "TK%d" % [i + 1]))
-		_draw_label(head + Vector2(6.0, -6.0), "%s %s" % [tid, str(tp.get("state", ""))], col, 12)
+		var st_cn: String = UiText.tp_state(str(tp.get("state", "")))
+		_draw_label(head + Vector2(6.0, -6.0), "%s %s" % [tid, st_cn], col, 12)
 		if tid == selected_torpedo_id and selected_torpedo_id != "":
 			draw_arc(head, 8.0, 0, TAU, 20, Color(1, 1, 1, 0.9), 2.0)
 

@@ -30,6 +30,9 @@ var autonomy_enable_value: float = -1.0
 var wire_guidance_enabled: bool = true
 var fuze_mode: String = FuzeController.FUZE_CONTACT
 var warhead_arm_distance_m: float = 300.0
+## S1-11 D-01：地图航线（世界 east/north，起点 + ≤4 未来航路点）。
+## 仅 MAP_ROUTE 模式消费；由在地鱼雷面板的航线编辑写入。
+var route_points: Array = []
 ## 最近一次 build_program 的推荐说明（UI 明示授权条件/风险）。
 var last_notice: String = ""
 
@@ -89,6 +92,15 @@ func build_program(
 				program.autonomy_enable_time_s
 			]
 		)
+	elif mode == "MAP_ROUTE":
+		# S1-11 D-01：玩家唯一发射方式。程序只含空间位置命令，不读任何解/接触。
+		if route_points.size() < 2:
+			return {"ok": false, "reason": "route needs at least 2 points"}
+		program = WeaponProgram.make_route(route_points, world.sim_time)
+		last_notice = (
+			"MAP_ROUTE %d pts — follows player route; no self-maneuver until lock"
+			% route_points.size()
+		)
 	else:
 		var crs: float = (
 			NavUtils.wrap360(initial_course_deg)
@@ -104,7 +116,11 @@ func build_program(
 
 ## 合并玩家编辑项（只有显式修改过的字段覆盖推荐默认）。
 func _apply_overrides(p: WeaponProgram) -> void:
-	if initial_course_deg >= 0.0 and p.fire_mode != WeaponProgram.FireMode.MANUAL:
+	if (
+		initial_course_deg >= 0.0
+		and p.fire_mode != WeaponProgram.FireMode.MANUAL
+		and p.fire_mode != WeaponProgram.FireMode.MAP_ROUTE
+	):
 		p.initial_course_deg = NavUtils.wrap360(initial_course_deg)
 	if search_center_deg >= 0.0:
 		p.search_center_deg = NavUtils.wrap360(search_center_deg)

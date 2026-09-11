@@ -60,6 +60,15 @@ var depth_assessment: String = DEPTH_ASSESSMENT_UNKNOWN
 var depth_assessment_source: String = ""  # 观测模型/来源标签（如 "PITCH_ANGLE"）
 var depth_assessment_confidence: float = 0.0  # 0..1
 var depth_assessment_updated_s: float = -1.0
+## S1-11 §7：敌方可能深度概率估计器（层带概率 + 可选区间；默认 UNKNOWN）。
+## 只接受合法 DepthEvidence（§7.2）；二维主动测距绝不生成深度。
+var depth_estimator: DepthEstimator = null
+
+## S1-11 §3.2：自动 Mark 来源标签 -> 计数（"自动·被动"/"自动·主动"/"自动·鱼雷威胁"）。
+## 手动改绑/降权不抹除来源台账，仅影响该组归属。
+var auto_mark_sources: Dictionary = {}
+## S1-11 §3.7：最近一次 ClassificationAssessment（概率/依据/置信度/时间/来源 id）。
+var classification_assessment: Dictionary = {}
 
 var _known_evidence: Dictionary = {}  # 已登记 evidence_id（revision 去重用）
 
@@ -93,6 +102,51 @@ func depth_assessment_summary() -> Dictionary:
 		"confidence": depth_assessment_confidence,
 		"updated_s": depth_assessment_updated_s,
 	}
+
+
+## S1-11 §7.3：喂入一条合法垂向证据。返回是否被接受（重复 id / 不可用 → false）。
+func ingest_depth_evidence(e: DepthEvidence, now: float) -> bool:
+	if depth_estimator == null:
+		depth_estimator = DepthEstimator.new()
+	return depth_estimator.update(e, now)
+
+
+## S1-11 §7.4：地图/深度条/武器页读取的深度概率摘要（无证据 → 空 dict = 未知）。
+func depth_estimate_summary(now: float = -1.0) -> Dictionary:
+	if depth_estimator == null:
+		return {}
+	return depth_estimator.result(now)
+
+
+## S1-11 §7.3：陈旧证据衰减（每 tick 调用一次即可）。
+func depth_estimate_decay(now: float) -> void:
+	if depth_estimator != null:
+		depth_estimator.decay(now)
+
+
+## S1-11 §3.2：自动 Mark 来源标签摘要（UI 展示用；无自动来源时显示"手动"）。
+func mark_source_summary() -> String:
+	if auto_mark_sources.is_empty():
+		return "手动" if last_association_mode == "manual" else ""
+	var parts: Array = []
+	for k in auto_mark_sources.keys():
+		parts.append("%s×%d" % [k, int(auto_mark_sources[k])])
+	return " ".join(parts)
+
+
+## S1-11 §3.7：写入一次分类评估（UI/地图只读使用）。
+func set_classification(a: Dictionary) -> void:
+	classification_assessment = a
+
+
+## 分类概率视图（无评估时为空）。
+func classification_view() -> Dictionary:
+	return classification_assessment.get("probabilities", {})
+
+
+## 渐进分类标签（无评估时"未知接触"）。
+func classification_label() -> String:
+	return str(classification_assessment.get("label", "未知接触"))
 
 
 ## 创建一个新接触。source_type 取 "S"/"E"/"R"/"V"/"M"。

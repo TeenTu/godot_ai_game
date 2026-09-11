@@ -1,29 +1,24 @@
 class_name InWaterWeaponPanel
 extends VBoxContainer
-## in_water_weapon_panel.gd — 在水武器控制台（S1-07 §11.2，Commit 11）。
+## in_water_weapon_panel.gd — 在水武器控制台（S1-11 Batch 5：摘要列表 + 状态遥测）。
 ##
-## 每枚在水鱼雷一节：五正交状态（P1-01：Receiver / Transmitter / Track /
-## Authority / Steering，逐帧从权威状态刷新，不等 phase 变化）+ 导线/深度/
-## 速度/燃料 + 控制按钮。命令失败显示具体原因（tp.last_cmd_reject_reason：
-## WIRE CUT / LAUNCHING / NO CANDIDATE / INVALID STATE ...），不是统一
-## rejected (CONNECTED)。
+## S1-11 §9.1/§9.3/AT-25：玩家武器页不再有左/右 5°、速度循环、授权自主、返回
+## 线导、接受航迹；发射方向/航线/深度/主动开机/重画全部移到地图（WeaponMapControl）。
+## 本面板只保留：鱼雷标题行（点击 → 地图选中并居中，AT-26）、净化状态遥测
+## （五正交状态/导线/燃料/深度/候选），以及「主动开关 / 切断导线」两个安全动作。
 ##
-## P1-03.4：静态 header（标题）保留，动态武器卡只在专用 _cards 容器内重建，
-## _rebuild 不再 queue_free 标题。
-##
-## 信息链纪律：只读己方武器自身状态（合法）；命令只走 Torpedo 线控通道
-## （wire CONNECTED 门控）；Seeker 候选来自净化摘要（track_summaries，无
-## target_id/Truth）。
+## 信息链纪律：只读己方武器自身状态（合法）；Seeker 候选来自净化摘要
+## （track_summaries，无 target_id/Truth）。
+
+signal row_clicked(torpedo_id: String)
 
 var _world: World = null
-var _sections: Dictionary = {}  # torpedo_id -> {labels, buttons...}
+var _sections: Dictionary = {}  # torpedo_id -> {lbl, btns...}
 var _note: Label = null
 var _cards: VBoxContainer = null  # P1-03.4：动态武器卡专用容器
 var _seen_ids: Array = []
-## REQ-11：武器结束后的可查结果（tid -> 摘要文本）——脱靶原因/最近通过
-## 等在鱼雷移出列表后仍可查。
 var _finished: Dictionary = {}
-var _tp_refs: Dictionary = {}  # tid -> Torpedo 引用（移出列表后捕获终局摘要用）
+var _tp_refs: Dictionary = {}
 
 
 func _init() -> void:
@@ -34,7 +29,7 @@ func _init() -> void:
 	_note = Label.new()
 	_note.text = UiText.t("no_in_water")
 	_note.add_theme_font_size_override("font_size", 12)
-	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2：不撑宽侧栏
+	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_note)
 	_cards = VBoxContainer.new()
 	_cards.add_theme_constant_override("separation", 4)
@@ -54,7 +49,6 @@ func sync() -> void:
 	for tp in tps:
 		ids.append(str(tp.torpedo_id))
 	if str(ids) != str(_seen_ids):
-		# REQ-11：移出列表前捕获终局摘要（DETONATED/FUEL_OUT 均终态）。
 		for tid2 in _seen_ids:
 			if not (tid2 as String) in ids and _tp_refs.has(tid2):
 				var gone: RefCounted = _tp_refs[tid2]
@@ -72,26 +66,20 @@ func sync() -> void:
 			_note.text = UiText.t("no_in_water")
 		else:
 			var last_tid: String = _finished.keys()[-1]
-			_note.text = "上一武器 %s：%s" % [last_tid, _finished[last_tid]]
+			_note.text = UiText.t("last_weapon_fmt") % [last_tid, _finished[last_tid]]
 	else:
 		_note.text = ""
 
 
 ## REQ-11：终局摘要（净化事实：脱靶根因 / 最近通过距离 / 结束事件类型）。
 func _final_summary(tp: RefCounted) -> String:
-	var out: String = "调试 " + UiText.tp_state(str(tp.mission_state_name()))
+	var out: String = UiText.tp_state(str(tp.mission_state_name()))
 	if str(tp.miss_reason) != "":
-		out += " | 脱靶：%s" % UiText.miss(str(tp.miss_reason))
+		out += " | " + UiText.t("miss_reason") + "：" + UiText.miss(str(tp.miss_reason))
 	if _world != null:
 		var mp: Variant = _world._fuze_min_pass.get(str(tp.torpedo_id), null)
 		if mp != null and float(mp) < 1.0e8:
-			out += " | 最近通过 %.0fm" % float(mp)
-		var dbg: Variant = _world._fuze_debug.get(str(tp.torpedo_id), null)
-		if dbg != null:
-			out += (
-				" | 三维最近点 %.0fm@%.0fs" % [float(dbg.get("d3_m", -1.0)), float(dbg.get("t", -1.0))]
-			)
-			out += " | 饱和 %.1fs" % float(dbg.get("sat_time_s", 0.0))
+			out += " | " + UiText.t("min_pass_fmt") % float(mp)
 	return out
 
 
@@ -109,40 +97,24 @@ func _build_section(tp: RefCounted) -> VBoxContainer:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	var tid := str(tp.torpedo_id)
-	var title := Label.new()
-	title.text = "--- %s ---" % tid
-	title.add_theme_font_size_override("font_size", 13)
-	box.add_child(title)
+	var row_head := HBoxContainer.new()
+	row_head.add_theme_constant_override("separation", 4)
+	box.add_child(row_head)
+	var sel := Button.new()
+	sel.text = UiText.t("summary_select") % tid
+	sel.add_theme_font_size_override("font_size", 12)
+	sel.pressed.connect(func(): row_clicked.emit(tid))
+	sel.tooltip_text = UiText.t("summary_select_tip")
+	row_head.add_child(sel)
+	var btns := {}
+	btns["active"] = _mk_btn(
+		row_head, UiText.t("iw_btn_active_on"), func(): _cmd(tp, "active", true)
+	)
+	btns["cut"] = _mk_btn(row_head, UiText.t("iw_btn_cut"), func(): _cmd(tp, "cut", 0.0))
 	var lbl := Label.new()
 	lbl.add_theme_font_size_override("font_size", 11)
-	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART  # P1-03.2
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(lbl)
-	var row1 := HBoxContainer.new()
-	row1.add_theme_constant_override("separation", 3)
-	box.add_child(row1)
-	var row2 := HBoxContainer.new()
-	row2.add_theme_constant_override("separation", 3)
-	box.add_child(row2)
-	var row3 := HBoxContainer.new()
-	row3.add_theme_constant_override("separation", 3)
-	box.add_child(row3)
-	var btns := {}
-	btns["left"] = _mk_btn(row1, UiText.t("iw_btn_left"), func(): _cmd(tp, "course", -5.0))
-	btns["right"] = _mk_btn(row1, UiText.t("iw_btn_right"), func(): _cmd(tp, "course", 5.0))
-	btns["upper"] = _mk_btn(
-		row1, UiText.t("iw_btn_up"), func(): _cmd(tp, "band", WeaponProgram.DEPTH_BAND_UPPER)
-	)
-	btns["lower"] = _mk_btn(
-		row1, UiText.t("iw_btn_low"), func(): _cmd(tp, "band", WeaponProgram.DEPTH_BAND_LOWER)
-	)
-	# REQ-01：浅水攻击定深（水面/浅深目标；有限升降速率逼近）。
-	btns["shallow"] = _mk_btn(row1, UiText.t("iw_btn_shallow"), func(): _cmd(tp, "depth", 12.0))
-	btns["speed"] = _mk_btn(row1, UiText.t("iw_btn_speed"), func(): _cmd(tp, "speed", 0.0))
-	btns["active"] = _mk_btn(row2, UiText.t("iw_btn_active_on"), func(): _cmd(tp, "active", true))
-	btns["autonomy"] = _mk_btn(row2, UiText.t("iw_btn_autonomy"), func(): _cmd(tp, "autonomy", 0.0))
-	btns["wireonly"] = _mk_btn(row2, UiText.t("iw_btn_wireonly"), func(): _cmd(tp, "wireonly", 0.0))
-	btns["accept"] = _mk_btn(row3, UiText.t("iw_btn_accept"), func(): _cmd(tp, "accept", 0.0))
-	btns["cut"] = _mk_btn(row3, UiText.t("iw_btn_cut"), func(): _cmd(tp, "cut", 0.0))
 	_sections[tid] = {"lbl": lbl, "btns": btns}
 	return box
 
@@ -158,8 +130,9 @@ func _mk_btn(parent: Control, text: String, action: Callable) -> Button:
 
 ## 命令分发：全部经 Torpedo 线控通道（内部有 _cmd_gate 门控并记录
 ## last_cmd_reject_reason）。失败时显示具体原因（P1-01）。
+## 注：玩家侧的航向/深度/重画/开机点已移至地图（WeaponMapControl），此处只保留
+## 主动开关与切断导线；其余 kind 仍保留以兼容测试与开发调用。
 func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
-	# REQ-B5-05：任务终局后一切线控命令拒绝（统一命令门）。
 	if _world != null and not _world.is_mission_running():
 		if _note != null:
 			_note.text = UiText.reject("MISSION_ENDED")
@@ -172,49 +145,20 @@ func _cmd(tp: RefCounted, kind: String, arg: Variant) -> void:
 			ok = tp.command_depth_band(str(arg))
 		"depth":
 			ok = tp.command_depth(float(arg))
-		"speed":
-			var next_mode: int = (int(tp.speed_mode) + 1) % WeaponProgram.SpeedMode.size()
-			ok = tp.command_speed_mode(next_mode)
 		"active":
 			ok = tp.set_active_tx(int(tp.active_tx_state) == Torpedo.ActiveTxState.OFF)
-		"autonomy":
-			ok = tp.authorize_autonomy()
-		"wireonly":
-			ok = tp.return_to_wire_only()
-		"accept":
-			ok = _accept_best_track(tp)
 		"cut":
 			ok = tp.cut_wire()
 	if not ok:
 		var reason_v: Variant = tp.get("last_cmd_reject_reason")
 		var reason: String = str(reason_v) if reason_v != null else ""
 		_note.text = (
-			"%s 命令被拒（%s）"
-			% [
-				str(tp.torpedo_id),
-				UiText.reject(reason if reason != "" else "INVALID TRANSITION"),
-			]
+			UiText.t("cmd_rejected_fmt")
+			% UiText.reject(reason if reason != "" else "INVALID TRANSITION")
 		)
 
 
-## ASSISTED：接受当前最优净化候选（track_summaries 无 Truth）。
-func _accept_best_track(tp: RefCounted) -> bool:
-	if tp._seeker == null:
-		tp.last_cmd_reject_reason = "NO CANDIDATE"
-		return false
-	var best_id: int = -1
-	var best_q: float = -1.0
-	for s in tp._seeker.track_summaries():
-		if float(s.get("lock_quality", 0.0)) > best_q:
-			best_q = float(s.get("lock_quality", 0.0))
-			best_id = int(s.get("track_id", -1))
-	if best_id < 0:
-		tp.last_cmd_reject_reason = "NO CANDIDATE"
-		return false
-	return tp.accept_seeker_track(best_id)
-
-
-## 逐帧刷新（P1-01：五正交状态每帧从权威状态读取，绝不在 phase 变化时才刷）。
+## 逐帧刷新（P1-01：五正交状态每帧从权威状态读取）。
 func _refresh_section(tp: RefCounted) -> void:
 	var sec: Dictionary = _sections.get(str(tp.torpedo_id), {})
 	if sec.is_empty():
@@ -222,7 +166,6 @@ func _refresh_section(tp: RefCounted) -> void:
 	var lbl: Label = sec["lbl"]
 	var btns: Dictionary = sec["btns"]
 	var connected: bool = tp.wire_link.accepts_commands() and tp._wire_accepts_command()
-	# 五正交状态（P1-01）：Receiver / Transmitter / Track / Authority / Steering。
 	var txt: String = (
 		"%s\n接收机 %s | 发射机 %s\n航迹 %s | 权限 %s\n转向 %s"
 		% [
@@ -245,39 +188,32 @@ func _refresh_section(tp: RefCounted) -> void:
 		]
 	)
 	txt += "\n航向 %.0f°" % tp.course_deg
-	# 第三部分 REQ：制导/转向遥测——Desired vs Actual、命令/实际转率、饱和。
-	var sat: String = "（饱和）" if bool(tp.turn_saturated) else ""
+	var sat: String = UiText.t("sat_suffix") if bool(tp.turn_saturated) else ""
 	txt += (
 		"\n转弯指令 %.2f°/s | 实际 %.2f°/s%s"
 		% [float(tp.commanded_turn_rate_deg_s), float(tp.actual_turn_rate_deg_s), sat]
 	)
 	if tp._guidance_mode == tp.GuidanceMode.RATE:
-		txt += "\n期望：比例导航拦截"
+		txt += "\n" + UiText.t("guidance_pn")
 	elif tp._guidance_mode == tp.GuidanceMode.COURSE and tp._guidance_course_deg >= 0.0:
-		txt += "\n期望航向 %.0f°" % tp._guidance_course_deg
+		txt += "\n" + UiText.t("guidance_course_fmt") % tp._guidance_course_deg
 	if tp.commanded_depth_m >= 0.0:
-		# REQ-DEP-02：命令深度 + 来源（PLAYER/PROGRAM/AUTO）+ 垂向 ETA。
 		var vz: float = float(tp.max_vertical_speed_m_s)
 		var eta: float = absf(tp.commanded_depth_m - tp.actual_depth_m) / vz if vz > 0.0 else INF
 		var eta_txt: String = "N/A" if is_inf(eta) else "%.0fs" % maxf(eta, 0.0)
 		txt += (
-			" → 深度 %.0fm（来源 %s ETA %s）"
-			% [tp.commanded_depth_m, UiText.src(str(tp.depth_command_source)), eta_txt]
+			"\n"
+			+ (
+				UiText.t("depth_cmd_fmt")
+				% [tp.commanded_depth_m, UiText.src(str(tp.depth_command_source)), eta_txt]
+			)
 		)
 	else:
-		txt += " | 实际深度 %.0fm" % tp.actual_depth_m
-	# REQ-11：玩家面板只显示净化测量/权限/质量/转率/可知武器状态——
-	# Truth CPA（min pass / 3D CPA）仅限调试台账（终局 DBG 摘要/Debrief）。
-	txt += "\n引信 %s" % UiText.fuze_state(tp.fuze_state_name())
-	# 第三部分 REQ：声学模式 + 主动 Ping 状态/下一发倒计时（直读权威字段）。
-	txt += "\n模式 %s" % UiText.speed_mode(WeaponProgram.speed_mode_name(tp.speed_mode))
-	if (
-		int(tp.active_tx_state) == Torpedo.ActiveTxState.PINGING
-		or int(tp.active_tx_state) == Torpedo.ActiveTxState.COOLDOWN
-	):
-		txt += "\n下次脉冲 %.1fs" % maxf(float(tp._tx_cycle_s), 0.0)
-	# P1-03.5/REQ-11：显示**实际用于制导**的 Track——AUTONOMOUS 显示 seeker
-	# 选中航迹；ASSISTED 显示玩家接受的航迹；都不显示候选列表第一条。
+		txt += "\n" + UiText.t("depth_actual_fmt") % tp.actual_depth_m
+	txt += "\n" + UiText.t("depth_policy_row") % UiText.depth_policy(str(tp.depth_policy()))
+	txt += "\n" + UiText.t("fuze_row") % UiText.fuze_state(tp.fuze_state_name())
+	# Seeker 深度估计摘要（S1-11 §7.5：只读所锁 SeekerTrack 自己的深度估计摘要）。
+	txt += "\n" + UiText.t("depth_est_row") % UiText.depth_band_summary(tp.depth_estimate_summary())
 	var summaries: Array = tp._seeker.track_summaries() if tp._seeker != null else []
 	var guid_id: int = -1
 	if int(tp.guidance_authority) == tp.GuidanceAuthority.AUTONOMOUS and tp._seeker != null:
@@ -293,19 +229,10 @@ func _refresh_section(tp: RefCounted) -> void:
 	if top.is_empty() and not summaries.is_empty():
 		top = summaries[0]
 	if not top.is_empty():
-		var tag: String = (
-			str(UiText.t("iw_trk"))
-			if guid_id < 0
-			else (
-				str(UiText.t("iw_guid_trk"))
-				if int(top.get("track_id", -1)) == guid_id
-				else str(UiText.t("iw_trk"))
-			)
-		)
 		txt += (
 			"\n%s#%s 方位 %.0f° σ%.1f° 质量 %.2f（%d 候选）"
 			% [
-				tag,
+				str(UiText.t("iw_trk")),
 				str(top.get("track_id", "?")),
 				float(top.get("bearing_est_deg", 0.0)),
 				float(top.get("bearing_sigma_deg", 0.0)),
@@ -313,47 +240,20 @@ func _refresh_section(tp: RefCounted) -> void:
 				summaries.size(),
 			]
 		)
-		# REQ-DEP-01/02：目标深度只显示未知/带噪层带假设，绝无精确水深。
-		var dpt_hint: String = str(top.get("depth_band_hint", ""))
-		txt += (
-			"\n目标深度 %s"
-			% (
-				("近%s层（假设）" % UiText.depth_preset(dpt_hint))
-				if dpt_hint != ""
-				else str(UiText.t("iw_tgt_unknown"))
-			)
-		)
-		if bool(top.get("has_range", false)):
-			txt += (
-				"\n距离 %.0fm | 距离率 %.1f m/s"
-				% [float(top.get("range_m", -1.0)), float(top.get("range_rate_m_s", 0.0))]
-			)
-		# REQ-11：脱靶根因（与 FUEL_OUT 结束事件区分；空 = 未终局/命中）。
 		if str(tp.miss_reason) != "":
-			txt += "\n脱靶根因：%s" % UiText.miss(str(tp.miss_reason))
+			txt += "\n" + UiText.t("miss_reason") + "：" + UiText.miss(str(tp.miss_reason))
 	lbl.text = txt
-	# 不可用按钮 disabled（§11.2：说明原因）；P1-03.5：无候选 Accept 禁用。
 	var wire_txt: String = tp.wire_state_name()
 	for k in btns:
 		var b: Button = btns[k]
 		if k == "cut":
 			b.disabled = not connected
 			b.tooltip_text = UiText.t("tip_cut_wire")
-		elif k == "accept":
-			b.disabled = not connected or summaries.is_empty()
-			b.tooltip_text = (
-				str(UiText.t("iw_no_candidate"))
-				if summaries.is_empty()
-				else str(UiText.t("iw_accept_tip"))
-			)
-		elif k == "active":
+		else:
 			b.text = (
-				str(UiText.t("iw_btn_active_off"))
+				UiText.t("iw_btn_active_off")
 				if int(tp.active_tx_state) != Torpedo.ActiveTxState.OFF
-				else str(UiText.t("iw_btn_active_on"))
+				else UiText.t("iw_btn_active_on")
 			)
 			b.disabled = not connected
 			b.tooltip_text = UiText.t("iw_tx_tip") % UiText.wire(wire_txt)
-		else:
-			b.disabled = not connected
-			b.tooltip_text = UiText.t("iw_wire_tip") % UiText.wire(wire_txt)

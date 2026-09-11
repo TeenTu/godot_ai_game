@@ -116,11 +116,21 @@ func fuse_active_return(e: Dictionary, now: float) -> String:
 		return ""
 	var obs_e: float = float(e["observer_e_m"])
 	var obs_n: float = float(e["observer_n_m"])
+	# S1-11 §3.5：同一 Ping 批次内每条 TT 航迹最多吸收一条回波（AT-52）。
+	var batch_key: String = str(e.get("batch_key", ""))
+	# S1-11 §3.5/AT-51..54：批次分配器（ActiveReturnBatch）已完成一对一分配时，
+	# 融合必须尊重其决定——只对指定的 preferred 航迹做门控，不再二次做"次优接近"
+	# 歧义裁决（否则同一证据会被批次放行却被融合层误拒，真实 RANGE_AIDED 丢失）。
+	var preferred: String = str(e.get("preferred_track_id", ""))
 	var best: Dictionary = {}
 	var best_cost: float = INF
 	var second_cost: float = INF
 	for tr in _tracks:
 		if str(tr.get("state", "TRACKING")) == "LOST":
+			continue
+		if preferred != "" and str(tr.get("track_id", "")) != preferred:
+			continue
+		if batch_key != "" and _batch_taken.has("%s:%s" % [batch_key, str(tr["track_id"])]):
 			continue
 		var est: TorpedoThreatEstimator = tr.get("est")
 		if est == null:
@@ -172,6 +182,8 @@ func fuse_active_return(e: Dictionary, now: float) -> String:
 	var pos2: Vector2 = est_b.position()
 	best["bearing_deg"] = NavUtils.wrap360(rad_to_deg(atan2(pos2.x - obs_e, pos2.y - obs_n)))
 	best["source_modes"] = "RANGE_AIDED"
+	if batch_key != "":
+		_batch_taken["%s:%s" % [batch_key, str(best["track_id"])]] = true
 	return str(best["track_id"])
 
 

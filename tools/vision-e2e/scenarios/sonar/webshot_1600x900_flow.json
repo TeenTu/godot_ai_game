@@ -1,0 +1,33 @@
+{
+	"name": "sonar-webshot-1600x900-flow",
+	"desc": "S1-11 AT-45 主链：海图右键菜单（绘制/清除鱼雷航线，Batch 4c 收尾）→ 武器页中文摘要（Batch 5）→ 地图画线 → 发射（唯一 MAP_ROUTE）→ 选中在水鱼雷看浮动控制栏。全部真机截图，0 console error 才算过。",
+	"url": "http://127.0.0.1:8330/index.html",
+	"out_dir": "evidence/sonar/1600x900",
+	"viewport": [1600, 900],
+	"steps": [
+		{ "kind": "wait", "ms": 14000 },
+		{ "kind": "click", "x": 0.2, "y": 0.428 },
+		{ "kind": "wait", "ms": 7000 },
+		{ "kind": "rclick", "x": 0.4, "y": 0.3 },
+		{ "kind": "wait", "ms": 1500 },
+		{ "kind": "shot", "name": "context_menu" },
+		{ "kind": "key", "key": "Escape" },
+		{ "kind": "wait", "ms": 600 },
+		{ "kind": "click", "x": 0.711, "y": 0.152 },
+		{ "kind": "wait", "ms": 1200 },
+		{ "kind": "shot", "name": "weapons_page" },
+		{ "kind": "click", "x": 0.775, "y": 0.2756 },
+		{ "kind": "wait", "ms": 900 },
+		{ "kind": "click", "x": 0.45, "y": 0.45 },
+		{ "kind": "wait", "ms": 600 },
+		{ "kind": "click", "x": 0.55, "y": 0.35 },
+		{ "kind": "wait", "ms": 800 },
+		{ "kind": "shot", "name": "route_drawn" },
+		{ "kind": "click", "x": 0.847, "y": 0.234 },
+		{ "kind": "wait", "ms": 4500 },
+		{ "kind": "shot", "name": "torpedo_fired" },
+		{ "kind": "click", "x": 0.765, "y": 0.603 },
+		{ "kind": "wait", "ms": 1500 },
+		{ "kind": "shot", "name": "floating_bar" }
+	]
+}

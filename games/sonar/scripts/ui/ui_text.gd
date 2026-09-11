@@ -32,8 +32,10 @@ const _THREAT := {
 const _MISSION := {
 	"RUNNING": "任务进行中",
 	"PLAYER_DEFEATED": "任务失败",
+	"PLAYER_VICTORY": "任务胜利",
 	"MISSION_ENDED": "任务已结束",
 	"TORPEDO_HIT": "鱼雷命中，本艇损失",
+	"TARGET_DESTROYED": "目标被击沉，任务达成",
 }
 
 const _CLASS := {
@@ -44,6 +46,20 @@ const _CLASS := {
 	"TORPEDO_ACTIVE_PING": "鱼雷主动脉冲",
 	"SUBMARINE": "潜艇",
 	"DECOY": "诱饵",
+	"UNKNOWN": "未知",
+	"MERCHANT": "商船",
+	"WARNOTHINGSHIP": "水面舰艇",
+	"SUBSONAR": "潜艇",
+}
+
+## S1-11 Batch 7 / AT-42：瀑布调色板 / 自动增益 / 拖曳阵状态的中文标签。
+const _PALETTE := {"HOT": "高对比", "GRAYSCALE": "灰度", "BLUE": "蓝调", "AMBER": "琥珀"}
+const _AGC := {"AGC SLOW": "自动增益·慢", "AGC FAST": "自动增益·快", "AGC OFF": "自动增益·关"}
+const _TOWED := {
+	"STOWED": "已收起",
+	"STREAMING": "布放中",
+	"HOLD_PARTIAL": "保持长度",
+	"RETRIEVING": "回收中",
 	"UNKNOWN": "未知",
 }
 
@@ -74,16 +90,36 @@ const _EVENT := {
 	"CONTACT": "接触",
 	"INFO": "信息",
 	"TRANSIENT": "瞬态",
+	# S1-11 Batch 7：鱼雷任务态/导线/主动机事件（武器页事件流逐条中文）。
+	"LAUNCH": "鱼雷发射",
+	"TRANSIT": "航渡",
+	"ACQUIRING": "捕获中",
+	"LOCKED": "已锁定",
+	"COAST": "短时丢失",
+	"LOST_REACQUIRE": "重新搜索",
+	"REACQUIRE": "重新截获",
+	"BAND_SEARCH_SWITCH": "换带搜索",
+	"ACTIVE_TRIGGER_SET": "主动开机点已设",
+	"ACTIVE_TX_ON": "主动声呐开启",
+	"ACTIVE_TX_OFF": "主动声呐关闭",
+	"AUTONOMY_AUTHORIZED": "已授权自动",
+	"RETURN_WIRE_ONLY": "回到线导",
+	"WIRE_CUT": "导线已切断",
+	"ROUTE_UPDATE": "航线已更新",
+	"ROUTE_CLEARED": "航线已清除",
+	"CONTACT_REJECTED_SAFETY": "己方接触已拒收",
+	"FUZE_SAFETY_INHIBIT": "引信本侧安全抑制",
 }
 
 ## 鱼雷 mission_state（Torpedo.mission_state_name()）
 const _TP_STATE := {
 	"STOWED": "在库",
 	"LAUNCHING": "发射中",
-	"WIRE_RUN": "线导航行",
-	"SEARCH": "搜索",
-	"ATTACK": "攻击",
-	"TERMINAL": "末段",
+	"TRANSIT": "线导航行",
+	"ACQUIRING": "捕获中",
+	"LOCKED_ATTACK": "已锁定",
+	"COAST": "短时丢失",
+	"LOST_REACQUIRE": "重搜",
 	"DEAD": "终止",
 }
 
@@ -131,7 +167,32 @@ const _DEPTHPRESET := {
 	"SURFACE": "海面层",
 	"UPPER": "上层",
 	"LOWER": "下层",
+	"TRANSITION": "过渡带",
 	"CUSTOM": "定制深度",
+}
+
+## S1-11 §5.5：地图浮动栏深度策略（玩家唯一简化覆盖）。
+const _DEPTHPOLICY := {"AUTO": "自动", "UPPER": "上层", "LOWER": "下层"}
+
+## S1-11 §4.3：地图开机点/主动声呐开关状态。
+const _ONOFF := {"on": "开", "off": "关"}
+
+## S1-11 §7.1/§7.4：深度概率主导层 → 层带预设键；未知文案。
+const _DEPTH_UNKNOWN := "深度未知"
+const _DOM_TO_PRESET := {
+	"SURFACE_LIKELY": "SURFACE",
+	"UPPER_LIKELY": "UPPER",
+	"LOWER_LIKELY": "LOWER",
+}
+
+## S1-11 §7.5：深度证据来源（含鱼雷导线回传）。
+const _DEPTHSRC := {
+	"TORPEDO_WIRE": "鱼雷回传",
+	"SEEKER": "导引头",
+	"OWN_PITCH": "本艇俯仰测角",
+	"MULTIPATH": "多路径时差",
+	"LAYER_COMPARE": "变深层间比较",
+	"UNKNOWN": "未知来源",
 }
 
 ## 搜索图案（WeaponProgram.SearchPattern）
@@ -262,11 +323,22 @@ const LABELS := {
 	"spin_own_depth": "本艇深度 (m)",
 	"page_sonar": "声呐",
 	"page_tracks": "航迹",
+	"page_tactics": "战术",
 	"page_weapons": "武器",
 	"page_own": "本艇",
 	"sec_sonar_operator": "声呐操作员",
 	"sec_mark_groups": "Mark 组",
 	"sec_fit_details": "拟合详情",
+	"sec_contact_card": "接触卡",
+	"sec_tactics_contacts": "接触",
+	"contact_action_view": "查看",
+	"contact_action_track": "优先跟踪",
+	"contact_action_confirm": "主动确认",
+	"contact_action_target": "设为攻击目标",
+	"contact_details": "详情",
+	"contact_no_selection": "未选中接触",
+	"threat_extra_fmt": "另有 %d 枚，方位 %s",
+	"threat_none": "无来袭威胁",
 	"sec_status": "状态",
 	"sec_automation": "自动化",
 	"btn_mark": "标记",
@@ -314,6 +386,13 @@ const LABELS := {
 	# ---- 武器页 ----
 	"btn_fire": "发射鱼雷",
 	"fire_mode": "发射模式",
+	# S1-11 D-01：玩家唯一发射方式 = 地图航线。
+	"btn_route_draw": "绘制航线",
+	"btn_route_undo": "撤销航点",
+	"btn_route_clear": "清除航线",
+	"route_none": "航线：未绘制（点「绘制航线」后在海图上点选航路点）",
+	"route_drawing_fmt": "航线：绘制中 %d/%d 个航路点（右键空白可退出）",
+	"route_ready_fmt": "航线：%d 个航路点，可发射",
 	"chk_shallow": "浅深攻击（12 米）",
 	"program_prelaunch": "发射前参数（航向/深度/引信）",
 	"wire_label": "线导",
@@ -321,6 +400,59 @@ const LABELS := {
 	"no_in_water": "水中无鱼雷",
 	"tip_cut_wire": "切断导线（仅导线已连接时可用）",
 	"auto_label": "自动",
+	# ---- S1-11 Batch 5：地图浮动栏 / 在线重画 / 地图命令 ----
+	"bar_reroute": "重画航线",
+	"bar_center": "居中",
+	"bar_depth": "深度：",
+	"bar_active_on": "主动声呐：开",
+	"bar_active_off": "主动声呐：关",
+	"bar_reroute_tip": "重画剩余航线需要导线已连接（当前 %s）",
+	"wire_cmd_disabled": "导线未连接，无法下达命令（%s）",
+	"reroute_reject": "重画航线被拒：",
+	"reroute_locked": "已锁定，捕获后不允许覆盖航线",
+	"reroute_hint": "重画航线中：在地图上点选新航路点，右键「完成航线」提交 — ",
+	"reroute_done": "航线已更新 — ",
+	"reroute_cancelled": "已取消重画航线",
+	"reroute_invalid": "航线无效（需起点 + 至少 1 个航路点）",
+	"map_cmd_reject": "地图命令被拒：",
+	"map_goto_done": "已令 %s 向该点航行",
+	"map_waypoint_done": "已为 %s 追加航路点",
+	"map_active_at_done": "%s 将在航程 %s 开启主动声呐",
+	"map_route_cleared": "已清除 %s 的剩余航线",
+	"map_active_done": "%s 主动声呐：%s",
+	"map_depth_done": "%s 深度策略：%s",
+	"route_full": "航路点已满（最多 4 个）",
+	"route_in_water": "在水：%s（地图航线）",
+	"on": "开",
+	"off": "关",
+	# ---- S1-11 Batch 5/6：在水摘要与状态遥测 ----
+	"last_weapon_fmt": "上一武器 %s：%s",
+	"miss_reason": "脱靶原因",
+	"min_pass_fmt": "最近通过 %.0fm",
+	"summary_select": "选择 %s",
+	"summary_select_tip": "在地图上选中并居中该鱼雷",
+	"sat_suffix": "（饱和）",
+	"guidance_pn": "期望：比例导航拦截",
+	"guidance_course_fmt": "期望航向 %.0f°",
+	"depth_cmd_fmt": "→ 深度 %.0fm（来源 %s ETA %s）",
+	"depth_actual_fmt": "实际深度 %.0fm",
+	"depth_policy_row": "深度策略 %s",
+	"fuze_row": "引信 %s",
+	"depth_est_row": "敌方深度估计 %s",
+	"depth_band_unknown": "深度未知",
+	# ---- S1-11 Batch 5：武器页摘要 ----
+	"tubes_summary": "鱼雷管与在水摘要（点击行选中）",
+	"tubes_fmt": "鱼雷管：%d/%d 已装填　在水：%d",
+	"summary_line_fmt": "%s：%s / 主动%s / 导线%s / 燃料 %.0fs / %s",
+	"seeker_phase": "导引头",
+	"evt_detonation_fmt": "%s 起爆（最近通过 %.0fm）",
+	"evt_track_accepted_fmt": "%s 已接受航迹 #%s（辅助）",
+	"evt_active_ping_fmt": "%s 主动脉冲 %s 已发射",
+	"evt_echo_fmt": "%s 收到回波",
+	"evt_listen_no_return_fmt": "%s 监听结束 — 无回波",
+	"evt_fuze_armed_fmt": "%s 引信已解保（已航行 %.0fm）",
+	"evt_route_update_fmt": "%s 已接收新航线",
+	"evt_route_cleared_fmt": "%s 剩余航线已清除",
 	# ---- 反制 / 告警 / 自动化 ----
 	"countermeasures": "反制措施",
 	"brg_deg": "方位(°)",
@@ -344,7 +476,6 @@ const LABELS := {
 	"torpedo_alert": "鱼雷警报",
 	"btn_view_threat": "查看",
 	"threat_detail_hint": "威胁详情见航迹页",
-	"ruler_placeholder": "测距尺：本批未实现（占位）",
 	"mark_group_set_to": "当前 Mark 组：",
 	"presite_done": "已按方位预填概略射击 — 未发射",
 	"presite_no_bearing": "预填失败：该接触无可测方位",
@@ -355,6 +486,9 @@ const LABELS := {
 	"evt_fire_mode": "发射模式",
 	"evt_torpedo_away": "鱼雷出管",
 	"evt_fire_reject": "发射被拒",
+	"evt_route_needed": "请先在地图上绘制航线再发射",
+	"evt_route_cleared": "航线已清除",
+	"evt_route_committed": "航线已就绪，可发射",
 	"evt_submit": "系统解提交",
 	"evt_low_quality": "质量偏低",
 	"evt_submit_reject": "提交被拒",
@@ -407,11 +541,24 @@ const LABELS := {
 	"band_up": "上层",
 	"band_low": "下层",
 	"band_bot": "海底",
+	# ---- S1-11 Batch 7 / AT-42：本艇机动 + 拖曳阵列文案（去裸英文）----
+	"btn_turn_left": "左转 5°",
+	"btn_turn_right": "右转 5°",
+	"btn_speed_up": "+2 节",
+	"btn_speed_down": "-2 节",
+	"own_act_fmt": "实际 航向 %.0f° 航速 %.1f 节",
+	"own_cmd_course_fmt": " → 命令 %.0f°（约 %.0f 秒）",
+	"own_cmd_speed_fmt": " → 命令 %.1f 节（约 %.0f 秒）",
+	"own_depth_fmt": " | 深度 %.0f 米",
+	"own_depth_cmd_fmt": " → %.0f 米（约 %.0f 秒）",
+	"towed_none": "拖曳阵：未布放",
+	"towed_line_fmt": "拖曳阵：%s | 实长 %.0f 米 / 命令 %.0f 米 | 阵位 %.0f° | 可用 %d%%",
 	"residual_hint": "点击切换：度/米/σ",
 	"truth_watermark": "开发真值 — 非玩家情报",
 	"coast_tag": "外推",
 	# ---- 终局 ----
 	"mission_failed": "任务失败",
+	"mission_victory": "任务胜利",
 	"mission_time": "任务时间",
 	"btn_restart_seed": "使用相同随机种子重试",
 	"btn_main_menu": "返回主菜单",
@@ -576,6 +723,51 @@ static func depth_preset(k: String) -> String:
 	return str(_DEPTHPRESET.get(k, k))
 
 
+static func depth_policy(k: String) -> String:
+	return str(_DEPTHPOLICY.get(k, k))
+
+
+static func onoff(k: String) -> String:
+	return str(_ONOFF.get(k, k))
+
+
+## S1-11 §7.4：深度概率摘要 → 中文（<0.55 未知；0.55–0.75 可能；>0.75 大概率）。
+## 只有存在真实垂向测量（带置信区间的米数）时才显示区间，绝不把二维测距
+## 伪装成精确水深。
+static func depth_band_summary(summary: Dictionary) -> String:
+	if summary.is_empty():
+		return str(_DEPTH_UNKNOWN)
+	var interval: Array = summary.get("depth_interval_m", [])
+	if interval.size() >= 2 and float(summary.get("interval_confidence", 0.0)) > 0.0:
+		return (
+			"可能 %.0f–%.0fm（%d%%）"
+			% [
+				float(interval[0]),
+				float(interval[1]),
+				int(round(float(summary.get("interval_confidence", 0.0)) * 100.0))
+			]
+		)
+	var conf: float = float(summary.get("confidence", 0.0))
+	if conf < 0.55:
+		return str(_DEPTH_UNKNOWN)
+	var dom: String = str(summary.get("dominant", "UNKNOWN"))
+	var layer: String = str(_DEPTHPRESET.get(_DOM_TO_PRESET.get(dom, ""), dom))
+	var pct: int = int(round(float(summary.get("probability", 0.0)) * 100.0))
+	var prefix: String = "大概率" if conf > 0.75 else "可能"
+	if dom == "SURFACE_LIKELY":
+		return "%s近水面 %d%%" % [prefix, pct]
+	if dom == "UPPER_LIKELY":
+		return "%s%s %d%%" % [prefix, layer, pct]
+	if dom == "LOWER_LIKELY":
+		return "%s%s %d%%" % [prefix, layer, pct]
+	return str(_DEPTH_UNKNOWN)
+
+
+## 深度估计来源 → 中文（§7.5 必须标明"鱼雷回传"）。
+static func depth_source(k: String) -> String:
+	return str(_DEPTHSRC.get(k, k))
+
+
 static func pattern(k: String) -> String:
 	return str(_PATTERN.get(k, k))
 
@@ -633,6 +825,19 @@ static func mission(k: String) -> String:
 
 static func klass(k: String) -> String:
 	return str(_CLASS.get(k, k))
+
+
+## AT-42：瀑布调色板 / 自动增益 / 拖曳阵状态的中文显示名（内部键保持英文）。
+static func palette(k: String) -> String:
+	return str(_PALETTE.get(k, k))
+
+
+static func agc(k: String) -> String:
+	return str(_AGC.get(k, k))
+
+
+static func towed_state(k: String) -> String:
+	return str(_TOWED.get(k, k))
 
 
 static func event(k: String) -> String:

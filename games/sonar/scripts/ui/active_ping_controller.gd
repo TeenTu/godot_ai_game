@@ -55,6 +55,9 @@ var evidence_state: String = ""
 ##   se_db, received_time}]，最新在尾，保留 ≤MAX_RETURNS。
 var _records: Array = []
 var _next_return_seq: int = 1
+## S1-11 §3.5：按 ping_id 缓存的回波批次（{ping_id: [echo summary]}），
+## 监听窗关闭后统一一对一分配，保证同 Ping 内不重复占用航迹（AT-51/53）。
+var _pending_batch: Dictionary = {}
 ## ASSISTED 待玩家裁决的"range 证据 → Trial"申请：{measurement, track,
 ## local_return_id}。S109 §5.2：取本次 Ping 全局最高优先回波，非最后写入。
 var _pending_apply: Dictionary = {}
@@ -89,31 +92,103 @@ func request_ping() -> void:
 	_call_status(UiText.t("st_ping_tx"))
 
 
-## 每帧排空 World 已结算回波：detected 命中喂 Tracker 并回调主 UI。
+## 每帧排空 World 已结算回波：按 ping_id 缓入批次，监听窗关闭（World 报告
+## last_closed_ping_id）后一次性做一对一分配，再按 fit_mode 裁决。
 ## auto_measurements=true（旧自动模式）时回波已 append 进 world.measurements，
-## 由测量流消费方（main_ui._feed_new_measurements）自动喂 Tracker/建 Track，
-## 本控制器只排空缓冲，避免同一测量被双喂（双 Track/重复关联）。
-## S1-04C-REQ-02：喂完 Tracker 后按 fit_mode 裁决（AUTO 重拟合 / ASSISTED
-## 挂起待 Apply / MANUAL 只入 Track），证据三种模式都已进 Track。
+## 由测量流消费方（main_ui._feed_new_measurements）消费，本控制器只排空缓冲。
+## S1-11 §3.5/D-14/AT-51..54：同一 Ping 内每条回波只喂一个目标，每条普通航迹
+## 同一 Ping 只吸收一条回波；顺序无关；最优/次优接近时保留未归属。
 func _process_arrived_echoes() -> void:
 	var echoes: Array = world.take_arrived_echoes()
-	if echoes.is_empty():
-		return
 	if world.auto_measurements:
 		return
-	var hits: Array = []
-	var fed: Array = []
 	for e in echoes:
 		if not bool(e["detected"]):
 			continue
-		hits.append(e)
+		var pid: int = int(e.get("ping_id", -1))
+		if not _pending_batch.has(pid):
+			_pending_batch[pid] = []
+		_pending_batch[pid].append(e)
+	var closed: int = world.last_closed_ping_id()
+	if _pending_batch.has(closed):
+		_flush_return_batch(closed)
+
+
+## 批次结算：构造 Return×Track 代价矩阵 → 一对一分配 → 应用。
+## 已归属回波直接追加到对应普通接触（显式 range 证据）；未归属/歧义回波
+## 建立新的临时主动接触或保留未归属，绝不按到达顺序强塞。
+func _flush_return_batch(ping_id: int) -> void:
+	var echoes: Array = _pending_batch[ping_id]
+	_pending_batch.erase(ping_id)
+	if echoes.is_empty():
+		return
+	var returns: Array = []
+	for i in range(echoes.size()):
+		var mi: Measurement = echoes[i]["measurement"]
+		(
+			returns
+			. append(
+				{
+					"id": "ret%02d" % i,
+					"bearing_deg": mi.measured_bearing_deg,
+					"bearing_sigma_deg": mi.bearing_sigma_deg,
+					"range_m": mi.measured_range_m,
+					"range_sigma_m": mi.range_sigma_m,
+					"time": mi.timestamp,
+					"freqs": mi.detected_frequencies,
+				}
+			)
+		)
+	var targets: Array = []
+	var by_id: Dictionary = {}
+	for tr in tracker.all_tracks():
+		var t: Track = tr
+		if t.state != Track.TrackState.ACTIVE:
+			continue
+		var lm: Measurement = t.latest_measurement()
+		if lm == null:
+			continue
+		var rng: float = -1.0
+		var rng_sig: float = 100.0
+		var lrm: Measurement = t.last_valid_range_measurement()
+		if lrm != null:
+			rng = lrm.measured_range_m
+			rng_sig = maxf(lrm.range_sigma_m, 1.0)
+		(
+			targets
+			. append(
+				{
+					"id": t.track_id,
+					"bearing_deg": t.predicted_bearing_at(world.sim_time),
+					"bearing_sigma_deg": lm.bearing_sigma_deg,
+					"range_m": rng,
+					"range_sigma_m": rng_sig,
+					"time": lm.timestamp,
+					"freqs": lm.detected_frequencies,
+				}
+			)
+		)
+		by_id[t.track_id] = t
+	var res: Dictionary = ActiveReturnBatch.assign(returns, targets)
+	var assigns: Dictionary = res.get("assignments", {})
+	var hits: Array = []
+	var fed: Array = []
+	for i in range(echoes.size()):
+		var e: Dictionary = echoes[i]
 		var m: Measurement = e["measurement"]
-		var t: Track = tracker.feed(m)
-		if t == null:
-			t = tracker.mark(m, "P")
-			# 全新接触由主动回波直接锚定：range 即初始证据，置信度取高。
-			t.association_confidence = 0.9
-			t.last_association_mode = "range"
+		var t2: Track = null
+		var tid: String = str(assigns.get("ret%02d" % i, ""))
+		if tid != "":
+			t2 = by_id.get(tid)
+			if t2 != null:
+				tracker.append_group_direct(t2, [m])
+		if t2 == null:
+			t2 = tracker.mark(m, "P")
+			# 全新接触由主动回波直接锚定：range 即初始证据（未归属/歧义同样
+			# 建临时接触，供玩家后续确认，不偷用身份裁决）。
+			t2.association_confidence = 0.9
+			t2.last_association_mode = "range"
+		hits.append(e)
 		_next_return_seq += 1
 		var rid: String = "R%03d" % _next_return_seq
 		notify_dirty()
@@ -124,27 +199,17 @@ func _process_arrived_echoes() -> void:
 					"local_return_id": rid,
 					"ping_id": m.ping_id,
 					"measurement": m,
-					"track": t,
-					"track_id": t.track_id if t != null else "",
-					"association_score": t.association_confidence if t != null else 0.0,
+					"track": t2,
+					"track_id": t2.track_id,
+					"association_score": t2.association_confidence,
 					"se_db": m.signal_excess_db,
 					"received_time": world.sim_time,
 				}
 			)
 		)
 		_next_return_id_trim()
-		(
-			fed
-			. append(
-				{
-					"measurement": m,
-					"track": t,
-					"summary": e,
-					"local_return_id": rid,
-				}
-			)
-		)
-		_append_return_row(m, t)
+		fed.append({"measurement": m, "track": t2, "summary": e, "local_return_id": rid})
+		_append_return_row(m, t2)
 	if hits.is_empty():
 		last_summary = "无回波"
 		_call_status(UiText.t("st_ping_no_return"))
@@ -154,7 +219,7 @@ func _process_arrived_echoes() -> void:
 		if hits.size() > 1:
 			multi = "（%d 重回波）" % hits.size()
 		last_summary = (
-			"回波 方位 %.0f° 距离 %.2fkm SE%+.0fdB %s"
+			"回波 方位 %.0f° 距离 %.2f 千米 余量%+.0f dB %s"
 			% [
 				float(best["bearing_deg"]),
 				float(best["range_m"]) / 1000.0,

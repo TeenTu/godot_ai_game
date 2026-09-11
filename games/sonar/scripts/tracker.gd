@@ -267,6 +267,28 @@ func _append_group(track: Track, group: Array) -> void:
 			track.add_measurement(m)
 
 
+## S1-11 §3.3 / D-13：显式 Mark 命令的直接追加通道。
+## 玩家明确选组（或 Shift＋点击指定接触）时，点击是"记录命令"而非"探测判决"：
+## 不检查声强/Pd/分类门限，也不再受 8° 自动关联门否决；空组首点同样成立。
+## 自动关联（feed_evidence_group）仍按候选门评分，两条路径互不污染。
+func append_group_direct(track: Track, group: Array) -> Track:
+	if track == null:
+		return null
+	if track.state == Track.TrackState.MERGED:
+		return null
+	var first: Measurement = null
+	for m in group:
+		if m is Measurement:
+			if first == null:
+				first = m
+			track.add_measurement(m)
+	if first != null:
+		track.association_confidence = 1.0
+		track.last_association_mode = "manual"
+		track.last_association_score = 0.0
+	return track
+
+
 ## 公开按 id 查找（UI/控制器用；REQ-B1-03 后台 REFIT 不改选中时需要）。
 func track_by_id(track_id: String) -> Track:
 	return _find_track(track_id)

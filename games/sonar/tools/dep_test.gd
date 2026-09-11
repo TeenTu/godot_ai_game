@@ -230,12 +230,12 @@ func _dep_2_auto_band_search(fails: Array) -> void:
 		w.run_steps(1)
 		if not authorized and tp.traveled_m >= 50.0:
 			authorized = tp.authorize_autonomy()
-		# 限速核查覆盖全状态（含 WIRE_RUN 进 SEARCH 的过渡）。
+		# 限速核查覆盖全状态（含进入搜索扫掠的过渡）。
 		var dz: float = absf(tp.actual_depth_m - prev_depth)
 		prev_depth = tp.actual_depth_m
 		if tp.commanded_depth_m >= 0.0 and dz > vz * dt + VZ_EPS:
 			fails.append("DEP-2d band search exceeded Vz: %f" % dz)
-		if tp.mission_state != tp.MissionState.SEARCH:
+		if not tp.is_searching():
 			continue
 		if tp.commanded_depth_band != prev_band and prev_band != "":
 			switches.append(tp.commanded_depth_band)
